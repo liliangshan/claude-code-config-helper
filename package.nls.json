@@ -28,5 +28,6 @@
     "configuration.title": "LLS CCAI",
     "configuration.autoReloadWindow.description": "Automatically reload the window after switching the current Claude Code model.",
     "configuration.language.description": "Display language for the LLS CCAI settings UI. Auto follows the VS Code display language.",
+    "configuration.taskFlowBypassPermissions.description": "When enabled, one-click writing Claude Code settings will set initialPermissionMode=bypassPermissions and allowDangerouslySkipPermissions=true. Use only in trusted sandbox environments.",
     "configuration.openapicopilot.systemPrompt.description": "System prompt shared with LLS OAI / openapi-compatible-copilot."
 }

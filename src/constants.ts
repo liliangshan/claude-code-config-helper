@@ -56,10 +56,19 @@ export const CLAUDE_CODE_ENV_VARS_KEY = 'environmentVariables';
  */
 export const CLAUDE_CODE_DISABLE_LOGIN_PROMPT_KEY = 'disableLoginPrompt';
 
+/** Claude Code 扩展的设置项 key：新会话初始权限模式。 */
+export const CLAUDE_CODE_INITIAL_PERMISSION_MODE_KEY = 'initialPermissionMode';
+
+/** Claude Code 扩展的设置项 key：允许危险跳过权限确认。 */
+export const CLAUDE_CODE_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS_KEY = 'allowDangerouslySkipPermissions';
+
 /**
  * 本扩展自身的 configuration 命名空间（用于读取 autoReloadWindow 等开关）。
  */
 export const CONFIG_NAMESPACE = 'claudeCodeConfigHelper';
+
+/** 本扩展任务流危险权限开关字段：claudeCodeConfigHelper.taskFlowBypassPermissions。 */
+export const TASK_FLOW_BYPASS_PERMISSIONS_KEY = 'taskFlowBypassPermissions';
 
 /**
  * 本扩展所有命令 id 的集中定义。

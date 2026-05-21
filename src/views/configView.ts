@@ -268,13 +268,11 @@ class ConfigWebviewController implements vscode.Disposable {
                     return;
                 }
                 case 'saveClaudeSettings': {
-                    const previousModel = this.manager.getCurrentModel();
+                    // 应用按钮：无论是否切换模型，都执行窗口重载，确保 Claude Code 重新加载环境变量与配置
                     await this.manager.saveRelayConfig(message.payload.relay);
                     await this.manager.setCurrentModel(message.payload.currentModel);
                     this.postToast('success', '已应用 Claude Code 配置');
-                    if (!isSameCurrentModelSelection(previousModel, message.payload.currentModel)) {
-                        await vscode.commands.executeCommand(COMMANDS.reloadWindow);
-                    }
+                    await vscode.commands.executeCommand(COMMANDS.reloadWindow);
                     return;
                 }
                 case 'saveRelayConfig':
@@ -301,6 +299,13 @@ class ConfigWebviewController implements vscode.Disposable {
                 case 'updateUiLanguage':
                     await this.manager.updateUiLanguage(message.payload);
                     this.postState();
+                    return;
+                case 'updateTaskFlowBypassPermissions':
+                    await this.manager.updateTaskFlowBypassPermissions(message.payload);
+                    this.postState();
+                    this.postToast('warn', message.payload
+                        ? '已启用任务流 bypass permissions；一键写入时会同步 Claude Code 危险权限设置'
+                        : '已关闭任务流 bypass permissions；一键写入时会恢复 Claude Code 默认权限模式');
                     return;
                 case 'showInfo':
                     this.postToast('info', message.payload.message);

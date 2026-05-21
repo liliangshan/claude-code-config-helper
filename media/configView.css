@@ -85,8 +85,9 @@ body {
 
 .header {
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: stretch;
     gap: 16px;
     margin-bottom: 16px;
 }
@@ -128,6 +129,7 @@ body {
 
 /* ===== 顶部工具栏胶囊按钮（导入 / 导出 / 全部提示词等） ===== */
 .toolbar-actions {
+    align-self: flex-start;
     align-items: center;
     gap: 6px;
     padding: 6px;
@@ -312,6 +314,26 @@ textarea {
     align-items: center;
     gap: 8px;
     min-height: 30px;
+}
+
+.checkbox-row-full {
+    grid-column: 1 / -1;
+}
+
+.task-flow-bypass-row {
+    align-items: center;
+}
+
+.task-flow-bypass-row label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.task-flow-bypass-hint {
+    color: var(--muted);
+    opacity: 0.88;
 }
 
 .checkbox-row input {

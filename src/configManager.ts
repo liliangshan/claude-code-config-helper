@@ -8,11 +8,13 @@
 import * as vscode from 'vscode';
 
 import {
+    CONFIG_NAMESPACE,
     CURRENT_MODEL_STATE_KEY,
     DEFAULT_RELAY_PORT,
     PROVIDER_API_KEY_SECRET_PREFIX,
     PROVIDERS_STATE_KEY,
-    RELAY_STATE_KEY
+    RELAY_STATE_KEY,
+    TASK_FLOW_BYPASS_PERMISSIONS_KEY
 } from './constants';
 import type {
     AppLanguage,
@@ -33,7 +35,7 @@ const EXPORT_VERSION = 1;
 const OPENAPI_COPILOT_NAMESPACE = 'openapicopilot';
 
 /** LLS CCAI 自有配置命名空间，不与 LLS OAI 的语言配置共享。 */
-const CCAI_NAMESPACE = 'claudeCodeConfigHelper';
+const CCAI_NAMESPACE = CONFIG_NAMESPACE;
 
 /** LLS CCAI 自有语言配置字段：claudeCodeConfigHelper.language。 */
 const CCAI_LANGUAGE_KEY = 'language';
@@ -91,7 +93,8 @@ export class ConfigManager implements vscode.Disposable {
             relay: this.getRelayConfig(),
             relayStatusText: '本地中转服务尚未启动',
             configuredLanguage: this.getConfiguredUiLanguage(),
-            resolvedLanguage: this.getResolvedUiLanguage()
+            resolvedLanguage: this.getResolvedUiLanguage(),
+            taskFlowBypassPermissions: this.getTaskFlowBypassPermissions()
         };
     }
 
@@ -133,6 +136,21 @@ export class ConfigManager implements vscode.Disposable {
         await vscode.workspace
             .getConfiguration(CCAI_NAMESPACE)
             .update(CCAI_LANGUAGE_KEY, normalized, vscode.ConfigurationTarget.Global);
+        this.changeEmitter.fire();
+    }
+
+    /** 读取任务流是否启用 Claude Code bypass permissions 危险权限模式。 */
+    public getTaskFlowBypassPermissions(): boolean {
+        return vscode.workspace
+            .getConfiguration(CCAI_NAMESPACE)
+            .get<boolean>(TASK_FLOW_BYPASS_PERMISSIONS_KEY, false);
+    }
+
+    /** 写入任务流是否启用 Claude Code bypass permissions 危险权限模式。 */
+    public async updateTaskFlowBypassPermissions(enabled: boolean): Promise<void> {
+        await vscode.workspace
+            .getConfiguration(CCAI_NAMESPACE)
+            .update(TASK_FLOW_BYPASS_PERMISSIONS_KEY, !!enabled, vscode.ConfigurationTarget.Global);
         this.changeEmitter.fire();
     }
 

@@ -161,6 +161,8 @@ export interface ConfigViewState {
     configuredLanguage: AppLanguage;
     /** 解析后实际生效的 UI 语言。 */
     resolvedLanguage: ResolvedAppLanguage;
+    /** 是否为任务流启用 Claude Code bypass permissions 危险权限模式。 */
+    taskFlowBypassPermissions: boolean;
 }
 
 /** Webview 发给扩展宿主的消息。 */
@@ -173,6 +175,7 @@ export type WebviewMessage =
     | { type: 'exportConfig' }
     | { type: 'importConfig' }
     | { type: 'updateUiLanguage'; payload: AppLanguage }
+    | { type: 'updateTaskFlowBypassPermissions'; payload: boolean }
     | { type: 'setCurrentModel'; payload: CurrentModelSelection | null }
     | { type: 'saveClaudeSettings'; payload: { relay: RelayServerConfig; currentModel: CurrentModelSelection | null } }
     | { type: 'saveRelayConfig'; payload: RelayServerConfig }

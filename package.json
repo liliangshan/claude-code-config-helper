@@ -2,7 +2,7 @@
     "name": "claude-code-config-helper",
     "displayName": "%extension.displayName%",
     "description": "%extension.description%",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "publisher": "liliangshan",
     "license": "MIT",
     "repository": {
@@ -178,6 +178,12 @@
                     ],
                     "default": "auto",
                     "description": "%configuration.language.description%",
+                    "scope": "application"
+                },
+                "claudeCodeConfigHelper.taskFlowBypassPermissions": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "%configuration.taskFlowBypassPermissions.description%",
                     "scope": "application"
                 },
                 "openapicopilot.systemPrompt": {

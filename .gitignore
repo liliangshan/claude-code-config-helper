@@ -4,3 +4,4 @@ out
 .venv
 *.vsix
 .DS_Store
+.LLSOAI

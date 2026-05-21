@@ -93,7 +93,7 @@ function refreshStatusBar(): void {
 async function applyClaudeCodeInitialPermissionMode(): Promise<void> {
     try {
         await vscode.workspace.getConfiguration('claudeCode')
-            .update('initialPermissionMode', 'acceptEdits', vscode.ConfigurationTarget.Workspace);
+            .update('initialPermissionMode', 'bypassPermissions', vscode.ConfigurationTarget.Workspace);
         Logger.info('Claude Code initialPermissionMode 已设置为 acceptEdits');
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

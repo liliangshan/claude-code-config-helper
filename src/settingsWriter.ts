@@ -13,11 +13,15 @@ import * as vscode from 'vscode';
 
 import { applyCurrentModelToClaudeCli } from './claudeCliSettings';
 import {
+    CONFIG_NAMESPACE,
+    CLAUDE_CODE_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS_KEY,
     CLAUDE_CODE_DISABLE_LOGIN_PROMPT_KEY,
     CLAUDE_CODE_ENV_VARS_KEY,
+    CLAUDE_CODE_INITIAL_PERMISSION_MODE_KEY,
     CLAUDE_CODE_NAMESPACE,
     MANAGED_ENV_KEYS,
-    MANAGED_MARKER
+    MANAGED_MARKER,
+    TASK_FLOW_BYPASS_PERMISSIONS_KEY
 } from './constants';
 import { Logger } from './logger';
 import type { CurrentModelSelection, ExtraEnvVar, RelayServerConfig } from './types';
@@ -148,6 +152,7 @@ export class SettingsWriter {
             !!relay.disableLoginPrompt,
             vscode.ConfigurationTarget.Global
         );
+        await this.applyTaskFlowPermissionMode();
 // 同步把当前模型写入 Claude Code CLI 的 ~/.claude/settings.json（跨平台）。
         await applyCurrentModelToClaudeCli(currentModel);
 
@@ -206,5 +211,50 @@ export class SettingsWriter {
             ),
             disableLoginPrompt: !!disable
         };
+    }
+
+    /**
+     * 根据本扩展任务流全局开关联动写入官方 Claude Code 的危险权限配置。
+     *
+     * 官方扩展只有同时满足：
+     * - `claudeCode.initialPermissionMode = "bypassPermissions"`
+     * - `claudeCode.allowDangerouslySkipPermissions = true`
+     * 才会真正让新会话进入绕过权限确认模式；否则会降级为 default。
+     */
+    private async applyTaskFlowPermissionMode(): Promise<void> {
+        const enabled = vscode.workspace
+            .getConfiguration(CONFIG_NAMESPACE)
+            .get<boolean>(TASK_FLOW_BYPASS_PERMISSIONS_KEY, false);
+        const cfg = vscode.workspace.getConfiguration(CLAUDE_CODE_NAMESPACE);
+        if (enabled) {
+            await cfg.update(
+                CLAUDE_CODE_INITIAL_PERMISSION_MODE_KEY,
+                'bypassPermissions',
+                vscode.ConfigurationTarget.Global
+            );
+            await cfg.update(
+                CLAUDE_CODE_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS_KEY,
+                true,
+                vscode.ConfigurationTarget.Global
+            );
+            return;
+        }
+
+        const initialInspect = cfg.inspect<string>(CLAUDE_CODE_INITIAL_PERMISSION_MODE_KEY);
+        const skipInspect = cfg.inspect<boolean>(CLAUDE_CODE_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS_KEY);
+        if (initialInspect?.globalValue === 'bypassPermissions') {
+            await cfg.update(
+                CLAUDE_CODE_INITIAL_PERMISSION_MODE_KEY,
+                'default',
+                vscode.ConfigurationTarget.Global
+            );
+        }
+        if (skipInspect?.globalValue === true) {
+            await cfg.update(
+                CLAUDE_CODE_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS_KEY,
+                false,
+                vscode.ConfigurationTarget.Global
+            );
+        }
     }
 }

@@ -2,6 +2,16 @@
 
 All notable changes to this extension are documented in this file.
 
+## [0.1.2] - 2026-05-21
+
+### Added
+
+- Documented enabling `bypassPermissions` (a.k.a. Claude Code initial permission mode `bypassPermissions`) inside the LLS CCAI task workflow so long-running tasks can continue without being interrupted by per-step permission prompts. When the workflow runs in this mode, Claude Code skips file edit / tool execution confirmations and keeps the task progressing automatically until completion. Use it only in trusted workspaces, ideally inside a sandbox or container with no sensitive credentials.
+
+### Changed
+
+- Settings panel "Apply" button now always triggers a window reload after saving, regardless of whether the current model selection changed, to guarantee Claude Code picks up the latest environment variables and shared settings.
+
 ## [0.1.0] - 2026-05-21
 
 ### Added

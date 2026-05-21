@@ -63,6 +63,8 @@
             relayStatus: 'Relay Status',
             port: 'Port',
             autoStartRelay: 'Auto-start local relay when extension activates',
+            taskFlowBypassPermissions: 'Task flow bypass permissions mode',
+            taskFlowBypassPermissionsHint: 'Writes both bypass permission settings. Use only in trusted sandboxes.',
             extraEnvVars: 'Extra environment variables (NAME=VALUE per line)',
             operation: 'Operation',
             apply: 'Apply',
@@ -134,6 +136,8 @@
             relayStatus: '中转服务状态',
             port: '端口',
             autoStartRelay: '扩展启动时自动启动本地中转',
+            taskFlowBypassPermissions: '任务流启用 bypass permissions 模式',
+            taskFlowBypassPermissionsHint: '写入两个 bypass 权限设置，仅限可信沙箱。',
             extraEnvVars: '额外环境变量（每行 NAME=VALUE）',
             operation: '操作',
             apply: '应用',
@@ -207,6 +211,8 @@
         relayStatus: '中轉服務狀態',
         port: '連接埠',
         autoStartRelay: '擴充功能啟動時自動啟動本機中轉',
+        taskFlowBypassPermissions: 'Task flow bypass permissions mode',
+        taskFlowBypassPermissionsHint: 'Writes both bypass permission settings. Use only in trusted sandboxes.',
         extraEnvVars: '額外環境變數（每行 NAME=VALUE）',
         operation: '操作',
         apply: '套用',
@@ -278,6 +284,8 @@
         relayStatus: '릴레이 상태',
         port: '포트',
         autoStartRelay: '확장이 활성화될 때 로컬 릴레이 자동 시작',
+        taskFlowBypassPermissions: 'Task flow bypass permissions mode',
+        taskFlowBypassPermissionsHint: 'Writes both bypass permission settings. Use only in trusted sandboxes.',
         extraEnvVars: '추가 환경 변수(줄마다 NAME=VALUE)',
         operation: '작업',
         apply: '적용',
@@ -349,6 +357,8 @@
         relayStatus: 'リレー状態',
         port: 'ポート',
         autoStartRelay: '拡張機能の起動時にローカルリレーを自動起動',
+        taskFlowBypassPermissions: 'Task flow bypass permissions mode',
+        taskFlowBypassPermissionsHint: 'Writes both bypass permission settings. Use only in trusted sandboxes.',
         extraEnvVars: '追加の環境変数（1 行に NAME=VALUE）',
         operation: '操作',
         apply: '適用',
@@ -420,6 +430,8 @@
         relayStatus: 'État du relais',
         port: 'Port',
         autoStartRelay: 'Démarrer automatiquement le relais local à l’activation de l’extension',
+        taskFlowBypassPermissions: 'Task flow bypass permissions mode',
+        taskFlowBypassPermissionsHint: 'Writes both bypass permission settings. Use only in trusted sandboxes.',
         extraEnvVars: 'Variables d’environnement supplémentaires (NAME=VALUE par ligne)',
         operation: 'Opération',
         apply: 'Appliquer',
@@ -491,6 +503,8 @@
         relayStatus: 'Relay-Status',
         port: 'Port',
         autoStartRelay: 'Lokales Relay beim Aktivieren der Erweiterung automatisch starten',
+        taskFlowBypassPermissions: 'Task flow bypass permissions mode',
+        taskFlowBypassPermissionsHint: 'Writes both bypass permission settings. Use only in trusted sandboxes.',
         extraEnvVars: 'Zusätzliche Umgebungsvariablen (NAME=VALUE pro Zeile)',
         operation: 'Aktion',
         apply: 'Anwenden',
@@ -753,6 +767,13 @@
                         <input id="relay-autostart" type="checkbox" ${relay.autoStart ? 'checked' : ''} />
                         <label for="relay-autostart" data-i18n="autoStartRelay">扩展启动时自动启动本地中转</label>
                     </div>
+                    <div class="checkbox-row checkbox-row-full task-flow-bypass-row">
+                        <input id="task-flow-bypass-permissions" type="checkbox" ${state.taskFlowBypassPermissions ? 'checked' : ''} />
+                        <label for="task-flow-bypass-permissions">
+                            <span data-i18n="taskFlowBypassPermissions">任务流启用 bypass permissions 模式</span>
+                            <span class="task-flow-bypass-hint" data-i18n="taskFlowBypassPermissionsHint">写入两个 bypass 权限设置，仅限可信沙箱。</span>
+                        </label>
+                    </div>
                     <div class="checkbox-row">
                         <input id="relay-skip-auth" type="checkbox" ${relay.skipAuthLogin ? 'checked' : ''} />
                         <label for="relay-skip-auth">skipAuthLogin</label>
@@ -959,6 +980,10 @@
         });
         byId('btn-apply-settings', (el) => el.addEventListener('click', saveRelay));
         byId('btn-save-relay', (el) => el.addEventListener('click', saveRelay));
+        byId('task-flow-bypass-permissions', (el) => el.addEventListener('change', () => {
+            state.taskFlowBypassPermissions = !!el.checked;
+            post('updateTaskFlowBypassPermissions', state.taskFlowBypassPermissions);
+        }));
         byId('current-model', (el) => el.addEventListener('change', onCurrentModelChanged));
         byId('btn-new-provider', (el) => el.addEventListener('click', () => openProviderModal()));
         byId('btn-cancel-modal', (el) => el.addEventListener('click', closeModal));
