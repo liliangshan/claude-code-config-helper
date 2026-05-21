@@ -1,5 +1,5 @@
 {
-    "extension.displayName": "LLS CCAI",
+    "extension.displayName": "Claude Code Config Helper",
     "extension.description": "Manage Claude Code relay providers, models, prompts, task flow settings, and Anthropic-compatible routing from a visual panel.",
     "command.category": "LLS CCAI",
     "command.openConfigPanel.title": "Open LLS CCAI Setting",

@@ -1,5 +1,5 @@
 {
-    "extension.displayName": "LLS CCAI",
+    "extension.displayName": "Claude Code Config Helper",
     "extension.description": "通过可视化面板管理 Claude Code 中转提供商、模型、提示词、任务流设置与 Anthropic 兼容路由。",
     "command.category": "LLS CCAI",
     "command.openConfigPanel.title": "打开 LLS CCAI Setting",
