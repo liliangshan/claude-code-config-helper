@@ -1,0 +1,243 @@
+{
+    "name": "claude-code-config-helper",
+    "displayName": "%extension.displayName%",
+    "description": "%extension.description%",
+    "version": "0.1.0",
+    "publisher": "liliangshan",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/liliangshan/claude-code-config-helper.git"
+    },
+    "icon": "resources/marketplace-icon.png",
+    "engines": {
+        "vscode": "^1.94.0"
+    },
+    "categories": [
+        "AI",
+        "Other"
+    ],
+    "keywords": [
+        "claude",
+        "claude-code",
+        "anthropic",
+        "router",
+        "proxy"
+    ],
+    "activationEvents": [
+        "onStartupFinished"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "claudeRouter.openConfigPanel",
+                "title": "%command.openConfigPanel.title%",
+                "category": "%command.category%",
+                "icon": "$(settings-gear)"
+            },
+            {
+                "command": "claudeRouter.openSettingsJson",
+                "title": "%command.openSettingsJson.title%",
+                "category": "%command.category%"
+            },
+            {
+                "command": "claudeRouter.openGlobalSharedSettings",
+                "title": "%command.openGlobalSharedSettings.title%",
+                "category": "%command.category%"
+            },
+            {
+                "command": "claudeRouter.openWorkspaceSharedSettings",
+                "title": "%command.openWorkspaceSharedSettings.title%",
+                "category": "%command.category%"
+            },
+            {
+                "command": "claudeRouter.reloadWindow",
+                "title": "%command.reloadWindow.title%",
+                "category": "%command.category%"
+            },
+            {
+                "command": "claudeRouter.refreshProviders",
+                "title": "%command.refreshProviders.title%",
+                "category": "%command.category%",
+                "icon": "$(refresh)"
+            },
+            {
+                "command": "claudeRouter.newProvider",
+                "title": "%command.newProvider.title%",
+                "category": "%command.category%",
+                "icon": "$(add)"
+            },
+            {
+                "command": "claudeRouter.editProviderItem",
+                "title": "%command.editProviderItem.title%",
+                "category": "%command.category%",
+                "icon": "$(edit)"
+            },
+            {
+                "command": "claudeRouter.deleteProviderItem",
+                "title": "%command.deleteProviderItem.title%",
+                "category": "%command.category%",
+                "icon": "$(trash)"
+            },
+            {
+                "command": "claudeRouter.setCurrentModel",
+                "title": "%command.setCurrentModel.title%",
+                "category": "%command.category%"
+            },
+            {
+                "command": "claudeRouter.clearCurrentModel",
+                "title": "%command.clearCurrentModel.title%",
+                "category": "%command.category%"
+            },
+            {
+                "command": "claudeRouter.restartRelay",
+                "title": "%command.restartRelay.title%",
+                "category": "%command.category%"
+            },
+            {
+                "command": "claudeRouter.pasteTaskFlowToClaude",
+                "title": "%command.pasteTaskFlowToClaude.title%",
+                "category": "%command.category%"
+            },
+            {
+                "command": "claudeRouter.llsCcaiTask.openMenu",
+                "title": "%command.llsCcaiTask.openMenu.title%",
+                "category": "%command.category%"
+            },
+            {
+                "command": "claudeRouter.llsCcaiTask.showProgress",
+                "title": "%command.llsCcaiTask.showProgress.title%",
+                "category": "%command.category%"
+            },
+            {
+                "command": "claudeRouter.llsCcaiTask.continue",
+                "title": "%command.llsCcaiTask.continue.title%",
+                "category": "%command.category%"
+            },
+            {
+                "command": "claudeRouter.llsCcaiTask.clear",
+                "title": "%command.llsCcaiTask.clear.title%",
+                "category": "%command.category%"
+            },
+            {
+                "command": "claudeRouter.testSimulateEnter",
+                "title": "%command.testSimulateEnter.title%",
+                "category": "%command.category%"
+            },
+            {
+                "command": "claudeRouter.exportConfig",
+                "title": "%command.exportConfig.title%",
+                "category": "%command.category%"
+            },
+            {
+                "command": "claudeRouter.importConfig",
+                "title": "%command.importConfig.title%",
+                "category": "%command.category%"
+            }
+        ],
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "claudeRouter",
+                    "title": "%view.container.title%",
+                    "icon": "resources/activity-bar.svg"
+                }
+            ]
+        },
+        "views": {
+            "claudeRouter": [
+                {
+                    "id": "claudeRouter.providersView",
+                    "type": "webview",
+                    "name": "%view.providers.name%",
+                    "icon": "resources/activity-bar.svg",
+                    "contextualTitle": "%view.providers.contextualTitle%"
+                }
+            ]
+        },
+        "configuration": {
+            "title": "%configuration.title%",
+            "properties": {
+                "claudeCodeConfigHelper.autoReloadWindow": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "%configuration.autoReloadWindow.description%"
+                },
+                "claudeCodeConfigHelper.language": {
+                    "type": "string",
+                    "enum": [
+                        "auto",
+                        "en",
+                        "zh-cn",
+                        "zh-tw",
+                        "ko",
+                        "ja",
+                        "fr",
+                        "de"
+                    ],
+                    "default": "auto",
+                    "description": "%configuration.language.description%",
+                    "scope": "application"
+                },
+                "openapicopilot.systemPrompt": {
+                    "type": "string",
+                    "default": "",
+                    "description": "%configuration.openapicopilot.systemPrompt.description%",
+                    "scope": "machine-overridable"
+                }
+            }
+        },
+        "menus": {
+            "commandPalette": [
+                { "command": "claudeRouter.openConfigPanel" },
+                { "command": "claudeRouter.openSettingsJson" },
+                { "command": "claudeRouter.openGlobalSharedSettings" },
+                { "command": "claudeRouter.openWorkspaceSharedSettings" },
+                { "command": "claudeRouter.restartRelay" },
+                { "command": "claudeRouter.pasteTaskFlowToClaude" },
+                { "command": "claudeRouter.llsCcaiTask.openMenu" },
+                { "command": "claudeRouter.llsCcaiTask.showProgress" },
+                { "command": "claudeRouter.llsCcaiTask.continue" },
+                { "command": "claudeRouter.llsCcaiTask.clear" },
+                { "command": "claudeRouter.reloadWindow" },
+                { "command": "claudeRouter.newProvider" },
+                { "command": "claudeRouter.refreshProviders" },
+                { "command": "claudeRouter.setCurrentModel" },
+                { "command": "claudeRouter.clearCurrentModel" },
+                { "command": "claudeRouter.exportConfig" },
+                { "command": "claudeRouter.importConfig" },
+                { "command": "claudeRouter.editProviderItem", "when": "false" },
+                { "command": "claudeRouter.deleteProviderItem", "when": "false" }
+            ],
+            "view/title": [
+                {
+                    "command": "claudeRouter.newProvider",
+                    "when": "view == claudeRouter.providersView",
+                    "group": "navigation@1"
+                },
+                {
+                    "command": "claudeRouter.openConfigPanel",
+                    "when": "view == claudeRouter.providersView",
+                    "group": "navigation@2"
+                },
+                {
+                    "command": "claudeRouter.refreshProviders",
+                    "when": "view == claudeRouter.providersView",
+                    "group": "navigation@3"
+                }
+            ]
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "typecheck": "tsc --noEmit -p ./"
+    },
+    "devDependencies": {
+        "@types/node": "^20.11.0",
+        "@types/vscode": "^1.94.0",
+        "typescript": "^5.4.0"
+    }
+}
