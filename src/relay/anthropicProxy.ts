@@ -204,6 +204,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
             { createTriggered: ctx.llsTaskCreateTriggered === true }
         );
         const bodyText = injectedRequest.bodyText;
+        await this.safeRecordRequestBody(bodyText);
         const bodyBuffer = Buffer.from(bodyText, 'utf-8');
         headers['content-length'] = String(bodyBuffer.byteLength);
 
@@ -312,6 +313,21 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
             endedAt: Date.now(),
             error: errorMessage
         });
+    }
+
+    /**
+     * 写入当前请求最终 body，捕获并吞掉所有异常。
+     *
+     * @param bodyText 已注入工具、即将发送到上游的请求体文本。
+     */
+    private async safeRecordRequestBody(bodyText: string): Promise<void> {
+        if (!this.recorder) return;
+        try {
+            await this.recorder.recordRequestBody(bodyText);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            Logger.warn(`请求 body 写入失败：${message}`);
+        }
     }
 
     /**

@@ -1,6 +1,6 @@
 # Claude Code Config Helper
 
-**Version:** 0.1.0
+**Version:** 0.1.4
 
 Claude Code Config Helper is a VS Code extension for managing, routing, and enhancing the official Anthropic Claude Code extension. It provides a visual configuration panel, a local relay server, provider/model management, task workflow assistance, and VS Code diagnostics injection for Claude Code sessions.
 
@@ -10,6 +10,7 @@ Claude Code Config Helper is a VS Code extension for managing, routing, and enha
 - One-click activation of Claude Code environment variables.
 - Local relay server for routing Claude Code `/v1/messages` requests.
 - Support for Anthropic-compatible, OpenAI Chat Completions-compatible, and OpenAI Responses-compatible upstream APIs.
+- The relay normalizes Claude Code built-in tool schemas for OpenAI-compatible upstreams so `Read`, `Write`, and `Agent` calls avoid provider-induced invalid arguments.
 - Secure API key storage through VS Code `SecretStorage` before activation.
 - Task workflow support for planning, progress tracking, and automatic continuation.
 - VS Code Problems diagnostics retrieval for model-assisted error fixing.
@@ -72,7 +73,7 @@ Command titles may be localized according to your configured UI language.
 npm install
 npm run compile
 npx @vscode/vsce package
-code --install-extension claude-code-config-helper-0.1.0.vsix
+code --install-extension claude-code-config-helper-0.1.4.vsix
 ```
 
 ### Option 2: Run in development mode

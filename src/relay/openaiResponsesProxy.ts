@@ -74,6 +74,7 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
             this.taskDeps,
             { createTriggered: ctx.llsTaskCreateTriggered === true }
         ).bodyText;
+        await this.safeRecordRequestBody(injectedBodyText);
         const anthropicBody = this.parseJson(injectedBodyText);
         const converted = convertAnthropicToOpenAIResponses(anthropicBody);
         if (converted.warnings.length > 0) {
@@ -433,6 +434,21 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
             service: this.taskDeps.llsTaskService,
             autoContinueScheduler: this.taskDeps.autoContinueScheduler
         };
+    }
+
+    /**
+     * 写入当前请求最终 Anthropic body，捕获并吞掉所有异常。
+     *
+     * @param bodyText 已注入工具、协议转换前的 Anthropic 请求体文本。
+     */
+    private async safeRecordRequestBody(bodyText: string): Promise<void> {
+        if (!this.recorder) return;
+        try {
+            await this.recorder.recordRequestBody(bodyText);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            Logger.warn(`请求 body 写入失败：${message}`);
+        }
     }
 
     /**

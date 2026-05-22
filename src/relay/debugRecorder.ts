@@ -77,7 +77,25 @@ export interface DebugRecordEntry {
  */
 export class DebugRecorder {
     /**
-    * 把一次转发请求中的 messages 追加写入 `.LLSOAI/yyyy-MM-dd.json`。
+     * 把最终请求 body 覆盖写入 `.LLSOAI/test.json`。
+     *
+     * @param bodyText 已注入工具、即将发送到上游的请求体文本。
+     */
+    public async recordRequestBody(bodyText: string): Promise<void> {
+        try {
+            const dir = await this.resolveDir();
+            const filePath = path.join(dir, 'test.json');
+            const formatted = this.formatJsonText(bodyText);
+            await fs.writeFile(filePath, `${formatted}\n`, 'utf-8');
+            Logger.info(`Relay 请求 body 已写入：${filePath}`);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            Logger.warn(`写入 Relay 请求 body 失败：${message}`);
+        }
+    }
+
+    /**
+     * 把一次转发请求中的 messages 追加写入 `.LLSOAI/yyyy-MM-dd.json`。
      *
      * 该方法不会抛出异常，所有 IO 错误都降级为日志。
      *
@@ -210,6 +228,20 @@ export class DebugRecorder {
                 Logger.warn(`读取 Relay 调试 messages 失败，将重建文件：${err instanceof Error ? err.message : String(err)}`);
             }
             return { date: dateText, messages: [] };
+        }
+    }
+
+    /**
+     * 把请求体文本格式化为 JSON。
+     *
+     * @param text 请求体文本。
+     * @returns 可读性更好的 JSON 文本，解析失败时返回原文。
+     */
+    private formatJsonText(text: string): string {
+        try {
+            return JSON.stringify(JSON.parse(text), null, 2);
+        } catch {
+            return text;
         }
     }
 

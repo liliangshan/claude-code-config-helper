@@ -2,6 +2,19 @@
 
 All notable changes to this extension are documented in this file.
 
+## [0.1.4] - 2026-05-23
+
+### Fixed
+
+- Normalized forwarded Claude Code built-in tool schemas for OpenAI Chat Completions and OpenAI Responses upstreams.
+- Required `Read.pages` to be non-empty when exposed to OpenAI-compatible providers, preventing repeated invalid `pages: ""` tool calls.
+- Required `Write.file_path` and `Write.content` when exposed to OpenAI-compatible providers, reducing empty Write tool inputs.
+- Removed the optional `Agent.isolation` field from OpenAI-compatible tool schemas so models do not force `worktree` isolation in non-git workspaces.
+
+### Added
+
+- Wrote the final injected Anthropic request body to `.LLSOAI/test.json` for relay debugging across all supported upstream API types.
+
 ## [0.1.2] - 2026-05-21
 
 ### Added

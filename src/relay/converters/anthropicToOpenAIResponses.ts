@@ -403,7 +403,10 @@ function convertTools(tools: unknown, warnings: ResponsesConversionWarning[]): O
     if (!Array.isArray(tools)) return [];
     return tools.flatMap((tool, index): OpenAIResponsesTool[] => {
         if (!isRecord(tool) || typeof tool.name !== 'string') return [];
-        const parameters = isRecord(tool.input_schema) ? tool.input_schema : { type: 'object', properties: {} };
+        const parameters = normalizeToolParameters(
+            tool.name,
+            isRecord(tool.input_schema) ? tool.input_schema : { type: 'object', properties: {} }
+        );
         if (!isRecord(tool.input_schema)) {
             warnings.push({ path: `tools[${index}].input_schema`, code: 'invalid_input_schema', message: 'input_schema 缺失或非对象，已使用空 object schema。' });
         }
@@ -457,6 +460,41 @@ function convertMetadata(metadata: unknown, warnings: ResponsesConversionWarning
     if (isRecord(metadata)) return metadata;
     warnings.push({ path: 'metadata', code: 'invalid_metadata', message: 'metadata 非对象，已忽略。' });
     return undefined;
+}
+
+/**
+ * 归一化 Claude Code 内置工具的参数 schema。
+ *
+ * @param toolName 工具名称。
+ * @param parameters 原始 Anthropic input_schema。
+ * @returns 适合 OpenAI Responses function parameters 的 schema。
+ */
+function normalizeToolParameters(toolName: string, parameters: Record<string, unknown>): Record<string, unknown> {
+    if (toolName !== 'Read' && toolName !== 'Write' && toolName !== 'Agent') return parameters;
+    const normalized = { ...parameters };
+    const properties = isRecord(normalized.properties) ? { ...normalized.properties } : {};
+    normalized.properties = properties;
+    const required = new Set(Array.isArray(normalized.required)
+        ? normalized.required.filter((item): item is string => typeof item === 'string')
+        : []);
+    if (toolName === 'Read') {
+        required.add('file_path');
+        required.add('pages');
+        const pages: Record<string, unknown> = isRecord(properties.pages) ? { ...properties.pages } : { type: 'string' };
+        pages.type = 'string';
+        pages.minLength = 1;
+        properties.pages = pages;
+    }
+    if (toolName === 'Write') {
+        required.add('file_path');
+        required.add('content');
+    }
+    if (toolName === 'Agent') {
+        delete properties.isolation;
+        required.delete('isolation');
+    }
+    normalized.required = Array.from(required);
+    return normalized;
 }
 
 /**

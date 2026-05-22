@@ -14,3 +14,6 @@ PLAN.md
 package-lock.json
 yarn.lock
 *.vsix
+.LLSOAI/**
+.claude/**
+tool.txt
