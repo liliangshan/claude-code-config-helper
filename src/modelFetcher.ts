@@ -3,9 +3,9 @@
  *
  * 根据 Provider 的 `apiType` 调用不同的端点：
  *
- * - `anthropic`        → `GET {baseUrl}/v1/models`（Anthropic 官方格式：`{ data: [{id, ...}] }`）
- * - `openai-compatible` → `GET {baseUrl}/v1/models`（OpenAI 兼容格式：`{ data: [{id, ...}] }`）
- * - `v1-response`       → `GET {baseUrl}/v1/models`（同上）
+ * - `anthropic`        → `GET {baseUrl}/models`（Anthropic 官方格式：`{ data: [{id, ...}] }`）
+ * - `openai-compatible` → `GET {baseUrl}/models`（OpenAI 兼容格式：`{ data: [{id, ...}] }`）
+ * - `v1-response`       → `GET {baseUrl}/models`（同上）
  *
  * 鉴权头按 `authMode` 自动附加：
  *
@@ -54,7 +54,7 @@ export interface FetchModelsResult {
 /**
  * 把可能带末尾斜杠的 BaseURL 与 path 安全拼接。
  *
- * 例：`joinUrl('https://api.x.com/', '/v1/models') => 'https://api.x.com/v1/models'`
+ * 例：`joinUrl('https://api.x.com/v1/', '/models') => 'https://api.x.com/v1/models'`
  */
 function joinUrl(baseUrl: string, path: string): string {
     const b = baseUrl.replace(/\/+$/, '');
@@ -65,18 +65,18 @@ function joinUrl(baseUrl: string, path: string): string {
 /**
  * 根据 apiType 决定模型列表端点。
  *
- * 当前三种协议都使用 `/v1/models`，但仍按协议拆分，便于将来差异化扩展
- * （例如某些 OpenAI 兼容服务把模型列表挂在 `/models` 而非 `/v1/models`）。
+ * 当前三种协议都只追加 `/models`，不自动追加 `/v1`。
+ * 是否包含 `/v1` 完全由用户填写的 BaseURL 决定。
  */
 function modelsEndpoint(apiType: ApiType): string {
     switch (apiType) {
         case 'anthropic':
-            return '/v1/models';
+            return '/models';
         case 'openai-compatible':
         case 'v1-response':
-            return '/v1/models';
+            return '/models';
         default:
-            return '/v1/models';
+            return '/models';
     }
 }
 
