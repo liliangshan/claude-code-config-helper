@@ -41,6 +41,11 @@
     "configuration.chat.transport.description": "内置 Chat Webview 的 CLI 通信通道。streamJsonStdio 是默认长连接双向 stream-json 模式；printStdio 是单次请求降级；pty 为实验能力。",
     "configuration.chat.cliEnv.description": "启动 Claude CLI 时附加的环境变量。请避免在此保存令牌或其它敏感信息。",
     "configuration.chat.permissionMode.description": "传递给 Claude CLI 的 --permission-mode 参数。默认 acceptEdits，在非交互 --bare --print 模式下自动放行 Edit/Write/Read 类工具；选 default 会使得需要授权的工具被静默拒绝；bypassPermissions 跳过所有权限检查（仅限沙箱环境）。",
+    "configuration.chat.mcpServers.description": "传递给 Claude CLI 的 MCP servers，启动时以 --mcp-config '{\"mcpServers\":...}' 形式注入。与 Claude Code 官方扩展（anthropic.claude-code 2.1.x）一致：key 为 server 名，value 为 server 描述（stdio 的 command/args/env，或 http/sse 的 url/headers）。",
+    "configuration.chat.mcpServers.type.description": "MCP server 传输类型：stdio 启动本地子进程；http/sse 调用远程服务；sdk 表示进程内 SDK MCP server。",
+    "configuration.chat.strictMcpConfig.description": "追加 --strict-mcp-config，让 Claude CLI 忽略 .mcp.json 等其它 MCP 配置来源，只使用本扩展注入的 servers。",
+    "configuration.chat.includeVscodeMcpJson.description": "同时读取 VS Code 标准的 mcp.json 配置（工作区 .vscode/mcp.json 与用户级 mcp.json），让内置 Chat CLI 也能看到你为 VS Code 配置的 MCP server。顶层支持 `servers`（VS Code 风格）和 `mcpServers`（Claude CLI 风格）两种字段。",
+    "configuration.chat.skills.description": "启动 Claude CLI 时允许的技能（skills）。与 SDK options 的 `skills` 字段一致（anthropic.claude-code 2.1.x）：filenameApp 为 'all' 表示允许全部；填名称数组则在 --allowedTools 中注入 Skill(name) 条目；留空或设为 null 表示不注入。",
     "configuration.chat.currentModel.description": "内置 Chat 使用的当前模型。项目/工作区值优先于全局值，并通过 --model 传给 Claude CLI。",
     "configuration.openapicopilot.systemPrompt.description": "与 LLS OAI / openapi-compatible-copilot 共享的系统提示词。"
 }

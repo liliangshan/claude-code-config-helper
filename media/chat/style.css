@@ -782,7 +782,19 @@ select:focus-visible {
     font-family: var(--lls-mono);
     font-size: var(--lls-font-sm);
     color: var(--lls-fg);
-    word-break: break-all;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: pre;
+}
+
+.toolBodyRowContent_ZUQaOA pre {
+    width: max-content;
+    min-width: 100%;
+    max-width: none;
+    margin: 0;
+    white-space: pre;
 }
 
 /* 工具文件字段链接：点击可在编辑区打开对应文件 */
@@ -1038,6 +1050,46 @@ select:focus-visible {
 }
 
 /* ---------------------------------------------------------------------------
+ * 9.1 全局生成中指示器 (位于输入框上方，模型输出全程常驻显示)
+ * --------------------------------------------------------------------------- */
+.chat-global-pending {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 4px 10px;
+    margin: 0 auto var(--lls-space-2);
+    width: fit-content;
+    background: var(--lls-bg-elevated);
+    border: 1px solid var(--lls-border);
+    border-radius: var(--lls-radius-pill);
+    color: var(--lls-fg-muted);
+    font-size: var(--lls-font-sm);
+    box-shadow: var(--lls-shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.08));
+    pointer-events: none;
+}
+
+.chat-global-pending--visible {
+    display: inline-flex;
+}
+
+.chat-global-pending > span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--lls-info);
+    animation: lls-pulse 1.4s ease-in-out infinite;
+}
+
+.chat-global-pending > span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.chat-global-pending > span:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+/* ---------------------------------------------------------------------------
  * 10. 底部输入区 - 上下文面板 + 文本框 + 工具栏
  * --------------------------------------------------------------------------- */
 .chat-input {
@@ -1209,6 +1261,32 @@ select:focus-visible {
     font-size: var(--lls-font-xs);
     color: var(--lls-fg);
     max-width: 260px;
+}
+
+/* 默认显示的当前活动文件：仅作为可选预览，未点击不会真正发送 */
+.attachment-pill--pending {
+    border-style: dashed;
+    background: transparent;
+    color: var(--lls-fg-muted);
+    cursor: pointer;
+}
+
+.attachment-pill--pending:hover,
+.attachment-pill--pending:focus-visible {
+    color: var(--lls-fg);
+    border-color: var(--lls-accent);
+    background: color-mix(in srgb, var(--lls-accent) 8%, transparent);
+    outline: none;
+}
+
+.attachment-pill__prefix {
+    flex-shrink: 0;
+    font-weight: 600;
+    line-height: 1;
+}
+
+.attachment-pill__prefix:empty {
+    display: none;
 }
 
 .attachment-pill__icon {

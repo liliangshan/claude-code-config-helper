@@ -108,6 +108,47 @@ export const CHAT_CLI_ENV_KEY = 'chat.cliEnv';
 export const CHAT_CLI_PERMISSION_MODE_KEY = 'chat.permissionMode';
 
 /**
+ * Chat CLI MCP servers 配置字段：claudeCodeConfigHelper.chat.mcpServers。
+ *
+ * 与 Claude CLI `--mcp-config` / `.mcp.json` 结构兼容，参考 Claude Code 官方扩展
+ * (`anthropic.claude-code` 2.1.x) 的传递方式：在 CLI 启动时以
+ * `--mcp-config '{"mcpServers":{...}}'` 参数注入。值为对象，key 是 server 名，value
+ * 是 `{ type, command, args, env, url, headers, cwd, ... }` 等 server 描述。
+ */
+export const CHAT_CLI_MCP_SERVERS_KEY = 'chat.mcpServers';
+
+/**
+ * Chat CLI 严格 MCP 配置开关：claudeCodeConfigHelper.chat.strictMcpConfig。
+ *
+ * 为 true 时在启动参数中追加 `--strict-mcp-config`，让 Claude CLI 只使用本扩展注入的
+ * MCP servers，忽略 `.mcp.json` / 用户级 settings 中其它来源的 MCP 配置。
+ */
+export const CHAT_CLI_STRICT_MCP_CONFIG_KEY = 'chat.strictMcpConfig';
+
+/**
+ * Chat CLI 技能（skills）配置字段：claudeCodeConfigHelper.chat.skills。
+ *
+ * 与 Claude Code 官方扩展中 SDK options 的 `skills` 字段语义保持一致：
+ * - `"all"`        允许全部 skills（注入 `--allowedTools Skill`）
+ * - `string[]`     允许指定名称的 skills（注入 `--allowedTools Skill(name1),Skill(name2)`）
+ * - 缺省 / 空数组  不向 allowedTools 注入任何 Skill 条目
+ */
+export const CHAT_CLI_SKILLS_KEY = 'chat.skills';
+
+/**
+ * 是否合并读取 VS Code 风格的 `mcp.json` 配置：claudeCodeConfigHelper.chat.includeVscodeMcpJson。
+ *
+ * 当为 true（默认）时，启动 Chat CLI 前会：
+ * 1. 读取工作区 `.vscode/mcp.json`；
+ * 2. 读取用户区 `mcp.json`（按平台位于 `~/Library/Application Support/Code/User/mcp.json` 等）；
+ * 3. 与 `chat.mcpServers` 合并，由用户显式声明覆盖工作区，工作区再覆盖用户区；
+ * 4. 最终通过 `--mcp-config '{"mcpServers":...}'` 注入给 Claude CLI。
+ *
+ * 设为 false 时只使用扩展自身配置 `chat.mcpServers`。
+ */
+export const CHAT_CLI_INCLUDE_VSCODE_MCP_JSON_KEY = 'chat.includeVscodeMcpJson';
+
+/**
  * 本扩展所有命令 id 的集中定义。
  * 与 package.json 的 contributes.commands 保持一致。
  */

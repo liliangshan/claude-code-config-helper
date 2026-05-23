@@ -7,14 +7,24 @@ import {
     CHAT_CLI_ARGS_KEY,
     CHAT_CLI_CWD_KEY,
     CHAT_CLI_ENV_KEY,
+    CHAT_CLI_INCLUDE_VSCODE_MCP_JSON_KEY,
+    CHAT_CLI_MCP_SERVERS_KEY,
     CHAT_CLI_PATH_KEY,
     CHAT_CLI_PERMISSION_MODE_KEY,
+    CHAT_CLI_SKILLS_KEY,
+    CHAT_CLI_STRICT_MCP_CONFIG_KEY,
     CHAT_ENABLED_KEY,
     CHAT_TRANSPORT_KEY,
     CONFIG_NAMESPACE
 } from '../../constants';
 import { ConfigManager } from '../../configManager';
-import type { ChatCliConfig, ChatCliPermissionMode, ChatCliTransport } from './types';
+import {
+    loadAllVscodeMcpJsons,
+    logMcpJsonLoadResults,
+    mergeMcpServers,
+    workspaceFolderResolver
+} from './mcpJsonLoader';
+import type { ChatCliConfig, ChatCliPermissionMode, ChatCliTransport, McpServerConfig } from './types';
 
 /** 内置 Chat 默认通信通道。 */
 const DEFAULT_TRANSPORT: ChatCliTransport = 'streamJsonStdio';
@@ -71,6 +81,13 @@ export class ChatCliConfigService {
         const permissionMode = this.normalizePermissionMode(
             config.get<string>(CHAT_CLI_PERMISSION_MODE_KEY, DEFAULT_PERMISSION_MODE)
         );
+        const mcpServers = this.normalizeMcpServers(
+            config.get<Record<string, unknown>>(CHAT_CLI_MCP_SERVERS_KEY, {})
+        );
+        const strictMcpConfig = config.get<boolean>(CHAT_CLI_STRICT_MCP_CONFIG_KEY, false) === true;
+        const includeVscodeMcpJson = config.get<boolean>(CHAT_CLI_INCLUDE_VSCODE_MCP_JSON_KEY, true) !== false;
+        const mergedMcpServers = this.mergeWithVscodeMcpJson(mcpServers, includeVscodeMcpJson);
+        const skills = this.normalizeSkills(config.get<unknown>(CHAT_CLI_SKILLS_KEY, undefined));
         return {
             enabled: config.get<boolean>(CHAT_ENABLED_KEY, false),
             cliPath: config.get<string>(CHAT_CLI_PATH_KEY, '').trim(),
@@ -81,7 +98,10 @@ export class ChatCliConfigService {
             cliEnv: transport === 'streamJsonStdio'
                 ? { ...DEFAULT_STREAM_JSON_ENV, ...userEnv }
                 : userEnv,
-            permissionMode
+            permissionMode,
+            mcpServers: Object.keys(mergedMcpServers).length > 0 ? mergedMcpServers : undefined,
+            strictMcpConfig: strictMcpConfig || undefined,
+            skills
         };
     }
 
@@ -137,6 +157,60 @@ export class ChatCliConfigService {
         await vscode.workspace
             .getConfiguration(CONFIG_NAMESPACE)
             .update(CHAT_CLI_PERMISSION_MODE_KEY, mode, vscode.ConfigurationTarget.Workspace);
+    }
+
+    /**
+     * 更新 Chat CLI MCP servers 配置。
+     *
+     * 写入后下一次启动 CLI 会以 `--mcp-config '{"mcpServers":...}'` 形式注入；
+     * 调用方通常会在更新后立即重启 Chat CLI 让配置生效。
+     *
+     * @param servers MCP server 字典；传入空对象等价于清空。
+     * @param target VS Code 配置作用域，默认写入工作区。
+     */
+    public async updateMcpServers(
+        servers: Record<string, McpServerConfig>,
+        target: vscode.ConfigurationTarget = vscode.ConfigurationTarget.Workspace
+    ): Promise<void> {
+        const normalized = this.normalizeMcpServers(servers as Record<string, unknown>);
+        await vscode.workspace
+            .getConfiguration(CONFIG_NAMESPACE)
+            .update(CHAT_CLI_MCP_SERVERS_KEY, normalized, target);
+    }
+
+    /**
+     * 更新 Chat CLI `--strict-mcp-config` 开关。
+     *
+     * 写入后下一次启动 CLI 会附加 `--strict-mcp-config` 参数（true 时），用于让
+     * Claude CLI 忽略其它 MCP 配置来源（如 `.mcp.json`）。
+     *
+     * @param strict 是否启用严格 MCP 模式。
+     * @param target VS Code 配置作用域，默认写入工作区。
+     */
+    public async updateStrictMcpConfig(
+        strict: boolean,
+        target: vscode.ConfigurationTarget = vscode.ConfigurationTarget.Workspace
+    ): Promise<void> {
+        await vscode.workspace
+            .getConfiguration(CONFIG_NAMESPACE)
+            .update(CHAT_CLI_STRICT_MCP_CONFIG_KEY, strict, target);
+    }
+
+    /**
+     * 更新 Chat CLI 技能（skills）配置。
+     *
+     * 写入后下一次启动 CLI 会向 `--allowedTools` 注入 `Skill` 或 `Skill(name)` 条目。
+     *
+     * @param skills `"all"` / 名称数组 / `undefined`。
+     * @param target VS Code 配置作用域，默认写入工作区。
+     */
+    public async updateSkills(
+        skills: 'all' | string[] | undefined,
+        target: vscode.ConfigurationTarget = vscode.ConfigurationTarget.Workspace
+    ): Promise<void> {
+        await vscode.workspace
+            .getConfiguration(CONFIG_NAMESPACE)
+            .update(CHAT_CLI_SKILLS_KEY, skills ?? null, target);
     }
 
     /**
@@ -276,5 +350,118 @@ export class ChatCliConfigService {
         const trimmed = (mode ?? '').trim() as ChatCliPermissionMode;
         if (VALID_PERMISSION_MODES.has(trimmed)) return trimmed;
         return DEFAULT_PERMISSION_MODE;
+    }
+
+    /**
+     * 规范化 MCP servers 配置字典。
+     *
+     * - 跳过 key 为空、value 非对象、value 为 null/数组 的项；
+     * - 对每个 server 仅保留字符串类型字段（type / command / url / cwd）与可序列化字段
+     *   （args 必须为字符串数组、env / headers 必须为字符串值字典），其它键原样透传以
+     *   保证与未来 Claude CLI 字段保持前向兼容；
+     * - 异常项会被静默丢弃，避免阻塞 Chat 启动。
+     *
+     * @param raw 原始配置对象。
+     * @returns 规范化后的 MCP servers 字典；非法/空时返回空对象。
+     */
+    private normalizeMcpServers(raw: Record<string, unknown> | undefined): Record<string, McpServerConfig> {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+        const normalized: Record<string, McpServerConfig> = {};
+        for (const [key, value] of Object.entries(raw)) {
+            const name = (key ?? '').trim();
+            if (!name) continue;
+            if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+            const source = value as Record<string, unknown>;
+            const server: McpServerConfig = {};
+            for (const [field, fieldValue] of Object.entries(source)) {
+                if (fieldValue === undefined || fieldValue === null) continue;
+                switch (field) {
+                    case 'args': {
+                        if (Array.isArray(fieldValue)) {
+                            server.args = fieldValue.filter((item): item is string => typeof item === 'string');
+                        }
+                        break;
+                    }
+                    case 'env':
+                    case 'headers': {
+                        const dict = this.normalizeEnv(fieldValue as Record<string, unknown>);
+                        if (Object.keys(dict).length > 0) (server as Record<string, unknown>)[field] = dict;
+                        break;
+                    }
+                    case 'type':
+                    case 'command':
+                    case 'url':
+                    case 'cwd': {
+                        if (typeof fieldValue === 'string' && fieldValue.length > 0) {
+                            (server as Record<string, unknown>)[field] = fieldValue;
+                        }
+                        break;
+                    }
+                    default: {
+                        // 透传其余可 JSON 序列化字段，保持与 Claude CLI 新字段的前向兼容。
+                        (server as Record<string, unknown>)[field] = fieldValue;
+                    }
+                }
+            }
+            normalized[name] = server;
+        }
+        return normalized;
+    }
+
+    /**
+     * 规范化 skills 配置。
+     *
+     * - 字符串 `"all"`（忽略大小写）映射为 `'all'`；
+     * - 数组按字符串去重并过滤空值；空数组返回 `undefined`；
+     * - 其它非法输入返回 `undefined`。
+     *
+     * @param raw 原始配置值。
+     * @returns 规范化后的 skills 配置。
+     */
+    private normalizeSkills(raw: unknown): 'all' | string[] | undefined {
+        if (typeof raw === 'string') {
+            return raw.trim().toLowerCase() === 'all' ? 'all' : undefined;
+        }
+        if (!Array.isArray(raw)) return undefined;
+        const seen = new Set<string>();
+        const list: string[] = [];
+        for (const item of raw) {
+            if (typeof item !== 'string') continue;
+            const trimmed = item.trim();
+            if (!trimmed || seen.has(trimmed)) continue;
+            seen.add(trimmed);
+            list.push(trimmed);
+        }
+        return list.length > 0 ? list : undefined;
+    }
+
+    /**
+     * 把 `chat.mcpServers` 与 VS Code mcp.json 合并。
+     *
+     * 优先级（从高到低，前者同名 key 覆盖后者）：
+     * 1. `chat.mcpServers`：扩展自身配置；
+     * 2. 工作区 `.vscode/mcp.json`；
+     * 3. 用户区 `mcp.json`（VS Code User 目录）。
+     *
+     * 当 `includeVscodeMcpJson=false` 时跳过工作区/用户区两个文件，行为退化为只读扩展配置。
+     *
+     * 文件来源同时支持 VS Code 标准的顶层 `servers` 字段，以及 Claude CLI 风格的
+     * `mcpServers` 字段（向前兼容），具体由 `mcpJsonLoader.normalizeServersField` 处理。
+     *
+     * @param extensionServers 扩展配置中读取并已规范化的 server 字典。
+     * @param includeVscodeMcpJson 是否合并 VS Code mcp.json。
+     * @returns 合并后的 server 字典。
+     */
+    private mergeWithVscodeMcpJson(
+        extensionServers: Record<string, McpServerConfig>,
+        includeVscodeMcpJson: boolean
+    ): Record<string, McpServerConfig> {
+        if (!includeVscodeMcpJson) return extensionServers;
+        const workspaceFolder = workspaceFolderResolver.resolve();
+        const results = loadAllVscodeMcpJsons(workspaceFolder);
+        logMcpJsonLoadResults(results);
+        const workspaceServers = results.find((item) => item.source === 'workspace')?.servers;
+        const userServers = results.find((item) => item.source === 'user')?.servers;
+        return mergeMcpServers(extensionServers, workspaceServers, userServers);
     }
 }

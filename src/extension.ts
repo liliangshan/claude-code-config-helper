@@ -521,9 +521,61 @@ async function startChatCliFromCurrentConfig(options: { forceRestart?: boolean }
     }
     chatCliCancelRequested = false;
     if (cliProcess.isRunning()) expectedChatCliExitCount += 1;
+    logMcpToolsBeforeCliStart();
     await cliProcess.start(launchConfig);
     ensureStreamJsonCliAdapter();
     await chatViewHost?.postMessage({ type: 'cli/status', status: 'running', detail: config.cliPath });
+}
+
+/**
+ * 在启动 Chat CLI 之前枚举当前 VS Code 注册的 MCP 工具并写入日志。
+ *
+ * VS Code 稳定 API `vscode.lm.tools` 返回 `LanguageModelToolInformation[]`，
+ * 字段包括 `name / description / inputSchema / tags`。MCP 注册的工具通常带有
+ * `mcp` 标签或名称以 `mcp_` 前缀开头（不同 VS Code 版本/扩展可能略有差异），
+ * 这里把两种识别条件都纳入，并把命中的工具列表与 tags 一并打到扩展输出日志中，
+ * 便于人工核对当前 IDE 侧可见的 MCP 工具能力。
+ *
+ * 本函数仅记录日志，不阻塞 CLI 启动，所有异常都会被吞掉并降级为一条 warn。
+ */
+function logMcpToolsBeforeCliStart(): void {
+    try {
+        const lm = (vscode as unknown as { lm?: { tools?: ReadonlyArray<vscode.LanguageModelToolInformation> } }).lm;
+        const allTools = lm?.tools;
+        if (!allTools || !Array.isArray(allTools)) {
+            Logger.warn('启动 Chat CLI 前枚举 MCP 工具：vscode.lm.tools 不可用');
+            return;
+        }
+        const mcpTools = allTools.filter((tool) => {
+            const tags = Array.isArray(tool.tags) ? tool.tags.map((tag: unknown) => String(tag).toLowerCase()) : [];
+            if (tags.includes('mcp')) return true;
+            if (typeof tool.name === 'string' && tool.name.toLowerCase().startsWith('mcp_')) return true;
+            return false;
+        });
+        const summary = mcpTools.map((tool) => {
+            // VS Code 稳定 API LanguageModelToolInformation 只会暴露 name / description /
+            // inputSchema / tags 这几个字段，**不会**透出 MCP server 的启动命令、env、url 等
+            // 注册信息（出于扩展隔离设计）。这里把工具上能拿到的全部字段都打出来，便于
+            // 排查"为什么没有环境变量"——答案是：VS Code 根本没给。
+            const objectKeys = Object.keys(tool as unknown as Record<string, unknown>);
+            return {
+                name: tool.name,
+                tags: Array.from(tool.tags ?? []),
+                description: typeof tool.description === 'string'
+                    ? tool.description.slice(0, 200)
+                    : '',
+                inputSchemaKeys: tool.inputSchema && typeof tool.inputSchema === 'object'
+                    ? Object.keys(tool.inputSchema as Record<string, unknown>)
+                    : [],
+                rawObjectKeys: objectKeys
+            };
+        });
+        Logger.info(`启动 Chat CLI 前枚举到 MCP 工具：count=${mcpTools.length}/${allTools.length}`);
+        Logger.info('MCP 工具明细（VS Code 稳定 API 仅暴露 name/description/inputSchema/tags，不含环境变量/启动命令）：'
+            + JSON.stringify(summary, null, 2));
+    } catch (error) {
+        Logger.warn('启动 Chat CLI 前枚举 MCP 工具失败：' + (error instanceof Error ? error.message : String(error)));
+    }
 }
 
 /**

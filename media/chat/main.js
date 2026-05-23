@@ -39,6 +39,7 @@
     const composerShellEl = document.querySelector('[data-role="composer-shell"]');
     const composerEl = document.querySelector('[data-role="composer"]');
     const sendEl = document.querySelector('[data-role="send"]');
+    const globalPendingEl = document.querySelector('[data-role="global-pending"]');
     const attachFileEl = document.querySelector('[data-role="attach-file"]');
     const contextPanelEl = document.querySelector('[data-role="context-panel"]');
     const toastEl = document.querySelector('[data-role="chat-toast"]');
@@ -395,7 +396,29 @@
     }
 
     /**
+     * 将默认上下文附件（仅展示、不实际发送）转换为已激活的真实附件。
+     *
+     * 默认（source === 'default'）的当前活动编辑器附件以虚线 + 加号 pill 形式预览，
+     * 不会进入发送 payload。用户点击该 pill 后调用本函数，把它提升为 manual，
+     * 此时 pill 转为实线、显示移除按钮，并随下一次 user/send 一起发送。
+     *
+     * @param {string} id 附件 ID。
+     */
+    function activateDefaultAttachment(id) {
+        const item = composerState.attachments.find((entry) => entry.id === id);
+        if (!item || item.source !== 'default') return;
+        item.source = 'manual';
+        composerState.defaultAttachmentPaths.delete(item.path);
+        renderAttachments();
+    }
+
+    /**
      * 渲染 Copilot Chat 风格的附件 pill 列表。
+     *
+     * 视觉规则：
+     * - source === 'default'：虚线边框 + 前置 “+” 图标，整体手型光标，
+     *   不渲染右侧 × 按钮，点击/Enter/Space 触发 activateDefaultAttachment。
+     * - 其它来源（manual / drop / paste）：实线 pill，显示 × 移除按钮。
      */
     function renderAttachments() {
         if (!attachmentsEl) return;
@@ -407,25 +430,55 @@
             const pill = document.createElement('span');
             pill.className = 'attachment-pill';
             pill.title = item.path;
+            const isDefault = item.source === 'default';
+            if (isDefault) {
+                pill.classList.add('attachment-pill--pending');
+                pill.setAttribute('role', 'button');
+                pill.tabIndex = 0;
+            }
+
+            if (isDefault) {
+                const prefix = document.createElement('span');
+                prefix.className = 'attachment-pill__prefix';
+                prefix.textContent = '+';
+                prefix.setAttribute('aria-hidden', 'true');
+                pill.appendChild(prefix);
+            }
 
             const icon = document.createElement('span');
             icon.className = 'attachment-pill__icon';
             icon.textContent = fileBadge(item.name || item.path);
+            pill.appendChild(icon);
 
             const label = document.createElement('span');
             label.className = 'attachment-pill__label';
             label.textContent = item.name + attachmentRangeLabel(item);
-
-            const remove = document.createElement('button');
-            remove.type = 'button';
-            remove.className = 'attachment-pill__remove';
-            remove.textContent = '×';
-            remove.title = tf('removeAttachment', { name: item.name });
-            remove.addEventListener('click', () => removeAttachment(item.id));
-
-            pill.appendChild(icon);
             pill.appendChild(label);
-            pill.appendChild(remove);
+
+            if (isDefault) {
+                const activate = () => activateDefaultAttachment(item.id);
+                pill.addEventListener('click', () => {
+                    activate();
+                });
+                pill.addEventListener('keydown', (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        activate();
+                    }
+                });
+            } else {
+                const remove = document.createElement('button');
+                remove.type = 'button';
+                remove.className = 'attachment-pill__remove';
+                remove.textContent = '×';
+                remove.title = tf('removeAttachment', { name: item.name });
+                remove.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    removeAttachment(item.id);
+                });
+                pill.appendChild(remove);
+            }
+
             attachmentsEl.appendChild(pill);
         }
     }
@@ -499,10 +552,19 @@
     /**
      * 切换输入框右下角动作按钮：生成中显示方块用于停止，空闲时显示向上箭头用于发送。
      *
+     * 同时驱动输入区上方的全局生成中指示器 (.chat-global-pending)：
+     * 模型从开始响应到完成期间持续显示三点动画；模型输出过程中也不会消失，
+     * 完全由 pending → !pending 状态切换控制。
+     *
      * @param {boolean} running 当前聊天是否正在生成响应。
      */
     function setChatRunning(running) {
         composerState.chatRunning = !!running;
+        if (globalPendingEl instanceof HTMLElement) {
+            globalPendingEl.classList.toggle('chat-global-pending--visible', composerState.chatRunning);
+            globalPendingEl.setAttribute('aria-hidden', composerState.chatRunning ? 'false' : 'true');
+            globalPendingEl.setAttribute('aria-label', t('loading'));
+        }
         if (!(sendEl instanceof HTMLButtonElement)) return;
         sendEl.textContent = composerState.chatRunning ? '■' : '↑';
         sendEl.title = composerState.chatRunning ? t('stopResponse') : t('sendMessage');
@@ -2646,46 +2708,19 @@
     }
 
     /**
-     * 根据消息状态渲染或移除 assistant 加载动画。
+     * 兼容旧调用点：原本会在 assistant 消息内部插入 .chat-pending-indicator
+     * 三点动画，但只在"还没有任何内容"时才显示，模型一旦开始输出就会消失。
      *
-     * 判定"是否已有真正内容"时会过滤掉 `kind:'usage'` 这类纯统计 segment：
-     * Relay 在收到上游 `message_start` 时就能拿到 input/cache 等 token 数并
-     * 立即上报 usage，但此刻模型回复的文本/工具调用尚未开始。若把 usage 也
-     * 算作"已有内容"，等待动画就会被过早移除并不再恢复，UI 上会看到"刚发完
-     * 就没动画了，但其实还在等模型"。
-     *
-     * 兼容两种 segments 形态：
-     * - `appendMessage` 调用时是原始 ChatSegment 对象数组（按 `seg.kind` 判定）；
-     * - `patchMessage` 调用时是 DOM Node 数组（按 `.assistantUsageFooter_07S1Yg` 判定）。
+     * 现已改为由输入框上方的全局 .chat-global-pending 统一展示生成中状态，
+     * 模型整个输出期间常驻显示。为避免视觉重复，这里只负责清理可能残留
+     * 在消息内部的旧 indicator，不再向消息容器追加任何节点。
      *
      * @param {HTMLElement} content 消息内容容器。
-     * @param {any} message ChatMessage 对象或同形态轻量对象。
+     * @param {any} _message 兼容旧签名，未使用。
      */
-    function renderPendingIndicator(content, message) {
-        const existing = content.querySelector('.chat-pending-indicator');
-        const hasSegments = Array.isArray(message.segments) && message.segments.some(function (item) {
-            // ChatSegment 对象形态：直接读 kind。
-            if (item && typeof item === 'object' && 'kind' in item) {
-                return item.kind !== 'usage';
-            }
-            // DOM Node 形态：usage 段对应 .assistantUsageFooter_07S1Yg；其它任何节点都算内容。
-            if (item instanceof HTMLElement) {
-                return !item.classList.contains('assistantUsageFooter_07S1Yg');
-            }
-            // 其它（text node、注释等）保守按"算作内容"处理。
-            return !!item;
-        });
-        const shouldShow = message.role === 'assistant' && message.pending && !hasSegments;
-        if (!shouldShow) {
-            existing?.remove();
-            return;
-        }
-        if (existing) return;
-        const indicator = document.createElement('div');
-        indicator.className = 'chat-pending-indicator';
-        indicator.setAttribute('aria-label', t('loading'));
-        indicator.innerHTML = '<span></span><span></span><span></span>';
-        content.appendChild(indicator);
+    function renderPendingIndicator(content, _message) {
+        const existing = content && content.querySelector ? content.querySelector('.chat-pending-indicator') : null;
+        if (existing) existing.remove();
     }
 
     /**
@@ -2816,11 +2851,16 @@
 
     /**
      * 从输入框读取文本并发送 user/send 消息。
+     *
+     * 仅发送用户已点击激活（source !== 'default'）的附件；
+     * 默认显示的当前文件附件以虚线 pill 形式预览，不会真正进入 prompt，
+     * 用户点击对应 pill 后才会被提升为 manual 并参与本次发送。
      */
     function sendComposerText() {
         if (!(composerEl instanceof HTMLTextAreaElement)) return;
         const text = composerEl.value.trim();
-        const attachments = composerState.attachments.map((item) => ({ path: item.path, name: item.name }));
+        const activeItems = composerState.attachments.filter((item) => item.source !== 'default');
+        const attachments = activeItems.map((item) => ({ path: item.path, name: item.name }));
         if (!text && attachments.length === 0) return;
         scrollAfterNextPendingAssistant = true;
         post({ type: 'user/send', text, attachments });

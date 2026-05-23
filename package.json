@@ -289,6 +289,68 @@
                     "description": "%configuration.chat.permissionMode.description%",
                     "scope": "resource"
                 },
+                "claudeCodeConfigHelper.chat.mcpServers": {
+                    "type": "object",
+                    "default": {},
+                    "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["stdio", "http", "sse", "sdk"],
+                                "description": "%configuration.chat.mcpServers.type.description%"
+                            },
+                            "command": { "type": "string" },
+                            "args": {
+                                "type": "array",
+                                "items": { "type": "string" }
+                            },
+                            "env": {
+                                "type": "object",
+                                "additionalProperties": { "type": "string" }
+                            },
+                            "cwd": { "type": "string" },
+                            "url": { "type": "string" },
+                            "headers": {
+                                "type": "object",
+                                "additionalProperties": { "type": "string" }
+                            }
+                        },
+                        "additionalProperties": true
+                    },
+                    "description": "%configuration.chat.mcpServers.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.strictMcpConfig": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "%configuration.chat.strictMcpConfig.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.includeVscodeMcpJson": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "%configuration.chat.includeVscodeMcpJson.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.skills": {
+                    "default": null,
+                    "anyOf": [
+                        {
+                            "type": "null"
+                        },
+                        {
+                            "type": "string",
+                            "enum": ["all"]
+                        },
+                        {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }
+                    ],
+                    "description": "%configuration.chat.skills.description%",
+                    "scope": "resource"
+                },
                 "claudeCodeConfigHelper.chat.currentModel": {
                     "type": [
                         "object",

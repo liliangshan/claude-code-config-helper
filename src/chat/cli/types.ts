@@ -47,6 +47,55 @@ export interface ChatCliConfig {
     permissionMode?: ChatCliPermissionMode;
     /** 需要恢复的 Claude CLI session_id；为空时启动新会话。 */
     resumeSessionId?: string;
+    /**
+     * MCP servers 配置，结构兼容 Claude CLI `--mcp-config` / `.mcp.json`。
+     *
+     * 非空时启动 CLI 会追加 `--mcp-config '{"mcpServers":...}'` 参数；
+     * 若用户在 `cliArgs` 中已显式提供 `--mcp-config`，将以用户值为准不重复追加。
+     */
+    mcpServers?: Record<string, McpServerConfig>;
+    /**
+     * 是否启用 `--strict-mcp-config`，让 Claude CLI 只使用本扩展注入的 MCP servers，
+     * 忽略 `.mcp.json` / 用户级 settings 等其它来源。
+     */
+    strictMcpConfig?: boolean;
+    /**
+     * 技能（skills）配置。
+     *
+     * - `"all"`        允许全部 skills（启动参数中追加 `--allowedTools Skill`）
+     * - `string[]`     允许指定名称的 skills（启动参数中追加 `--allowedTools Skill(name1),Skill(name2)`）
+     * - 缺省 / 空数组  不向 allowedTools 注入任何 Skill 条目
+     */
+    skills?: 'all' | string[];
+}
+
+/**
+ * MCP server 配置项，结构兼容 Claude CLI 与 `.mcp.json` 文档。
+ *
+ * 三种典型形态：
+ * - **stdio**: 以子进程方式启动，提供 `command` + `args` + 可选 `env` + `cwd`
+ * - **http**:  通过 HTTP 调用，提供 `type: "http"` + `url` + 可选 `headers`
+ * - **sse**:   通过 SSE 推流，提供 `type: "sse"` + `url` + 可选 `headers`
+ *
+ * 这里使用宽松字段集合，未来 Claude CLI 新增字段也可以原样透传。
+ */
+export interface McpServerConfig {
+    /** MCP server 类型：`stdio` / `http` / `sse` / `sdk` 等。 */
+    type?: 'stdio' | 'http' | 'sse' | 'sdk' | string;
+    /** stdio 类型必填：要执行的命令。 */
+    command?: string;
+    /** stdio 类型可选：命令参数列表。 */
+    args?: string[];
+    /** stdio 类型可选：附加环境变量。 */
+    env?: Record<string, string>;
+    /** 子进程工作目录。 */
+    cwd?: string;
+    /** http/sse 类型必填：MCP server URL。 */
+    url?: string;
+    /** http/sse 类型可选：附加请求头。 */
+    headers?: Record<string, string>;
+    /** 透传给 Claude CLI 的其他字段，由调用方自行保证字段合法性。 */
+    [extraKey: string]: unknown;
 }
 
 /** CLI stdout/stderr 输出 chunk 来源。 */

@@ -190,8 +190,66 @@ export class CliProcess implements vscode.Disposable {
             left.transport === right.transport &&
             (left.model ?? '') === (right.model ?? '') &&
             (left.resumeSessionId ?? '') === (right.resumeSessionId ?? '') &&
+            (left.strictMcpConfig === true) === (right.strictMcpConfig === true) &&
             this.isSameStringArray(left.cliArgs, right.cliArgs) &&
-            this.isSameStringRecord(left.cliEnv, right.cliEnv);
+            this.isSameStringRecord(left.cliEnv, right.cliEnv) &&
+            this.isSameSkills(left.skills, right.skills) &&
+            this.isSameMcpServers(left.mcpServers, right.mcpServers);
+    }
+
+    /**
+     * 对比两份 skills 配置是否完全一致。
+     *
+     * 规则：
+     * - 两者都缺省视为一致；
+     * - `"all"` 与 `"all"` 视为一致；
+     * - 数组按顺序+元素完全比较（规范化阶段已去重且按用户输入顺序）。
+     *
+     * @param left 左侧 skills 配置。
+     * @param right 右侧 skills 配置。
+     * @returns 等价时返回 true。
+     */
+    private isSameSkills(left: ChatCliConfig['skills'], right: ChatCliConfig['skills']): boolean {
+        if (left === undefined && right === undefined) return true;
+        if (left === 'all' || right === 'all') return left === right;
+        const leftArr = Array.isArray(left) ? left : [];
+        const rightArr = Array.isArray(right) ? right : [];
+        return this.isSameStringArray(leftArr, rightArr);
+    }
+
+    /**
+     * 对比两份 MCP servers 配置是否完全一致。
+     *
+     * 用稳定 JSON 序列化（key 排序）做深比较，避免字段顺序变化触发误重启。
+     *
+     * @param left 左侧 MCP servers 字典。
+     * @param right 右侧 MCP servers 字典。
+     * @returns 等价时返回 true。
+     */
+    private isSameMcpServers(
+        left: ChatCliConfig['mcpServers'],
+        right: ChatCliConfig['mcpServers']
+    ): boolean {
+        const leftJson = this.stableStringify(left ?? {});
+        const rightJson = this.stableStringify(right ?? {});
+        return leftJson === rightJson;
+    }
+
+    /**
+     * 对任意 JSON-safe 值做稳定字符串化（对象键按字母序排序）。
+     *
+     * @param value 输入值。
+     * @returns 稳定 JSON 字符串。
+     */
+    private stableStringify(value: unknown): string {
+        if (value === null || typeof value !== 'object') return JSON.stringify(value);
+        if (Array.isArray(value)) {
+            return '[' + value.map((item) => this.stableStringify(item)).join(',') + ']';
+        }
+        const keys = Object.keys(value as Record<string, unknown>).sort();
+        return '{' + keys
+            .map((key) => JSON.stringify(key) + ':' + this.stableStringify((value as Record<string, unknown>)[key]))
+            .join(',') + '}';
     }
 
     /**
@@ -258,8 +316,101 @@ export class CliProcess implements vscode.Disposable {
         if (permissionMode && !this.hasPermissionModeArgument(args)) {
             args.push('--permission-mode', permissionMode);
         }
+        this.appendMcpArgs(args);
+        this.appendSkillArgs(args);
         if (resumeSessionId) args.push('--resume', resumeSessionId);
         return args;
+    }
+
+    /**
+     * 将 `mcpServers` 与 `strictMcpConfig` 配置注入 Claude CLI 启动参数。
+     *
+     * 参考 Claude Code 官方扩展 (`anthropic.claude-code` 2.1.x) 的 SDK 实现：
+     * - 当 `mcpServers` 非空时追加 `--mcp-config '{"mcpServers":...}'`；
+     * - 当 `strictMcpConfig` 为 true 时追加 `--strict-mcp-config`；
+     *
+     * 若用户已在 `chat.cliArgs` 中显式提供同名参数，则尊重用户值不再重复追加，
+     * 避免 Claude CLI 因重复参数而报错或行为不确定。
+     *
+     * @param args 已构造的启动参数数组（原地修改）。
+     */
+    private appendMcpArgs(args: string[]): void {
+        const config = this.currentConfig;
+        const servers = config?.mcpServers;
+        if (servers && Object.keys(servers).length > 0 && !this.hasMcpConfigArgument(args)) {
+            args.push('--mcp-config', JSON.stringify({ mcpServers: servers }));
+        }
+        if (config?.strictMcpConfig && !args.includes('--strict-mcp-config')) {
+            args.push('--strict-mcp-config');
+        }
+    }
+
+    /**
+     * 将 `skills` 配置注入 Claude CLI `--allowedTools` 启动参数。
+     *
+     * 参考 Claude Code 官方扩展中 SDK 对 skills 的处理方式：
+     * - `"all"`        → 注入 `Skill`
+     * - `string[]`     → 注入 `Skill(name1),Skill(name2)`
+     *
+     * 若用户已在 `chat.cliArgs` 中显式提供 `--allowedTools`，则会与用户值合并去重；
+     * 否则直接追加一个新的 `--allowedTools` 段。
+     *
+     * @param args 已构造的启动参数数组（原地修改）。
+     */
+    private appendSkillArgs(args: string[]): void {
+        const skills = this.currentConfig?.skills;
+        if (!skills) return;
+        const skillTokens: string[] = skills === 'all'
+            ? ['Skill']
+            : skills.map((name) => `Skill(${name})`);
+        if (skillTokens.length === 0) return;
+        const existingIndex = this.findAllowedToolsValueIndex(args);
+        if (existingIndex === -1) {
+            args.push('--allowedTools', skillTokens.join(','));
+            return;
+        }
+        const merged = new Set<string>();
+        for (const item of args[existingIndex].split(',')) {
+            const trimmed = item.trim();
+            if (trimmed) merged.add(trimmed);
+        }
+        for (const token of skillTokens) merged.add(token);
+        args[existingIndex] = Array.from(merged).join(',');
+    }
+
+    /**
+     * 判断启动参数中是否已经包含 `--mcp-config`。
+     *
+     * @param args 待检查的启动参数。
+     * @returns 已存在 `--mcp-config` 或 `--mcp-config=...` 时返回 true。
+     */
+    private hasMcpConfigArgument(args: string[]): boolean {
+        return args.some((arg) => arg === '--mcp-config' || arg.startsWith('--mcp-config='));
+    }
+
+    /**
+     * 在启动参数数组中查找 `--allowedTools` 对应的值索引。
+     *
+     * 同时兼容 `--allowedTools <value>` 与 `--allowedTools=<value>` 两种写法；
+     * 找不到时返回 -1。
+     *
+     * @param args 待检查的启动参数。
+     * @returns 值所在索引；若 args 仅以 `=` 形式提供，则会就地修改首项把值提出，返回该索引。
+     */
+    private findAllowedToolsValueIndex(args: string[]): number {
+        for (let index = 0; index < args.length; index++) {
+            const arg = args[index];
+            if (arg === '--allowedTools') {
+                if (index + 1 < args.length) return index + 1;
+                return -1;
+            }
+            if (arg.startsWith('--allowedTools=')) {
+                args[index] = arg.substring('--allowedTools='.length);
+                args.splice(index, 0, '--allowedTools');
+                return index + 1;
+            }
+        }
+        return -1;
     }
 
     /**
