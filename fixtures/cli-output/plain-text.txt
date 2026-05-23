@@ -1,0 +1,19 @@
+Command:
+
+claude -p --output-format text --permission-mode dontAsk --max-budget-usd 0.02 'Reply with exactly: CLI_PROBE_OK'
+
+Exit code:
+
+0
+
+stdout:
+
+CLI_PROBE_OK
+
+stderr:
+
+(empty)
+
+Note:
+
+This is a real authenticated CLI output fixture captured on 2026-05-23 after installing claude-code 2.1.141 and completing local Claude CLI authentication.

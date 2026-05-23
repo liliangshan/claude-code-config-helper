@@ -2,19 +2,20 @@
  * @file LLS CCAI 配置管理器。
  *
  * Vendored design from liliangshan.openapi-compatible-copilot configManager，
- * 负责 Provider / Model / 当前模型 / Relay 与共享提示词配置管理能力。
+ * 负责 Provider / Model / 当前模型与共享提示词配置管理能力。
  */
 
 import * as vscode from 'vscode';
 
 import {
+    CHAT_CURRENT_MODEL_KEY,
     CONFIG_NAMESPACE,
     CURRENT_MODEL_STATE_KEY,
-    DEFAULT_RELAY_PORT,
     PROVIDER_API_KEY_SECRET_PREFIX,
     PROVIDERS_STATE_KEY,
-    RELAY_STATE_KEY,
-    TASK_FLOW_BYPASS_PERMISSIONS_KEY
+    TASK_FLOW_BYPASS_PERMISSIONS_KEY,
+    TASK_FLOW_TARGET_KEY,
+    CHAT_CLI_PATH_KEY
 } from './constants';
 import type {
     AppLanguage,
@@ -23,9 +24,9 @@ import type {
     ModelConfig,
     ProviderConfig,
     ProviderConfigWithoutSecrets,
-    RelayServerConfig,
     ResolvedAppLanguage,
-    SharedOpenApiCopilotSettings
+    SharedOpenApiCopilotSettings,
+    TaskFlowTarget
 } from './types';
 
 /** 导入导出 JSON 的版本号。 */
@@ -51,6 +52,11 @@ function getWorkspaceInspectValue<T>(inspect: { workspaceValue?: T; workspaceFol
     return inspect?.workspaceFolderValue ?? inspect?.workspaceValue;
 }
 
+/** 获取配置检查结果中的全局层级值。 */
+function getGlobalInspectValue<T>(inspect: { globalValue?: T } | undefined): T | undefined {
+    return inspect?.globalValue;
+}
+
 /** 导入导出配置文件结构。 */
 export interface ExportedConfig {
     /** 配置文件版本。 */
@@ -61,8 +67,6 @@ export interface ExportedConfig {
     providers: ProviderConfigWithoutSecrets[];
     /** 当前模型选择。 */
     currentModel: CurrentModelSelection | null;
-    /** 中转服务配置。 */
-    relay: RelayServerConfig;
 }
 
 /**
@@ -90,11 +94,11 @@ export class ConfigManager implements vscode.Disposable {
         return {
             providers: this.listProviders(),
             currentModel: this.getCurrentModel(),
-            relay: this.getRelayConfig(),
-            relayStatusText: '本地中转服务尚未启动',
+            chatCliPath: this.getChatCliPath(),
             configuredLanguage: this.getConfiguredUiLanguage(),
             resolvedLanguage: this.getResolvedUiLanguage(),
-            taskFlowBypassPermissions: this.getTaskFlowBypassPermissions()
+            taskFlowBypassPermissions: this.getTaskFlowBypassPermissions(),
+            taskFlowTarget: this.getTaskFlowTarget()
         };
     }
 
@@ -152,6 +156,22 @@ export class ConfigManager implements vscode.Disposable {
             .getConfiguration(CCAI_NAMESPACE)
             .update(TASK_FLOW_BYPASS_PERMISSIONS_KEY, !!enabled, vscode.ConfigurationTarget.Global);
         this.changeEmitter.fire();
+    }
+
+    /** 读取任务流提示词发送目标，默认保留外部 Claude Code 以兼容旧链路。 */
+    public getTaskFlowTarget(): TaskFlowTarget {
+        const value = vscode.workspace
+            .getConfiguration(CCAI_NAMESPACE)
+            .get<string>(TASK_FLOW_TARGET_KEY, 'externalClaudeCode');
+        return value === 'builtinChat' ? 'builtinChat' : 'externalClaudeCode';
+    }
+
+    /** 读取内置 Chat 当前配置的 Claude CLI 可执行文件路径。 */
+    public getChatCliPath(): string {
+        return vscode.workspace
+            .getConfiguration(CCAI_NAMESPACE)
+            .get<string>(CHAT_CLI_PATH_KEY, '')
+            .trim();
     }
 
     /** 读取全部提供商配置。 */
@@ -248,21 +268,48 @@ export class ConfigManager implements vscode.Disposable {
         await this.updateProviders(providers);
     }
 
-    /** 读取当前模型选择。 */
+    /**
+     * 读取当前模型选择。
+     *
+     * 优先读取项目/工作区配置，其次读取全局配置；如果新配置不存在，则兼容读取旧版 globalState。
+     */
     public getCurrentModel(): CurrentModelSelection | null {
-        return this.context.globalState.get<CurrentModelSelection | null>(CURRENT_MODEL_STATE_KEY, null);
+        const config = vscode.workspace.getConfiguration(CCAI_NAMESPACE);
+        const inspected = config.inspect<CurrentModelSelection | null>(CHAT_CURRENT_MODEL_KEY);
+        return this.normalizeCurrentModelSelection(
+            getWorkspaceInspectValue(inspected) ??
+                getGlobalInspectValue(inspected) ??
+                this.context.globalState.get<CurrentModelSelection | null>(CURRENT_MODEL_STATE_KEY, null)
+        );
     }
 
-    /** 保存当前模型选择。 */
+    /**
+     * 同时保存项目级和全局级当前模型选择。
+     *
+     * 项目级配置用于当前仓库优先命中，全局配置用于其它仓库兜底；旧版 globalState 也同步更新以兼容配置页导入导出。
+     */
     public async setCurrentModel(selection: CurrentModelSelection | null): Promise<void> {
+        const normalized = this.normalizeCurrentModelSelection(selection);
+        const config = vscode.workspace.getConfiguration(CCAI_NAMESPACE);
+        await config.update(CHAT_CURRENT_MODEL_KEY, normalized, vscode.ConfigurationTarget.Workspace);
+        await config.update(CHAT_CURRENT_MODEL_KEY, normalized, vscode.ConfigurationTarget.Global);
         await this.context.globalState.update(CURRENT_MODEL_STATE_KEY, selection);
         this.changeEmitter.fire();
     }
 
-    /** 读取中转服务配置。 */
-    public getRelayConfig(): RelayServerConfig {
-        const raw = this.context.globalState.get<RelayServerConfig | undefined>(RELAY_STATE_KEY);
-        return this.normalizeRelay(raw);
+    /**
+     * 校验并规范化当前模型选择对象。
+     *
+     * @param selection 原始配置值。
+     * @returns 合法模型选择；否则为 null。
+     */
+    private normalizeCurrentModelSelection(selection: unknown): CurrentModelSelection | null {
+        if (!selection || typeof selection !== 'object') return null;
+        const record = selection as Record<string, unknown>;
+        const providerId = typeof record.providerId === 'string' ? record.providerId.trim() : '';
+        const modelId = typeof record.modelId === 'string' ? record.modelId.trim() : '';
+        if (!providerId || !modelId) return null;
+        return { providerId, modelId };
     }
 
     /** 读取设置快照：系统提示词继续共享。 */
@@ -301,20 +348,13 @@ export class ConfigManager implements vscode.Disposable {
         this.changeEmitter.fire();
     }
 
-    /** 保存中转服务配置。 */
-    public async saveRelayConfig(config: RelayServerConfig): Promise<void> {
-        await this.context.globalState.update(RELAY_STATE_KEY, this.normalizeRelay(config));
-        this.changeEmitter.fire();
-    }
-
     /** 导出不含密钥的配置 JSON。 */
     public exportConfig(): ExportedConfig {
         return {
             version: EXPORT_VERSION,
             exportedAt: Date.now(),
             providers: this.listProviders(),
-            currentModel: this.getCurrentModel(),
-            relay: this.getRelayConfig()
+            currentModel: this.getCurrentModel()
         };
     }
 
@@ -328,7 +368,6 @@ export class ConfigManager implements vscode.Disposable {
             config.providers.map((provider) => this.normalizeProvider(provider))
         );
         await this.context.globalState.update(CURRENT_MODEL_STATE_KEY, config.currentModel ?? null);
-        await this.context.globalState.update(RELAY_STATE_KEY, this.normalizeRelay(config.relay));
         this.changeEmitter.fire();
     }
 
@@ -444,14 +483,4 @@ export class ConfigManager implements vscode.Disposable {
         };
     }
 
-    /** 规范化中转服务配置。 */
-    private normalizeRelay(config: RelayServerConfig | undefined): RelayServerConfig {
-        return {
-            port: config?.port || DEFAULT_RELAY_PORT,
-            autoStart: config?.autoStart ?? true,
-            extraEnvVars: Array.isArray(config?.extraEnvVars) ? config.extraEnvVars : [],
-            skipAuthLogin: config?.skipAuthLogin ?? true,
-            disableLoginPrompt: config?.disableLoginPrompt ?? true
-        };
-    }
 }

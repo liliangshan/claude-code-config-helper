@@ -91,6 +91,14 @@ export class RelayServer implements vscode.Disposable {
     private currentStatus: RelayStatus = { kind: 'stopped' };
 
     /**
+     * Relay 收到 `POST /v1/messages` 命中后触发的回调。
+     *
+     * 由外部（例如 extension.ts 中的 Relay 命中看门狗）通过 {@link setOnHit}
+     * 注入；未注入时为 undefined，本类不触发任何额外行为。
+     */
+    private onHit: (() => void) | undefined;
+
+    /**
      * 创建 RelayServer 实例。
      *
      * @param options 服务构造参数。
@@ -123,6 +131,19 @@ export class RelayServer implements vscode.Disposable {
     }
 
     /**
+     * 注入"Relay 命中"回调。
+     *
+     * 收到的请求路径为 `POST /v1/messages` 时触发一次回调；其它路径（如未知探测、
+     * `GET /` 等）不触发，避免误清除外部计时器。回调内部异常会被吞掉，不会影响
+     * Relay 本身的请求处理。
+     *
+     * @param cb 命中回调；传 undefined 可取消注册。
+     */
+    public setOnHit(cb: (() => void) | undefined): void {
+        this.onHit = cb;
+    }
+
+    /**
      * 启动本地 HTTP 中转服务。
      *
      * 若期望端口被占用则从其+1 起递增寻找空闲端口；找到端口后实际监听。
@@ -136,21 +157,25 @@ export class RelayServer implements vscode.Disposable {
         }
         this.setStatus({ kind: 'starting', port: this.desiredPort });
         try {
-            const port = (await isPortFree(this.desiredPort, LISTEN_HOST))
+            const port = this.desiredPort === 0
+                ? 0
+                : (await isPortFree(this.desiredPort, LISTEN_HOST))
                 ? this.desiredPort
                 : await findFreePort(this.desiredPort + 1, this.maxPortTries, LISTEN_HOST);
             const server = http.createServer((req, res) => this.handleRequest(req, res));
             await this.listenServer(server, port);
             this.server = server;
-            this.listeningPort = port;
+            const address = server.address();
+            const actualPort = typeof address === 'object' && address ? address.port : port;
+            this.listeningPort = actualPort;
             this.setStatus({
                 kind: 'leader',
-                port,
+                port: actualPort,
                 pid: process.pid,
                 startedAt: Date.now()
             });
-            Logger.info(`本地中转服务已启动：http://${LISTEN_HOST}:${port}`);
-            return port;
+            Logger.info(`本地中转服务已启动：http://${LISTEN_HOST}:${actualPort}`);
+            return actualPort;
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             this.setStatus({ kind: 'error', port: this.desiredPort, message });
@@ -241,6 +266,7 @@ export class RelayServer implements vscode.Disposable {
      */
     private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
         try {
+            this.notifyHitIfRelevant(req);
             await this.handler(req, res);
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -252,6 +278,29 @@ export class RelayServer implements vscode.Disposable {
             if (!res.writableEnded) {
                 res.end(JSON.stringify({ error: { type: 'internal_error', message } }));
             }
+        }
+    }
+
+    /**
+     * 若请求是 `POST /v1/messages`，触发已注册的命中回调。
+     *
+     * 仅匹配主转发路径，避免 404 探测、健康检查等噪声请求误清除外部计时器；
+     * 回调内部异常会被吞掉并写入日志。
+     *
+     * @param req 进入的 HTTP 请求。
+     */
+    private notifyHitIfRelevant(req: http.IncomingMessage): void {
+        if (!this.onHit) return;
+        const method = (req.method ?? '').toUpperCase();
+        if (method !== 'POST') return;
+        const url = req.url ?? '';
+        const path = url.split('?', 1)[0];
+        if (path !== '/v1/messages') return;
+        try {
+            this.onHit();
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            Logger.warn(`Relay 命中回调执行失败：${message}`);
         }
     }
 

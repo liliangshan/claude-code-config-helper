@@ -15,16 +15,6 @@ import type {
 /** 允许任务流使用的状态集合。 */
 const VALID_STATUSES: ReadonlySet<LlsTaskStatus> = new Set(['pending', 'in_progress', 'completed', 'blocked']);
 
-/** relay 触发任务流的处理结果。 */
-export interface LlsTaskRelayTriggerResult {
-    /** 是否成功生成任务流。 */
-    ok: boolean;
-    /** 响应给 Claude Code 的文本。 */
-    message: string;
-    /** 生成后的任务流快照。 */
-    snapshot: LlsTaskSnapshot;
-}
-
 /**
  * LLS CCAI 任务流核心服务。
  *

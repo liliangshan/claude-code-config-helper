@@ -221,10 +221,16 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         switch (type) {
             case 'response.created':
                 return this.handleResponseCreated(payload);
+            case 'response.in_progress':
+                return this.handleResponseInProgress(payload);
             case 'response.output_item.added':
                 return this.handleOutputItemAdded(payload);
+            case 'response.output_item.done':
+                return this.handleOutputItemDone(payload);
             case 'response.content_part.added':
                 return this.handleContentPartAdded(payload);
+            case 'response.content_part.done':
+                return this.handleContentPartDone(payload);
             case 'response.output_text.delta':
                 return this.handleOutputTextDelta(payload);
             case 'response.output_text.done':
@@ -265,6 +271,22 @@ export class OpenAIResponsesToAnthropicStreamConverter {
     }
 
     /**
+     * 处理 response.in_progress 事件。
+     *
+     * 该事件只表示 Responses 对象进入运行态，通常不包含可转给 Anthropic 的
+     * content block；这里读取元信息并确保 message_start 已发出，避免被记录成
+     * unsupported_sse_event。
+     *
+     * @param payload Responses 事件 payload。
+     * @returns 可能产生的 Anthropic message_start SSE 文本。
+     */
+    private handleResponseInProgress(payload: Record<string, unknown>): string {
+        const response = isRecord(payload.response) ? payload.response : payload;
+        this.readResponseMetadata(response);
+        return this.ensureMessageStart();
+    }
+
+    /**
      * 处理 response.output_item.added 事件。
      *
      * @param payload Responses 事件 payload。
@@ -284,6 +306,36 @@ export class OpenAIResponsesToAnthropicStreamConverter {
     }
 
     /**
+     * 处理 response.output_item.done 事件。
+     *
+     * 对 function_call 来说，该事件表示整个工具调用输出项完成；如果 arguments
+     * 尚有未输出的片段，先补发 input_json_delta，然后关闭对应 content block。
+     * 普通 message output item 的文本块由 content_part/output_text 事件负责关闭。
+     *
+     * @param payload Responses 事件 payload。
+     * @returns 可能产生的 Anthropic SSE 文本。
+     */
+    private handleOutputItemDone(payload: Record<string, unknown>): string {
+        const outputIndex = readOutputIndex(payload, this.warnings, 'response.output_item.done');
+        if (outputIndex === undefined) return '';
+        const item = isRecord(payload.item) ? payload.item : {};
+        const state = this.getOutputItemState(outputIndex);
+        if (typeof item.type === 'string') state.type = item.type;
+        if (typeof item.id === 'string') state.id = item.id;
+        if (typeof item.call_id === 'string') state.callId = item.call_id;
+        if (typeof item.name === 'string') state.name = item.name;
+        if (typeof item.arguments === 'string' && item.arguments.length >= state.argumentsJson.length) {
+            state.argumentsJson = item.arguments;
+        }
+        let out = this.ensureMessageStart() + this.maybeStartFunctionCall(state) + this.emitPendingFunctionArgumentsDelta(state);
+        if (state.started && !state.closed && state.anthropicBlockIndex !== undefined) {
+            state.closed = true;
+            out += formatAnthropicSse('content_block_stop', { type: 'content_block_stop', index: state.anthropicBlockIndex });
+        }
+        return out;
+    }
+
+    /**
      * 处理 response.content_part.added 事件。
      *
      * @param payload Responses 事件 payload。
@@ -296,6 +348,29 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         const part = isRecord(payload.part) ? payload.part : {};
         const initialText = typeof part.text === 'string' ? part.text : typeof part.refusal === 'string' ? part.refusal : '';
         return this.startTextPart(outputIndex, contentIndex, initialText);
+    }
+
+    /**
+     * 处理 response.content_part.done 事件。
+     *
+     * 若之前未收到 content_part.added / output_text.delta，但 done 事件携带完整文本，
+     * 则先创建文本块并输出该文本，再关闭 block；否则只关闭已存在的文本块。
+     *
+     * @param payload Responses 事件 payload。
+     * @returns Anthropic content_block_stop SSE 文本。
+     */
+    private handleContentPartDone(payload: Record<string, unknown>): string {
+        const outputIndex = readOutputIndex(payload, this.warnings, 'response.content_part.done');
+        const contentIndex = readContentIndex(payload, this.warnings, 'response.content_part.done');
+        if (outputIndex === undefined || contentIndex === undefined) return '';
+        const key = makeTextPartKey(outputIndex, contentIndex);
+        const existing = this.state.textParts.get(key);
+        if (!existing) {
+            const part = isRecord(payload.part) ? payload.part : {};
+            const text = typeof part.text === 'string' ? part.text : typeof part.refusal === 'string' ? part.refusal : '';
+            return this.startTextPart(outputIndex, contentIndex, text) + this.closeTextPart(outputIndex, contentIndex);
+        }
+        return this.closeTextPart(outputIndex, contentIndex);
     }
 
     /**

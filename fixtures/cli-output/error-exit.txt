@@ -1,0 +1,19 @@
+Command:
+
+HTTP_PROXY=http://127.0.0.1:3080 HTTPS_PROXY=http://127.0.0.1:3080 ALL_PROXY=http://127.0.0.1:3080 claude -p --output-format text --permission-mode dontAsk --max-budget-usd 0.01 'Reply with exactly: CLI_PROBE_OK'
+
+Exit code:
+
+1
+
+stdout:
+
+Not logged in · Please run /login
+
+stderr:
+
+(empty)
+
+Classification:
+
+Authentication-required error surfaced on stdout with non-zero exit code.

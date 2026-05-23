@@ -23,6 +23,8 @@ import { buildOpenAIForwardHeaders, describeOpenAIAuthHeaders } from './openAIHe
 import type { UpstreamAdapter, UpstreamRequestContext } from './router';
 import { injectLlsTaskRequestBody, type LlsTaskRequestInjectionDeps } from './taskRequestInjection';
 import { joinUpstreamUrl } from './upstreamUrl';
+import { UPSTREAM_SOCKET_IDLE_TIMEOUT_MS } from './upstreamTimeouts';
+import { UsageReporter, type UsageSink } from './usageReporter';
 
 /** OpenAI Responses API 路径。 */
 const OPENAI_RESPONSES_PATH = '/responses';
@@ -45,10 +47,12 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
      *
      * @param recorder 可选调试记录器。
      * @param taskDeps 可选任务流依赖。
+     * @param usageSink 可选 token 使用量上报回调；用于把上游 usage 透传到 Chat UI。
      */
     public constructor(
         private readonly recorder?: DebugRecorder,
-        private readonly taskDeps?: OpenAIResponsesProxyTaskDeps
+        private readonly taskDeps?: OpenAIResponsesProxyTaskDeps,
+        private readonly usageSink?: UsageSink
     ) {}
 
     /**
@@ -72,7 +76,7 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
         const injectedBodyText = injectLlsTaskRequestBody(
             this.rewriteAnthropicModel(rawBody, parsedBody, modelId),
             this.taskDeps,
-            { createTriggered: ctx.llsTaskCreateTriggered === true }
+            { createTriggered: ctx.llsTaskCreateTriggered === true, modelName: modelId }
         ).bodyText;
         await this.safeRecordRequestBody(injectedBodyText);
         const anthropicBody = this.parseJson(injectedBodyText);
@@ -113,7 +117,8 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
             hostname: upstreamUrl.hostname,
             port: upstreamUrl.port || (upstreamUrl.protocol === 'http:' ? 80 : 443),
             path: `${upstreamUrl.pathname}${upstreamUrl.search}`,
-            headers
+            headers,
+            timeout: UPSTREAM_SOCKET_IDLE_TIMEOUT_MS
         };
         let responseStatus: number | undefined;
         let responseHeaders: Record<string, string | string[] | undefined> = {};
@@ -159,6 +164,20 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
             upstreamReq.on('error', (err) => {
                 errorMessage = err.message;
                 this.writeJsonError(ctx.res, 502, buildAnthropicErrorFromUpstream(502, err.message));
+                resolve();
+            });
+            upstreamReq.on('timeout', () => {
+                const seconds = Math.round(UPSTREAM_SOCKET_IDLE_TIMEOUT_MS / 1000);
+                errorMessage = `上游请求超时（${seconds}s 空闲）`;
+                Logger.error(`OpenAI Responses 上游 socket 空闲 ${seconds}s 超时，主动断开：${upstreamUrl.toString()}`);
+                try {
+                    upstreamReq.destroy(new Error(errorMessage));
+                } catch {
+                    // ignore
+                }
+                // 流式响应已开始时改用 SSE error 帧；否则回写 JSON 504。
+                const isStream = ctx.res.headersSent && !ctx.res.writableEnded;
+                this.writeStreamOrJsonError(ctx.res, isStream, 'timeout', errorMessage);
                 resolve();
             });
             upstreamReq.write(upstreamBodyText);
@@ -211,6 +230,9 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
             const intercepted = this.taskDeps
                 ? interceptAnthropicResponse(anthropicBody, 'application/json', this.toInterceptorDeps())
                 : { body: anthropicBody };
+            // 在 Anthropic 转换完成后立即抽取 usage 并上报给 Chat UI。
+            const usageReporter = new UsageReporter(this.usageSink);
+            usageReporter.feedJson(intercepted.body);
             ctx.res.statusCode = statusCode;
             this.copyResponseHeaders(ctx.res, headers, 'application/json; charset=utf-8');
             ctx.res.end(intercepted.body);
@@ -295,6 +317,8 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
         this.copyResponseHeaders(ctx.res, upstreamRes.headers, 'text/event-stream; charset=utf-8');
         const converter = new OpenAIResponsesToAnthropicStreamConverter();
         const interceptor = this.taskDeps ? new LlsTaskStreamingInterceptor(this.toInterceptorDeps()) : undefined;
+        // 每次响应独立的 usage 抽取器，吃下行 Anthropic SSE。
+        const usageReporter = new UsageReporter(this.usageSink);
         const chunks: string[] = [];
         const upstreamChunks: string[] = [];
         upstreamRes.on('data', (chunk: Buffer | string) => {
@@ -304,13 +328,18 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
             if (!converted) return;
             const out = interceptor ? interceptor.feed(converted) : converted;
             chunks.push(out);
+            usageReporter.feed(out);
             ctx.res.write(out);
         });
         upstreamRes.on('end', () => {
             const tail = converter.end();
             const out = interceptor ? interceptor.feed(tail) + interceptor.end() : tail;
             chunks.push(out);
-            if (out) ctx.res.write(out);
+            if (out) {
+                usageReporter.feed(out);
+                ctx.res.write(out);
+            }
+            usageReporter.end();
             if (!ctx.res.writableEnded) ctx.res.end();
             const warnings = converter.getWarnings();
             if (warnings.length > 0) Logger.warn(`OpenAI Responses SSE 转换 warnings：${JSON.stringify(warnings)}`);

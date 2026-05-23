@@ -1,0 +1,15 @@
+Structured permission prompt fixture is not available yet.
+
+Current status:
+
+The CLI is authenticated and text/json/stream-json probes work, but no real structured permission/tool event has been captured yet.
+
+Help output confirms these permission-related options exist:
+
+--permission-mode <mode>    Permission mode to use for the session (choices: "acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan")
+--allowedTools <tools...>   Comma or space-separated list of tool names to allow.
+--disallowedTools <tools...> Comma or space-separated list of tool names to deny.
+
+Replacement requirement:
+
+Capture a real permission prompt or a `stream-json` permission/tool event before implementing Webview permission cards. If the CLI only exposes TTY text prompts for this path, keep the MVP as plain text and do not render structured permission cards.

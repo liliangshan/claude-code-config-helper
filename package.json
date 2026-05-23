@@ -57,6 +57,22 @@
                 "category": "%command.category%"
             },
             {
+                "command": "claudeRouter.chat.open",
+                "title": "%command.chat.open.title%",
+                "category": "%command.category%",
+                "icon": "$(comment-discussion)"
+            },
+            {
+                "command": "claudeRouter.chat.selectCli",
+                "title": "%command.chat.selectCli.title%",
+                "category": "%command.category%"
+            },
+            {
+                "command": "claudeRouter.chat.restart",
+                "title": "%command.chat.restart.title%",
+                "category": "%command.category%"
+            },
+            {
                 "command": "claudeRouter.refreshProviders",
                 "title": "%command.refreshProviders.title%",
                 "category": "%command.category%",
@@ -88,11 +104,6 @@
             {
                 "command": "claudeRouter.clearCurrentModel",
                 "title": "%command.clearCurrentModel.title%",
-                "category": "%command.category%"
-            },
-            {
-                "command": "claudeRouter.restartRelay",
-                "title": "%command.restartRelay.title%",
                 "category": "%command.category%"
             },
             {
@@ -143,6 +154,14 @@
                     "title": "%view.container.title%",
                     "icon": "resources/activity-bar.svg"
                 }
+            ],
+            "secondarySidebar": [
+                {
+                    "id": "claudeRouterChatSecondary",
+                    "title": "%view.chat.container.title%",
+                    "icon": "resources/reference-claude-logo.svg",
+                    "when": "!claudeRouter.chat.useActivityBarFallback"
+                }
             ]
         },
         "views": {
@@ -153,6 +172,22 @@
                     "name": "%view.providers.name%",
                     "icon": "resources/activity-bar.svg",
                     "contextualTitle": "%view.providers.contextualTitle%"
+                }
+            ],
+            "claudeRouterChatSecondary": [
+                {
+                    "id": "claudeRouter.chatSidebarSecondary",
+                    "type": "webview",
+                    "name": "%view.chat.name%",
+                    "icon": "resources/reference-claude-logo.svg"
+                }
+            ],
+            "claudeRouterChatFallback": [
+                {
+                    "id": "claudeRouter.chatSidebar",
+                    "type": "webview",
+                    "name": "%view.chat.name%",
+                    "icon": "resources/reference-claude-logo.svg"
                 }
             ]
         },
@@ -186,6 +221,92 @@
                     "description": "%configuration.taskFlowBypassPermissions.description%",
                     "scope": "application"
                 },
+                "claudeCodeConfigHelper.taskFlow.target": {
+                    "type": "string",
+                    "enum": [
+                        "externalClaudeCode",
+                        "builtinChat"
+                    ],
+                    "default": "externalClaudeCode",
+                    "description": "%configuration.taskFlow.target.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "%configuration.chat.enabled.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.cliPath": {
+                    "type": "string",
+                    "default": "",
+                    "description": "%configuration.chat.cliPath.description%",
+                    "scope": "machine-overridable"
+                },
+                "claudeCodeConfigHelper.chat.cliArgs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [],
+                    "description": "%configuration.chat.cliArgs.description%",
+                    "scope": "machine-overridable"
+                },
+                "claudeCodeConfigHelper.chat.cliCwd": {
+                    "type": "string",
+                    "default": "",
+                    "description": "%configuration.chat.cliCwd.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.transport": {
+                    "type": "string",
+                    "enum": [
+                        "streamJsonStdio",
+                        "printStdio",
+                        "pty"
+                    ],
+                    "default": "streamJsonStdio",
+                    "description": "%configuration.chat.transport.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.cliEnv": {
+                    "type": "object",
+                    "default": {},
+                    "description": "%configuration.chat.cliEnv.description%",
+                    "scope": "machine-overridable"
+                },
+                "claudeCodeConfigHelper.chat.permissionMode": {
+                    "type": "string",
+                    "enum": [
+                        "default",
+                        "acceptEdits",
+                        "bypassPermissions",
+                        "auto",
+                        "dontAsk",
+                        "plan"
+                    ],
+                    "default": "acceptEdits",
+                    "description": "%configuration.chat.permissionMode.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.currentModel": {
+                    "type": [
+                        "object",
+                        "null"
+                    ],
+                    "default": null,
+                    "properties": {
+                        "providerId": {
+                            "type": "string"
+                        },
+                        "modelId": {
+                            "type": "string"
+                        }
+                    },
+                    "additionalProperties": false,
+                    "description": "%configuration.chat.currentModel.description%",
+                    "scope": "resource"
+                },
                 "openapicopilot.systemPrompt": {
                     "type": "string",
                     "default": "",
@@ -200,7 +321,9 @@
                 { "command": "claudeRouter.openSettingsJson" },
                 { "command": "claudeRouter.openGlobalSharedSettings" },
                 { "command": "claudeRouter.openWorkspaceSharedSettings" },
-                { "command": "claudeRouter.restartRelay" },
+                { "command": "claudeRouter.chat.open" },
+                { "command": "claudeRouter.chat.selectCli" },
+                { "command": "claudeRouter.chat.restart" },
                 { "command": "claudeRouter.pasteTaskFlowToClaude" },
                 { "command": "claudeRouter.llsCcaiTask.openMenu" },
                 { "command": "claudeRouter.llsCcaiTask.showProgress" },
@@ -239,7 +362,8 @@
         "vscode:prepublish": "npm run compile",
         "compile": "tsc -p ./",
         "watch": "tsc -watch -p ./",
-        "typecheck": "tsc --noEmit -p ./"
+        "typecheck": "tsc --noEmit -p ./",
+        "test": "npm run compile && node --test out/chat/__tests__/*.test.js"
     },
     "devDependencies": {
         "@types/node": "^20.11.0",

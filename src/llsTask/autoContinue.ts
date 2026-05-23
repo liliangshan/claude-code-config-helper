@@ -6,6 +6,19 @@ import { pasteToClaudeCode } from './paster';
 import type { LlsTaskService } from './service';
 
 /**
+ * 自动续推时使用的"提交一条用户消息"回调。
+ *
+ * 优先用于内置 Chat WebView + stream-json CLI 适配器场景：实现侧应直接把
+ * `text` 作为一条用户消息塞到 CLI stdin（同时让该消息出现在 Chat UI 中），
+ * 完全绕开剪贴板、`claude-vscode.focus`、osascript / SendKeys 等系统级模拟，
+ * 解决"非外部 Claude Code 扩展环境下命令不存在 / 焦点抢不到"的问题。
+ *
+ * @param text 续推提示词文本。
+ * @returns 提交完成 Promise。
+ */
+export type AutoContinueSubmitter = (text: string) => Promise<void>;
+
+/**
  * 上一轮主对话响应缺失任务流工具调用时的续推延时，单位毫秒。
  *
  * 上游模型（尤其是 OpenAI 兼容侧的国产模型）有时会"幻觉"地用文本声称已经
@@ -37,15 +50,14 @@ const DIAGNOSTICS_CONTINUE_DELAY_MS = 4_000;
  * 诊断工具命中后写回 Claude Code 的续推提示词。
  *
  * 提示词以 {@link GET_DIAGNOSTICS_TRIGGER_TOKEN} 作为首行，让下一轮请求经过
- * relay 时被 {@link "../relay/taskRequestInjection".injectLlsTaskRequestBody}
- * 识别并把实时 VS Code 诊断 JSON 注入到 user 消息中。模型此时看到的诊断是
+ * Chat 发送链路时识别并把实时 VS Code 诊断 JSON 注入到 user 消息中。模型此时看到的诊断是
  * "用户/系统刚刚提供的最新数据"，而不是上一轮自己说出来的过期 JSON。
  */
 const DIAGNOSTICS_CONTINUE_PROMPT = [
     GET_DIAGNOSTICS_TRIGGER_TOKEN,
     '',
     'You requested VS Code diagnostics via `get_llsccai_vscode_diagnostics` in the previous turn.',
-    'The relay has injected the live diagnostics above (or will inject them once this message is processed).',
+    'The chat host has injected the live diagnostics above (or will inject them once this message is processed).',
     'Please continue based on those diagnostics. Prioritize fixing entries whose severity is "error".',
     'After each batch of edits, you may call `get_llsccai_vscode_diagnostics` again to verify the diagnostics actually cleared.'
 ].join('\n');
@@ -76,11 +88,34 @@ export class AutoContinueScheduler {
     private static pendingDiagnosticsPrompt = '';
 
     /**
+     * 外部注入的"提交一条用户消息"回调；存在时优先于
+     * {@link pasteToClaudeCode}。
+     *
+     * 在内置 Chat WebView 启用后由 `extension.ts` 通过
+     * {@link setSubmitter} 注入。未注入时调度器回退到旧的剪贴板 + 系统级模拟
+     * 回车路径，以兼容部署在外部 Claude Code 扩展旁边的旧用法。
+     */
+    private static submitter: AutoContinueSubmitter | undefined;
+
+    /**
      * 创建自动续推调度器。
      *
      * @param service 任务流服务，用于读取快照与构造继续推进提示。
      */
     public constructor(private readonly service: LlsTaskService) {}
+
+    /**
+     * 注入续推提交回调。
+     *
+     * 设为 undefined 可恢复"剪贴板 + 模拟回车"旧路径。submitter 是静态字段，
+     * 整个扩展进程共享同一份，调用方无需关心调度器实例数量。
+     *
+     * @param submitter 续推提交回调；传入 undefined 可清空。
+     */
+    public static setSubmitter(submitter: AutoContinueSubmitter | undefined): void {
+        AutoContinueScheduler.submitter = submitter;
+        Logger.info(`[LlsTask][AutoContinue] submitter 已${submitter ? '注入' : '清空'}`);
+    }
 
     /**
      * 调度一次 4 秒后的自动续推。
@@ -151,12 +186,20 @@ export class AutoContinueScheduler {
     }
 
     /**
-     * 在定时器触发后执行快照检查并粘贴继续推进提示。
+     * 在定时器触发后执行快照检查并提交续推提示。
      *
-     * 注：这里使用 `autoSubmit: true` 让续推自动按下回车发送，避免出现"提示词
-     * 已经粘贴到 Claude Code 输入框、但需要用户手动按回车才能继续"的体验断点。
-     * 旧版本默认 `autoSubmit: false`，正是用户反馈"必须手动重发下才能执行"的
-     * 直接成因。
+     * 提交策略：
+     *
+     * 1. 优先调用 {@link AutoContinueScheduler.submitter}（内置 Chat 链路注入）
+     *    直接把续推提示词作为新一轮用户消息提交到 CLI——同时在 Chat UI 中
+     *    生成对应的 user 消息条目，不依赖系统级模拟回车，也不会抢焦点。
+     * 2. 没有 submitter 时回退到旧的剪贴板 + `claude-vscode.focus` +
+     *    `editor.action.clipboardPasteAction` + 系统级模拟回车路径，以兼容
+     *    外部 Claude Code 扩展旁路用法。
+     *
+     * 旧版本默认 `autoSubmit: false` 是用户反馈"必须手动重发下才能执行"的
+     * 直接成因；当前实现中 paster 回退分支仍打开 `autoSubmit: true`，但只要
+     * 注入了 submitter，整条剪贴板路径就不会再被走到。
      *
      * @param expectedVersion 定时器创建时捕获的版本号。
      */
@@ -165,8 +208,15 @@ export class AutoContinueScheduler {
         if (expectedVersion !== AutoContinueScheduler.version) return;
         const prompt = this.resolvePromptForCurrentKind();
         if (!prompt) return;
+        const submitter = AutoContinueScheduler.submitter;
         try {
-            await pasteToClaudeCode(prompt, { autoSubmit: true });
+            if (submitter) {
+                Logger.info(`[LlsTask][AutoContinue] 通过 submitter 提交续推消息，长度=${prompt.length}`);
+                await submitter(prompt);
+            } else {
+                Logger.info(`[LlsTask][AutoContinue] 无 submitter，回退到剪贴板续推，长度=${prompt.length}`);
+                await pasteToClaudeCode(prompt, { autoSubmit: true });
+            }
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             Logger.error('[LlsTask][AutoContinue] 自动续推失败：' + message);

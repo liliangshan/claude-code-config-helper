@@ -18,8 +18,8 @@ import * as vscode from 'vscode';
 /**
  * 用户/续推提示词中"请在下一轮请求里注入 VS Code 诊断"的触发词。
  *
- * 该触发词由 {@link "../relay/taskRequestInjection".injectLlsTaskRequestBody} 识别：
- * 当用户最后一条消息文本中包含该词时，relay 会用 {@link executeGetDiagnosticsTool}
+ * 该触发词由 Chat 发送链路识别：
+ * 当用户最后一条消息文本中包含该词时，Chat 宿主会用 {@link executeGetDiagnosticsTool}
  * 实时读取诊断并替换/追加到该用户消息中，让模型直接看到 VS Code 错误数据。
  *
  * 当前两类触发来源：
@@ -357,11 +357,11 @@ function buildGetDiagnosticsSummary(items: VscodeDiagnosticItem[]): GetDiagnosti
  * 把工具结果包装为"模型在响应里看到的 ACK 文本"。
  *
  * 注意：拦截器不会把诊断 JSON 塞进响应——只塞一段简短 ACK 告诉模型
- * "诊断请求已收到，relay 将在下一轮请求里把诊断数据作为用户消息提供"。
+ * "诊断请求已收到，Chat 宿主将在下一轮请求里把诊断数据作为用户消息提供"。
  * 这样模型在下一轮看到的是"用户提供的最新 VS Code 错误"，而不是"上一轮
  * 自己说出来的过期 JSON"，心智模型与续推时序都更符合 Anthropic 协议直觉。
  *
- * `resultJson` 仅用于 relay 日志便于排查问题，不会被写回响应文本。
+ * `resultJson` 仅用于排查问题，不会被写回响应文本。
  *
  * @param resultJson 通过 {@link executeGetDiagnosticsTool} 得到的 JSON 文本，
  *   保留参数以兼容旧调用方；当前实现中仅用于日志。
@@ -371,7 +371,7 @@ export function formatGetDiagnosticsToolMessage(resultJson: string): string {
     void resultJson;
     return [
         `[${LLS_CCAI_GET_DIAGNOSTICS_TOOL_LABEL}] tool call accepted.`,
-        `The relay will read the current VS Code Problems panel and inject the diagnostics as a user message in the next turn (via the ${GET_DIAGNOSTICS_TRIGGER_TOKEN} trigger).`,
+        `The chat host will read the current VS Code Problems panel and inject the diagnostics as a user message in the next turn (via the ${GET_DIAGNOSTICS_TRIGGER_TOKEN} trigger).`,
         'Please wait for the next turn to receive the actual diagnostics, then continue fixing the highest-severity entries first.'
     ].join('\n');
 }
@@ -380,8 +380,8 @@ export function formatGetDiagnosticsToolMessage(resultJson: string): string {
  * 把工具结果包装为"下一轮请求里要追加给模型的用户消息"。
  *
  * 输出文本用 BEGIN/END 标记把 JSON 包起来，便于模型在多轮历史中也能稳定识别
- * 诊断数据块。该函数由 {@link "../relay/taskRequestInjection".injectLlsTaskRequestBody}
- * 在识别到 {@link GET_DIAGNOSTICS_TRIGGER_TOKEN} 时调用。
+ * 诊断数据块。该函数由 Chat 发送链路在识别到
+ * {@link GET_DIAGNOSTICS_TRIGGER_TOKEN} 时调用。
  *
  * @param resultJson 通过 {@link executeGetDiagnosticsTool} 得到的 JSON 文本。
  * @returns 注入到 user 消息末尾的文本块内容。

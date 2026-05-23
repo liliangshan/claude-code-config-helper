@@ -2,32 +2,50 @@
 
 **Version:** 0.1.4
 
-Claude Code Config Helper is a VS Code extension for managing, routing, and enhancing the official Anthropic Claude Code extension. It provides a visual configuration panel, a local relay server, provider/model management, task workflow assistance, and VS Code diagnostics injection for Claude Code sessions.
+Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
 
 ## Highlights
 
-- Visual provider and model configuration for Claude Code.
-- One-click activation of Claude Code environment variables.
-- Local relay server for routing Claude Code `/v1/messages` requests.
-- Support for Anthropic-compatible, OpenAI Chat Completions-compatible, and OpenAI Responses-compatible upstream APIs.
-- The relay normalizes Claude Code built-in tool schemas for OpenAI-compatible upstreams so `Read`, `Write`, and `Agent` calls avoid provider-induced invalid arguments.
+- Built-in Chat Webview backed by a long-running local Claude CLI process.
+- Bidirectional stdio `stream-json` transport using `--output-format stream-json --verbose --input-format stream-json`.
+- Markdown, code block, diff, tool card, error, permission fallback, and workspace file-reference rendering.
+- Chat session restoration through VS Code `workspaceState`, with a one-time privacy notice and clear-session cleanup.
+- Visual provider/model configuration utilities for Claude Code settings migration and compatibility.
 - Secure API key storage through VS Code `SecretStorage` before activation.
 - Task workflow support for planning, progress tracking, and automatic continuation.
 - VS Code Problems diagnostics retrieval for model-assisted error fixing.
 - Import/export of provider configuration and shared prompts.
 - Multi-language UI support.
 
-## Supported Upstream API Types
+## Built-in Chat and Claude CLI Transport
 
-The extension can route Claude Code requests through the local relay and forward them to different upstream protocol types:
+The extension now uses an independent Chat Webview backed directly by the local Claude CLI. The detailed implementation plan and migration notes live in [`CHAT_WEBVIEW_PLAN.md`](./CHAT_WEBVIEW_PLAN.md).
 
-| API Type | Description | Forwarding Target |
-| --- | --- | --- |
-| `anthropic` | Anthropic Messages API compatible upstreams. | `{baseUrl}/messages` |
-| `openai-compatible` | OpenAI Chat Completions compatible upstreams. | `{baseUrl}/chat/completions` |
-| `v1-response` | OpenAI Responses API compatible upstreams. | `{baseUrl}/responses` |
+The CLI communication findings used for this implementation are:
 
-For `v1-response`, the relay converts Anthropic Messages requests to OpenAI Responses requests and converts JSON/SSE Responses output back to Anthropic-compatible responses for Claude Code.
+- The current verified Homebrew cask is `claude-code 2.1.141`.
+- The cask exposes the executable as `/opt/homebrew/bin/claude`.
+- If the direct Homebrew download is slow or blocked, the CLI can be installed through a local proxy, for example:
+
+   ```bash
+   HTTP_PROXY=http://127.0.0.1:3080 \
+   HTTPS_PROXY=http://127.0.0.1:3080 \
+   ALL_PROXY=http://127.0.0.1:3080 \
+   http_proxy=http://127.0.0.1:3080 \
+   https_proxy=http://127.0.0.1:3080 \
+   all_proxy=http://127.0.0.1:3080 \
+   HOMEBREW_NO_AUTO_UPDATE=1 \
+   brew install --cask --verbose claude-code
+   ```
+
+- `claude --help` confirms `-p/--print`, `--output-format text|json|stream-json`, `--input-format text|stream-json`, `--replay-user-messages`, and `--include-partial-messages` are available.
+- After local Claude CLI authentication, real model-output probes succeeded for `text`, `json`, `stream-json`, and stdin text input.
+- The official Claude Code VS Code extension `2.1.144` starts its native UI CLI process with `--output-format stream-json --verbose --input-format stream-json` over stdio pipes.
+- Based on that finding, the Chat Webview primary transport is **long-running stdio with bidirectional `stream-json` JSON Lines**. `-p/--print` is retained only for single-shot probes and fallback behavior, while PTY remains an experimental last resort.
+- The installed CLI exposes the same `stream-json` input/output flags needed for that long-running process, so this extension follows the official extension package's SDK-style stdio stream design.
+- Do not enter tokens, passwords, or API keys through automation; complete authentication directly in the user's terminal.
+
+The previous built-in HTTP relay module has been removed. During activation, the extension performs best-effort cleanup of legacy managed Claude Code settings such as local `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>` entries that were created by older versions.
 
 ## Managed Claude Code Environment Variables
 
@@ -49,7 +67,9 @@ Available commands include:
 - `Claude Code Config: Open settings.json`
 - `Claude Code Config: Open Global Shared Settings`
 - `Claude Code Config: Open Workspace Shared Settings`
-- `Claude Code Config: Restart Relay`
+- `Claude Code Config: Open Built-in Chat`
+- `Claude Code Config: Select Claude CLI for Built-in Chat`
+- `Claude Code Config: Restart Built-in Chat CLI`
 - `Claude Code Config: Reload Window`
 - `Claude Code Config: New Provider`
 - `Claude Code Config: Refresh Providers`
@@ -99,17 +119,16 @@ code --install-extension claude-code-config-helper-0.1.4.vsix
 4. Select a model and activate the configuration.
 5. Reload the VS Code window when prompted so Claude Code can pick up the new environment variables.
 
-## Provider Routing Flow
+## Built-in Chat Flow
 
-After activation, Claude Code talks to the local relay instead of the remote upstream directly:
+When the built-in Chat is enabled and opened:
 
-1. Claude Code sends an Anthropic `/v1/messages` request to the local relay.
-2. The relay resolves the selected provider and model.
-3. The relay rewrites the model ID and injects task/diagnostics tools when needed.
-4. The relay converts the request if the upstream is OpenAI-compatible or Responses-compatible.
-5. The relay forwards the request to the upstream service.
-6. The relay converts the upstream response back to Anthropic format when required.
-7. Claude Code receives a normal Anthropic-compatible response.
+1. The extension resolves the configured or selected Claude-compatible CLI executable.
+2. The extension starts a long-running process with `--output-format stream-json --verbose --input-format stream-json`.
+3. User messages from the Webview are sent to CLI stdin as JSON Lines.
+4. CLI stdout/stderr JSON Lines are parsed into Chat segments.
+5. The Webview renders streaming markdown, code, diff, file references, tool cards, and errors.
+6. Recent Chat messages are restored from VS Code `workspaceState` for the current workspace until the user clears the session.
 
 ## Task Workflow Support
 
@@ -119,7 +138,7 @@ Task workflows help the model:
 
 - Create a structured task plan from a larger user request.
 - Track progress with task states such as pending, in progress, completed, and blocked.
-- Continue unfinished work across relay turns.
+- Continue unfinished work through the built-in Chat send chain or the legacy external-Claude clipboard path.
 - Avoid exposing internal workflow tools directly to Claude Code as normal user-facing tools.
 - Intercept local workflow tool calls such as creating or updating the workflow.
 - Schedule automatic continuation when the model needs another turn to finish the task.
@@ -132,7 +151,7 @@ Typical workflow commands include:
 - `Claude Code Config: Continue Task`
 - `Claude Code Config: Clear Task`
 
-The relay injects workflow instructions and tools only when a workflow is active or when task creation is explicitly triggered. Workflow updates can be intercepted locally so that task progress is reflected in VS Code without requiring the upstream model provider to execute external side effects.
+The Chat host injects workflow instructions and tools only when a workflow is active or when task creation is explicitly triggered. Workflow updates can be intercepted locally so that task progress is reflected in VS Code without requiring the model to execute external side effects.
 
 ## VS Code Diagnostics Retrieval
 
@@ -148,14 +167,14 @@ The diagnostics flow is designed to be safe and explicit:
 
 1. The model requests diagnostics through the internal tool.
 2. The extension returns an acknowledgement and schedules an automatic continuation.
-3. On the next relay turn, the request contains the trigger token:
+3. On the next Chat turn, the request contains the trigger token:
 
    ```text
    @llsccai-get-errors
    ```
 
-4. The relay scans the user messages for that trigger token.
-5. The relay injects the latest VS Code Problems diagnostics into that user message before forwarding the request.
+4. The Chat host scans the user messages for that trigger token.
+5. The Chat host injects the latest VS Code Problems diagnostics into that user message before sending it to the CLI.
 
 The tool instruction itself is injected as a system rule, not as normal user content. Only the actual diagnostics result is added to the next user turn when the trigger token is present.
 
@@ -217,9 +236,7 @@ npm run compile
 Run selected lightweight tests after compiling:
 
 ```bash
-node out/relay/__tests__/taskRequestInjection.test.js
-node out/relay/converters/__tests__/protocolConverters.test.js
-node out/relay/converters/__tests__/streamConverters.test.js
+npm test
 ```
 
 ## Repository

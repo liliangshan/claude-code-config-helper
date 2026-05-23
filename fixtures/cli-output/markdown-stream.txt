@@ -1,0 +1,31 @@
+Authenticated stream-json fixture captured on 2026-05-23.
+
+Command:
+
+claude -p --verbose --output-format stream-json --include-partial-messages --permission-mode dontAsk --max-budget-usd 0.03 'Reply with exactly: CLI_PROBE_STREAM_OK'
+
+Exit code:
+
+0
+
+Output shape:
+
+JSON Lines, one JSON object per line.
+
+Observed event summary:
+
+1. type=system
+2. type=system
+3. type=stream_event
+4. type=assistant, message.type=message, content=text
+5. type=result
+
+Assistant text:
+
+CLI_PROBE_STREAM_OK
+
+Follow-up replacement requirement:
+
+- Capture `claude -p --output-format text` with a prompt that returns Markdown.
+- Preserve representative headings, lists, fenced code blocks, and file references.
+- If possible, also record artificial chunk boundaries used by tests.

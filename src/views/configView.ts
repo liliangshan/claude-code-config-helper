@@ -2,7 +2,7 @@
  * @file 配置 Webview 后端。
  *
  * Vendored layout idea from liliangshan.openapi-compatible-copilot/src/views/configView.ts，
- * 当前版本提供 Provider/Model 管理、Claude Code 中转配置与共享提示词入口。
+ * 当前版本提供 Provider/Model 管理、内置 Chat 设置与共享提示词入口。
  */
 
 import * as vscode from 'vscode';
@@ -15,7 +15,6 @@ import type {
     AdItem,
     ConfigViewState,
     ExtensionMessage,
-    RelayStatus,
     ToastLevel,
     WebviewMessage
 } from '../types';
@@ -55,55 +54,6 @@ function normalizeAdItem(raw: unknown): AdItem | null {
 type ConfigWebviewHost = vscode.WebviewPanel | vscode.WebviewView;
 
 /**
- * 根据当前模型选择与提供商列表，构造模型显示名。
- *
- * @param manager 配置管理器实例。
- * @returns 模型显示名，未选择或不存在时返回"未选择模型"。
- */
-function buildModelText(manager: ConfigManager): string {
-    const selection = manager.getCurrentModel();
-    if (!selection) return '未选择模型';
-    const provider = manager.getProvider(selection.providerId);
-    const model = provider?.models.find((item) => item.modelId === selection.modelId);
-    if (!provider || !model) return '未选择模型';
-    return `${provider.name}/${model.displayName || model.modelId}`;
-}
-
-/**
- * 把 RelayStatus + 实际端口 + 模型显示名拼成 Webview 顶部展示的状态文案。
- *
- * 与状态栏文案保持一致，便于用户在两个 UI 上得到相同信息。
- *
- * @param status Relay 当前运行状态。
- * @param actualPort 实际监听端口，可选。
- * @param modelText 当前模型显示名。
- * @returns 适合 Webview 顶部展示的状态字符串。
- */
-function formatRelayStatusText(
-    status: RelayStatus | undefined,
-    actualPort: number | undefined,
-    modelText: string
-): string {
-    if (!status) {
-        return `未启动 · ${modelText}`;
-    }
-    switch (status.kind) {
-        case 'starting':
-            return `启动中（端口 ${status.port}） · ${modelText}`;
-        case 'leader': {
-            const port = actualPort ?? status.port;
-            return `已开启 · 127.0.0.1:${port} · ${modelText}`;
-        }
-        case 'stopped':
-            return `未开启 · ${modelText}`;
-        case 'error':
-            return `错误：${status.message}${status.port ? `（端口 ${status.port}）` : ''} · ${modelText}`;
-        default:
-            return modelText;
-    }
-}
-
-/**
  * 判断两次当前模型选择是否一致。
  *
  * @param left 旧的当前模型选择。
@@ -127,12 +77,6 @@ function isSameCurrentModelSelection(
 class ConfigWebviewController implements vscode.Disposable {
     /** 待释放资源集合。 */
     private readonly disposables: vscode.Disposable[] = [];
-
-    /** 最近一次由扩展宿主通知的 Relay 运行状态。 */
-    private latestRelayStatus: RelayStatus | undefined;
-
-    /** 最近一次由扩展宿主通知的 Relay 实际端口。 */
-    private latestActualPort: number | undefined;
 
     /**
      * 顶部广告接口数据缓存。
@@ -202,18 +146,6 @@ class ConfigWebviewController implements vscode.Disposable {
         }
     }
 
-    /**
-     * 由扩展宿主在 Relay 状态变化时调用，同步刷新 Webview 顶部状态。
-     *
-     * @param status Relay 当前运行状态。
-     * @param actualPort 当前实际监听端口，可选。
-     */
-    public updateRelayStatus(status: RelayStatus, actualPort: number | undefined): void {
-        this.latestRelayStatus = status;
-        this.latestActualPort = actualPort;
-        this.postState();
-    }
-
     /** 主动向前端推送最新状态。 */
     public refresh(): void {
         this.postState();
@@ -255,6 +187,11 @@ class ConfigWebviewController implements vscode.Disposable {
                 case 'openWorkspaceSharedSettings':
                     await vscode.commands.executeCommand(COMMANDS.openWorkspaceSharedSettings);
                     return;
+                case 'selectChatCliPath':
+                    await vscode.commands.executeCommand(COMMANDS.chatSelectCli);
+                    await vscode.commands.executeCommand(COMMANDS.chatOpen);
+                    this.postState();
+                    return;
                 case 'reloadWindow':
                     await vscode.commands.executeCommand(COMMANDS.reloadWindow);
                     return;
@@ -267,18 +204,6 @@ class ConfigWebviewController implements vscode.Disposable {
                     }
                     return;
                 }
-                case 'saveClaudeSettings': {
-                    // 应用按钮：无论是否切换模型，都执行窗口重载，确保 Claude Code 重新加载环境变量与配置
-                    await this.manager.saveRelayConfig(message.payload.relay);
-                    await this.manager.setCurrentModel(message.payload.currentModel);
-                    this.postToast('success', '已应用 Claude Code 配置');
-                    await vscode.commands.executeCommand(COMMANDS.reloadWindow);
-                    return;
-                }
-                case 'saveRelayConfig':
-                    await this.manager.saveRelayConfig(message.payload);
-                    this.postToast('success', '已保存中转配置');
-                    return;
                 case 'saveProviders':
                     if (Array.isArray(message.payload)) {
                         await this.manager.replaceProviders(message.payload);
@@ -443,17 +368,7 @@ class ConfigWebviewController implements vscode.Disposable {
 
     /** 向 Webview 推送完整状态。 */
     private postState(): void {
-        const base = this.manager.getState();
-        const modelText = buildModelText(this.manager);
-        const merged: ConfigViewState = {
-            ...base,
-            relayStatusText: formatRelayStatusText(
-                this.latestRelayStatus,
-                this.latestActualPort,
-                modelText
-            )
-        };
-        this.postMessage({ type: 'state', payload: merged });
+        this.postMessage({ type: 'state', payload: this.manager.getState() });
     }
 
     /** 向 Webview 推送提示消息。 */
@@ -530,16 +445,6 @@ export class ConfigWebviewViewProvider implements vscode.WebviewViewProvider, vs
     public async focus(): Promise<void> {
         await vscode.commands.executeCommand('workbench.view.extension.claudeRouter');
         this.controller?.refresh();
-    }
-
-    /**
-     * 接收来自扩展宿主的 Relay 状态通知，转发给当前 Webview 控制器。
-     *
-     * @param status Relay 当前运行状态。
-     * @param actualPort 当前实际监听端口，可选。
-     */
-    public notifyRelayStatus(status: RelayStatus, actualPort: number | undefined): void {
-        this.controller?.updateRelayStatus(status, actualPort);
     }
 
     /** 释放侧栏控制器。 */

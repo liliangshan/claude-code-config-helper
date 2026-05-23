@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {{cspSource}} https: data:; style-src {{cspSource}} 'nonce-{{nonce}}'; script-src 'nonce-{{nonce}}'; font-src {{cspSource}}; connect-src 'none';">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link nonce="{{nonce}}" rel="stylesheet" href="{{styleUri}}">
+    <title>LLS CLAUDE CHAT</title>
+</head>
+<body>
+    <div class="chat-root">
+        <header class="chat-header">
+            <div>
+                <h1>LLS CLAUDE CHAT</h1>
+                <p data-role="cli-status" data-i18n="statusInitializing">Initializing…</p>
+            </div>
+            <div class="chat-actions">
+                <button type="button" data-role="copy-body-source" data-i18n="copySource" data-i18n-title="copySourceTitle" title="Copy current Webview body source">Copy source</button>
+                <button type="button" data-role="restart-cli" data-i18n="restart" data-i18n-title="restartTitle" title="Restart CLI">Restart</button>
+                <button type="button" data-role="clear-session" data-i18n="clear" data-i18n-title="clearTitle" title="Clear chat history">Clear</button>
+            </div>
+        </header>
+        <main class="chat-list" data-role="messages" aria-live="polite"></main>
+        <footer class="chat-input" data-role="composer-shell">
+            <div class="chat-toast" data-role="chat-toast" aria-live="polite" aria-hidden="true"></div>
+            <div class="drop-overlay" data-role="drop-overlay" aria-hidden="true">
+                <div class="drop-overlay__card" data-i18n="dropFilesHere">Drop files here as context</div>
+            </div>
+            <div class="context-panel" data-role="context-panel" data-i18n-aria-label="contextPanelAria" aria-label="Added context files">
+                <div class="context-panel__header">
+                    <span class="context-panel__chevron">›</span>
+                    <span class="context-panel__dot"></span>
+                    <span class="context-panel__title" data-role="context-title" data-i18n="defaultCurrentFile">Current file shown by default</span>
+                    <span class="context-panel__count" data-role="context-count"></span>
+                    <button type="button" class="context-panel__close" data-role="context-clear" data-i18n-title="clearContext" data-i18n-aria-label="clearContext" title="Clear context" aria-label="Clear context">×</button>
+                    <button type="button" class="context-panel__menu" data-i18n-title="contextMenu" data-i18n-aria-label="contextMenu" title="Context menu" aria-label="Context menu">≡</button>
+                </div>
+                <div class="attachment-bar" data-role="attachments"></div>
+            </div>
+            <div class="composer-box">
+                <textarea data-role="composer" rows="1" data-i18n-placeholder="composerPlaceholder" placeholder="Ask, edit, or agent…"></textarea>
+                <div class="composer-toolbar">
+                    <div class="composer-toolbar__left">
+                        <button type="button" class="icon-button" data-role="attach-file" data-i18n-title="attachFile" data-i18n-aria-label="attachFile" title="Select context files" aria-label="Select context files">＋</button>
+                        <select class="model-select" data-role="model-select" data-i18n-title="modelSelectTitle" data-i18n-aria-label="modelSelectAria" title="Switch model and automatically restart Chat CLI" aria-label="Switch model">
+                            <option value="" data-i18n="modelLoading">Loading models…</option>
+                        </select>
+                        <select class="model-select permission-mode-select" data-role="permission-mode-select" data-i18n-title="permissionModeTitle" data-i18n-aria-label="permissionModeAria" title="Switch Claude CLI permission mode and automatically restart Chat CLI" aria-label="Switch permission mode">
+                            <option value="acceptEdits">acceptEdits</option>
+                            <option value="bypassPermissions">bypassPermissions</option>
+                        </select>
+                    </div>
+                    <div class="composer-toolbar__right">
+                        <button type="button" class="send-button" data-role="send" data-i18n-title="sendMessage" data-i18n-aria-label="sendMessage" title="Send message" aria-label="Send message">↑</button>
+                    </div>
+                </div>
+            </div>
+        </footer>
+    </div>
+    <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
+</body>
+</html>

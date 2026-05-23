@@ -1,7 +1,7 @@
 /**
  * @file LLS CCAI 共享类型定义。
  *
- * 覆盖提供商、模型、本地中转服务、共享提示词与 Webview 消息协议。
+ * 覆盖提供商、模型、共享提示词与 Webview 消息协议。
  */
 
 /** 上游接口协议类型。 */
@@ -108,19 +108,12 @@ export interface CurrentModelSelection {
     modelId: string;
 }
 
-/** 本地中转服务配置。 */
-export interface RelayServerConfig {
-    /** 本地中转服务监听端口。 */
-    port: number;
-    /** 是否在扩展激活时自动启动。 */
-    autoStart: boolean;
-    /** 写入 Claude Code 时额外透传的环境变量。 */
-    extraEnvVars: ExtraEnvVar[];
-    /** 是否写入 CLAUDE_CODE_SKIP_AUTH_LOGIN=1。 */
-    skipAuthLogin: boolean;
-    /** 是否设置 claudeCode.disableLoginPrompt=true。 */
-    disableLoginPrompt: boolean;
-}
+/** 第二阶段本地中转服务运行状态。 */
+export type RelayStatus =
+    | { kind: 'starting'; port: number }
+    | { kind: 'leader'; port: number; pid: number; startedAt: number }
+    | { kind: 'stopped'; port?: number }
+    | { kind: 'error'; port?: number; message: string };
 
 /** 系统提示词共享设置。 */
 export interface SharedOpenApiCopilotSettings {
@@ -130,22 +123,8 @@ export interface SharedOpenApiCopilotSettings {
     workspaceSystemPrompt: string;
 }
 
-/** 第二阶段本地中转服务运行状态。 */
-export type RelayStatus =
-    | { kind: 'starting'; port: number }
-    | { kind: 'leader'; port: number; pid: number; startedAt: number }
-    | { kind: 'stopped'; port?: number }
-    | { kind: 'error'; port?: number; message: string };
-
-/** 状态栏和 Webview 展示当前模型时使用的显示信息。 */
-export interface CurrentModelDisplayInfo {
-    /** 提供商显示名称，未选择时为空字符串。 */
-    providerName: string;
-    /** 模型显示名称，未选择时为“未选择模型”。 */
-    modelDisplayName: string;
-    /** 当前模型是否有效可用。 */
-    isSelected: boolean;
-}
+/** 任务流提示词发送目标。 */
+export type TaskFlowTarget = 'builtinChat' | 'externalClaudeCode';
 
 /** 配置页面需要的完整状态快照。 */
 export interface ConfigViewState {
@@ -153,16 +132,16 @@ export interface ConfigViewState {
     providers: ProviderConfigWithoutSecrets[];
     /** 当前 Claude Code 模型选择。 */
     currentModel: CurrentModelSelection | null;
-    /** 中转服务配置。 */
-    relay: RelayServerConfig;
-    /** 中转服务状态文本。 */
-    relayStatusText: string;
+    /** 内置 Chat 当前配置的 Claude CLI 可执行文件路径。 */
+    chatCliPath: string;
     /** 用户配置的 UI 语言，可能为 auto。 */
     configuredLanguage: AppLanguage;
     /** 解析后实际生效的 UI 语言。 */
     resolvedLanguage: ResolvedAppLanguage;
     /** 是否为任务流启用 Claude Code bypass permissions 危险权限模式。 */
     taskFlowBypassPermissions: boolean;
+    /** 任务流提示词发送目标。 */
+    taskFlowTarget: TaskFlowTarget;
 }
 
 /** Webview 发给扩展宿主的消息。 */
@@ -172,13 +151,12 @@ export type WebviewMessage =
     | { type: 'openGlobalSharedSettings' }
     | { type: 'openWorkspaceSharedSettings' }
     | { type: 'reloadWindow' }
+    | { type: 'selectChatCliPath' }
     | { type: 'exportConfig' }
     | { type: 'importConfig' }
     | { type: 'updateUiLanguage'; payload: AppLanguage }
     | { type: 'updateTaskFlowBypassPermissions'; payload: boolean }
     | { type: 'setCurrentModel'; payload: CurrentModelSelection | null }
-    | { type: 'saveClaudeSettings'; payload: { relay: RelayServerConfig; currentModel: CurrentModelSelection | null } }
-    | { type: 'saveRelayConfig'; payload: RelayServerConfig }
     | {
           type: 'saveProviders';
           payload:

@@ -4,6 +4,39 @@ All notable changes to this extension are documented in this file.
 
 ## [0.1.4] - 2026-05-23
 
+### Added
+
+- Added the built-in Chat Webview backed by the local Claude CLI long-running stdio `stream-json` transport.
+- Added Chat rendering for markdown, code blocks, workspace file references, unified diffs, tool cards, errors, and permission fallback segments.
+- Added Chat CLI selection, restart, cancellation, abnormal-exit handling, message batching, and long-output safety behavior.
+- Added workspace-scoped Chat session restoration through VS Code `workspaceState`, including a one-time privacy notice and clear-session cleanup.
+- Added lightweight Node test coverage for `fileRefScanner`, `chatParser`, and diff parsing, plus a fake CLI fixture for integration/manual testing.
+
+### Changed
+
+- Moved LLS CCAI task-flow sending to the built-in Chat path when configured, while keeping the legacy external-Claude clipboard path as a compatibility target.
+- Replaced the old local HTTP relay runtime with direct extension-host-to-CLI communication.
+- Updated README and manifest descriptions to describe the Chat Webview architecture and release compatibility state.
+
+### Removed
+
+- Removed the built-in HTTP Relay server, router, proxy adapters, relay status bar, relay restart command, relay tests, and relay configuration UI.
+- Removed legacy relay state/config types and activation-time relay startup logic.
+
+### Fixed
+
+- Cleaned legacy managed Claude Code relay settings during activation so old local `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>` entries do not point users at a removed service.
+- Prevented file-reference scanning from duplicating Markdown-link targets or treating URL path fragments as local workspace file references.
+
+### Planning
+
+- Added the Chat Webview migration plan and CLI communication probe records for a future direct Claude CLI integration.
+- Verified `claude-code 2.1.141` can be installed through Homebrew with a local proxy and is exposed as `/opt/homebrew/bin/claude`.
+- Verified authenticated CLI probes for `text`, `json`, `stream-json`, and stdin text input through `/opt/homebrew/bin/claude`.
+- Recorded that the official Claude Code VS Code extension `2.1.144` launches its native UI CLI process through stdio with `--output-format stream-json --verbose --input-format stream-json`.
+- Updated the Chat Webview plan so the primary transport is now long-running stdio with bidirectional `stream-json` JSON Lines; `-p/--print` is documented as a probe/fallback path and PTY as an experimental last resort.
+- Recorded that long-link implementation should follow the official extension package's SDK-style stdio stream design; permission/tool events and cancellation behavior still require follow-up probes before those features are finalized.
+
 ### Fixed
 
 - Normalized forwarded Claude Code built-in tool schemas for OpenAI Chat Completions and OpenAI Responses upstreams.

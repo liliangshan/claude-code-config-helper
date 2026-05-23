@@ -42,6 +42,33 @@ const EXIT_PLAN_MODE_TOOL_NAME = 'ExitPlanMode';
  */
 const TITLE_GENERATION_SYSTEM_MARKER = 'Generate a concise, sentence-case title';
 
+/** 内置 system 提示词中用于转发时替换实际模型名的占位符。 */
+const BUILTIN_MODEL_NAME_PLACEHOLDER = '{{MODEL_NAME}}';
+
+/** Relay 转发时固定追加给上游模型的基础 system 提示词。 */
+const BUILTIN_CHAT_SYSTEM_PROMPT = `You are an expert AI programming assistant, working with a user in the VS Code editor.
+When asked for your name, identity, or model, you must respond that you are the lls: ${BUILTIN_MODEL_NAME_PLACEHOLDER} model, currently running in the claude-code CLI inside the LLS CCAI (Claude Code Config Helper) extension in VS Code.
+Follow the user's requirements carefully & to the letter.
+Follow Microsoft content policies.
+Avoid content that violates copyrights.
+If you are asked to generate content that is harmful, hateful, racist, sexist, lewd, or violent, only respond with "Sorry, I can't assist with that."
+Keep your answers short and impersonal.
+<instructions>
+You are a highly sophisticated automated coding agent with expert-level knowledge across many different programming languages and frameworks.
+The user will ask a question, or ask you to perform a task, and it may require lots of research to answer correctly. There is a selection of tools that let you perform actions or retrieve helpful context to answer the user's question.
+You will be given some context and attachments along with the user prompt. You can use them if they are relevant to the task, and ignore them if not. Some attachments may be summarized with omitted sections like \`/* Lines 123-456 omitted */\`. You can use the read_file tool to read more context if needed. Never pass this omitted line marker to an edit tool.
+If you can infer the project type (languages, frameworks, and libraries) from the user's query or the context that you have, make sure to keep them in mind when making changes.
+If the user wants you to implement a feature and they have not specified the files to edit, first break down the user's request into smaller concepts and think about the kinds of files you need to grasp each concept.
+If you aren't sure which tool is relevant, you can call multiple tools. You can call tools repeatedly to take actions or gather as much context as needed until you have completed the task fully. Don't give up unless you are sure the request cannot be fulfilled with the tools you have. It's YOUR RESPONSIBILITY to make sure that you have done all you can to collect necessary context.
+When reading files, prefer reading large meaningful chunks rather than consecutive small sections to minimize tool calls and gain better context.
+Don't make assumptions about the situation- gather context first, then perform the task or answer the question.
+Think creatively and explore the workspace in order to make a complete fix.
+Don't repeat yourself after a tool call, pick up where you left off.
+NEVER print out a codeblock with file changes unless the user asked for it. Use the appropriate edit tool instead.
+NEVER print out a codeblock with a terminal command to run unless the user asked for it. Use the run_in_terminal tool instead.
+You don't need to read a file if it's already provided in context.
+</instructions>`;
+
 /** 任务流请求注入所需依赖。 */
 export interface LlsTaskRequestInjectionDeps {
     /** 配置管理器，用于读取当前 UI 语言。 */
@@ -56,6 +83,8 @@ export interface LlsTaskRequestInjectionDeps {
 export interface InjectLlsTaskRequestOptions {
     /** 本轮请求是否由 @llsccai-task 触发任务流创建。 */
     createTriggered?: boolean;
+    /** 转发到上游的实际模型名，用于替换内置 system 提示词里的模型占位符。 */
+    modelName?: string;
 }
 
 /** 任务流请求注入结果。 */
@@ -114,6 +143,7 @@ export function injectLlsTaskRequestBody(
         const builtIns: AnthropicToolDefinition[] = [];
         const systemRules: string[] = [];
         const userControlRules: string[] = [];
+        systemRules.push(buildBuiltinChatSystemPrompt(options.modelName));
         const sharedSystemPrompt = buildSharedSystemPrompt(deps?.configManager);
         if (sharedSystemPrompt) {
             systemRules.push(sharedSystemPrompt);
@@ -159,6 +189,37 @@ export function injectLlsTaskRequestBody(
         Logger.warn('[LlsTask] 注入 Anthropic tools/user-control 失败：' + (err instanceof Error ? err.message : String(err)));
         return { bodyText, injected: false };
     }
+}
+
+/**
+ * 构造 Relay 固定注入的 Chat system 提示词。
+ *
+ * @returns 包含当前时间的基础 system 提示词文本。
+ */
+export function buildBuiltinChatSystemPrompt(modelName?: string): string {
+    return `${replaceBuiltinModelNamePlaceholder(modelName)}\n\n# currentDate\n当前时间：${formatCurrentDateTimeForPrompt(new Date())}`;
+}
+
+/**
+ * 替换内置 system 提示词中的模型名占位符。
+ *
+ * @param modelName 转发时解析出的实际模型名。
+ * @returns 已替换模型名的内置 system 提示词。
+ */
+export function replaceBuiltinModelNamePlaceholder(modelName?: string): string {
+    const safeModelName = (modelName || '').trim() || 'unknown';
+    return BUILTIN_CHAT_SYSTEM_PROMPT.split(BUILTIN_MODEL_NAME_PLACEHOLDER).join(safeModelName);
+}
+
+/**
+ * 将日期格式化为适合 system 提示词阅读的本地时间字符串。
+ *
+ * @param date 需要格式化的日期对象。
+ * @returns 形如 `2026年5月23日 14:30:00` 的本地时间。
+ */
+export function formatCurrentDateTimeForPrompt(date: Date): string {
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 /**

@@ -264,6 +264,27 @@ const tests: TestCase[] = [
         }
     },
     {
+        name: 'OpenAI Responses SSE 生命周期事件不会产生 unknown warning 且可关闭 block',
+        run: () => {
+            const converter = new OpenAIResponsesToAnthropicStreamConverter();
+            const out = [
+                converter.feed(toSse('response.created', { type: 'response.created', response: { id: 'resp_s_life', model: 'gpt-resp' } })),
+                converter.feed(toSse('response.in_progress', { type: 'response.in_progress', response: { id: 'resp_s_life', model: 'gpt-resp', status: 'in_progress' } })),
+                converter.feed(toSse('response.content_part.added', { type: 'response.content_part.added', output_index: 0, content_index: 0, part: { type: 'output_text' } })),
+                converter.feed(toSse('response.output_text.delta', { type: 'response.output_text.delta', output_index: 0, content_index: 0, delta: 'ok' })),
+                converter.feed(toSse('response.content_part.done', { type: 'response.content_part.done', output_index: 0, content_index: 0, part: { type: 'output_text', text: 'ok' } })),
+                converter.feed(toSse('response.output_item.added', { type: 'response.output_item.added', output_index: 1, item: { type: 'function_call', id: 'fc_life', call_id: 'call_life', name: 'lookup' } })),
+                converter.feed(toSse('response.function_call_arguments.done', { type: 'response.function_call_arguments.done', output_index: 1, arguments: '{"q":"x"}' })),
+                converter.feed(toSse('response.output_item.done', { type: 'response.output_item.done', output_index: 1, item: { type: 'function_call', id: 'fc_life', call_id: 'call_life', name: 'lookup', arguments: '{"q":"x"}' } })),
+                converter.feed(toSse('response.completed', { type: 'response.completed', response: { id: 'resp_s_life', model: 'gpt-resp', status: 'completed' } }))
+            ].join('');
+            assert.ok(out.includes('"type":"text_delta","text":"ok"'));
+            assert.ok(out.includes('"type":"tool_use","id":"call_life","name":"lookup"'));
+            assert.ok(out.includes('"type":"input_json_delta","partial_json":"{\\"q\\":\\"x\\"}"'));
+            assert.strictEqual(converter.getWarnings().some((warning) => warning.code === 'unsupported_sse_event'), false);
+        }
+    },
+    {
         name: 'OpenAI Responses SSE incomplete 与 error 事件可转换为 Anthropic 收尾或错误',
         run: () => {
             const incomplete = new OpenAIResponsesToAnthropicStreamConverter();

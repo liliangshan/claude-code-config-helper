@@ -76,6 +76,17 @@ export interface OpenAIChatRequestBody {
     max_tokens?: unknown;
     /** 是否流式。 */
     stream?: unknown;
+    /**
+     * OpenAI Chat stream 模式下的可选配置。
+     *
+     * 主要用于强制 `include_usage: true`，让上游在最后一个 chunk 中返回
+     * `usage`（prompt_tokens / completion_tokens），便于 Relay 把 token 统计
+     * 转换为 Anthropic `message_delta.usage` 并展示到 Chat UI。
+     */
+    stream_options?: {
+        include_usage?: boolean;
+        [key: string]: unknown;
+    };
     /** 停止序列。 */
     stop?: unknown;
     /** OpenAI user 字段。 */
@@ -128,6 +139,13 @@ export function convertAnthropicToOpenAIChat(anthropicBody: unknown): AnthropicT
     if (source.top_p !== undefined) body.top_p = source.top_p;
     if (source.max_tokens !== undefined) body.max_tokens = source.max_tokens;
     if (source.stream !== undefined) body.stream = source.stream;
+    // 主动要求 OpenAI Chat 在流式模式下回传 usage（最后一个 chunk 的
+    // `usage` 字段）。这是把 token 使用量传回 Anthropic message_delta.usage、
+    // 进而在 Chat UI 底部显示的前提。非流式响应本身就会带 usage，无需注入。
+    if (source.stream === true) {
+        const existingOptions = isRecord(source.stream_options) ? source.stream_options : {};
+        body.stream_options = { ...existingOptions, include_usage: true };
+    }
     if (source.stop_sequences !== undefined) body.stop = source.stop_sequences;
     const userId = readMetadataUserId(source.metadata);
     if (userId) body.user = userId;

@@ -19,11 +19,14 @@ import { URL } from 'url';
 
 import { Logger } from '../logger';
 import { interceptAnthropicResponse } from '../llsTask/interceptor';
+import { LlsTaskStreamingInterceptor } from '../llsTask/streamingInterceptor';
 import type { ApiType, ProviderConfig } from '../types';
 import type { DebugRecorder } from './debugRecorder';
 import { buildForwardHeaders, redactHeaders } from './forwardHeadersCommon';
 import type { UpstreamAdapter, UpstreamRequestContext } from './router';
 import { injectLlsTaskRequestBody, type LlsTaskRequestInjectionDeps } from './taskRequestInjection';
+import { UPSTREAM_SOCKET_IDLE_TIMEOUT_MS } from './upstreamTimeouts';
+import { UsageReporter, type UsageSink } from './usageReporter';
 
 /** Anthropic 协议默认转发路径；provider.baseUrl 已自行决定是否包含 /v1。 */
 const ANTHROPIC_MESSAGES_PATH = '/messages';
@@ -139,6 +142,38 @@ export function rewriteRequestBody(
     return rawBody;
 }
 
+/**
+ * 为 Anthropic 兼容流式请求显式要求上游返回 token usage。
+ *
+ * Claude/Anthropic 官方流式协议通常会在 message_start / message_delta 中返回
+ * usage，但不少 Anthropic-compatible 服务实际复用了 OpenAI 的开关语义：只有
+ * 请求体携带 `stream_options.include_usage=true` 时，最终响应或 CLI 聚合出的
+ * result.usage/modelUsage 才会包含非 0 的输入/输出 token 统计。
+ *
+ * 这里在任务流注入完成后再次处理 body，避免注入过程覆盖字段；如果请求体不是
+ * JSON 对象则保持原样透传，保证兼容异常/未知格式。
+ *
+ * @param bodyText 即将发送给上游的 Anthropic 请求体文本。
+ * @returns 补充 usage 开关后的请求体文本，解析失败时返回原文本。
+ */
+export function requestAnthropicUsageStats(bodyText: string): string {
+    try {
+        const parsed = JSON.parse(bodyText) as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return bodyText;
+        const body = parsed as Record<string, unknown>;
+        const streamOptions = body.stream_options;
+        body.stream_options = {
+            ...(streamOptions && typeof streamOptions === 'object' && !Array.isArray(streamOptions)
+                ? (streamOptions as Record<string, unknown>)
+                : {}),
+            include_usage: true
+        };
+        return JSON.stringify(body);
+    } catch {
+        return bodyText;
+    }
+}
+
 /** Anthropic Proxy 可选任务流依赖。 */
 export type AnthropicProxyTaskDeps = LlsTaskRequestInjectionDeps;
 
@@ -155,10 +190,13 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
      * 创建 Anthropic 透传适配器。
      *
     * @param recorder 可选的调试记录器；提供后会按天聚合写入 messages。
+    * @param taskDeps 可选任务流依赖；提供后才会执行任务流注入与拦截。
+    * @param usageSink 可选 token 使用量上报回调；提供后会从上游响应抽取 usage 并上报到 Chat UI。
      */
     public constructor(
         private readonly recorder?: DebugRecorder,
-        private readonly taskDeps?: AnthropicProxyTaskDeps
+        private readonly taskDeps?: AnthropicProxyTaskDeps,
+        private readonly usageSink?: UsageSink
     ) {}
 
     /**
@@ -201,9 +239,9 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
         const injectedRequest = injectLlsTaskRequestBody(
             rewriteRequestBody(rawBody, parsedBody, modelId),
             this.taskDeps,
-            { createTriggered: ctx.llsTaskCreateTriggered === true }
+            { createTriggered: ctx.llsTaskCreateTriggered === true, modelName: modelId }
         );
-        const bodyText = injectedRequest.bodyText;
+        const bodyText = requestAnthropicUsageStats(injectedRequest.bodyText);
         await this.safeRecordRequestBody(bodyText);
         const bodyBuffer = Buffer.from(bodyText, 'utf-8');
         headers['content-length'] = String(bodyBuffer.byteLength);
@@ -221,22 +259,34 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
             hostname: upstreamUrl.hostname,
             port: upstreamUrl.port || (upstreamUrl.protocol === 'http:' ? 80 : 443),
             path: `${upstreamUrl.pathname}${upstreamUrl.search}`,
-            headers
+            headers,
+            timeout: UPSTREAM_SOCKET_IDLE_TIMEOUT_MS
         };
 
         // 聚合响应体用于任务流本地拦截与最终 messages 聚合记录；不再输出单次 request/response 调试文件。
         const responseChunks: Buffer[] = [];
         let responseStatus: number | undefined;
         let responseHeaders: Record<string, string | string[] | undefined> = {};
+        const streamedOutputChunks: string[] = [];
         let errorMessage: string | undefined;
+        // 每次响应独立的 usage 抽取器，从下行 Anthropic SSE / JSON 中收集 token 统计。
+        const usageReporter = new UsageReporter(this.usageSink);
 
         await new Promise<void>((resolve) => {
             const upstreamReq = transport.request(options, (upstreamRes) => {
                 responseStatus = upstreamRes.statusCode;
                 responseHeaders = upstreamRes.headers;
+                const isStream = this.isEventStream(upstreamRes.headers['content-type']);
+                const streamInterceptor = isStream && this.taskDeps
+                    ? new LlsTaskStreamingInterceptor({
+                        service: this.taskDeps.llsTaskService,
+                        autoContinueScheduler: this.taskDeps.autoContinueScheduler
+                    })
+                    : undefined;
                 // 将上游状态码与响应头透传给 Claude Code。
                 res.statusCode = upstreamRes.statusCode ?? 502;
                 for (const key of Object.keys(upstreamRes.headers)) {
+                    if (isStream && key.toLowerCase() === 'content-length') continue;
                     const value = upstreamRes.headers[key];
                     if (value === undefined) continue;
                     try {
@@ -249,6 +299,16 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                 upstreamRes.on('data', (chunk: Buffer | string) => {
                     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
                     responseChunks.push(buf);
+                    if (isStream && !res.writableEnded) {
+                        const out = streamInterceptor ? streamInterceptor.feed(buf.toString('utf-8')) : buf;
+                        if (typeof out === 'string') {
+                            streamedOutputChunks.push(out);
+                            usageReporter.feed(out);
+                        } else if (Buffer.isBuffer(out)) {
+                            usageReporter.feed(out.toString('utf-8'));
+                        }
+                        if (out) res.write(out);
+                    }
                 });
                 upstreamRes.on('error', (err) => {
                     errorMessage = err.message;
@@ -261,12 +321,25 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                 upstreamRes.on('end', () => {
                     if (!res.writableEnded) {
                         const rawResponseBody = Buffer.concat(responseChunks).toString('utf-8');
+                        if (isStream) {
+                            const tail = streamInterceptor?.end() ?? '';
+                            if (tail) {
+                                streamedOutputChunks.push(tail);
+                                usageReporter.feed(tail);
+                                res.write(tail);
+                            }
+                            usageReporter.end();
+                            res.end();
+                            resolve();
+                            return;
+                        }
                         const finalBody = this.taskDeps
                             ? interceptAnthropicResponse(rawResponseBody, upstreamRes.headers['content-type'], {
                                 service: this.taskDeps.llsTaskService,
                                 autoContinueScheduler: this.taskDeps.autoContinueScheduler
                             }).body
                             : rawResponseBody;
+                        usageReporter.feedJson(finalBody);
                         try {
                             res.removeHeader('transfer-encoding');
                             res.setHeader('content-length', String(Buffer.byteLength(finalBody, 'utf-8')));
@@ -284,6 +357,19 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                 errorMessage = err.message;
                 Logger.error(`上游请求错误：${err.message}`);
                 this.writeErrorJson(res, 502, 'bad_gateway', `上游请求失败：${err.message}`);
+                resolve();
+            });
+
+            upstreamReq.on('timeout', () => {
+                const seconds = Math.round(UPSTREAM_SOCKET_IDLE_TIMEOUT_MS / 1000);
+                errorMessage = `上游请求超时（${seconds}s 空闲）`;
+                Logger.error(`Anthropic 透传上游 socket 空闲 ${seconds}s 超时，主动断开：${upstreamUrl.toString()}`);
+                try {
+                    upstreamReq.destroy(new Error(errorMessage));
+                } catch {
+                    // ignore
+                }
+                this.writeErrorJson(res, 504, 'timeout', errorMessage);
                 resolve();
             });
 
@@ -308,11 +394,22 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
             requestBody: bodyText,
             responseStatus,
             responseHeaders,
-            responseBody: Buffer.concat(responseChunks).toString('utf-8'),
+            responseBody: streamedOutputChunks.length > 0 ? streamedOutputChunks.join('') : Buffer.concat(responseChunks).toString('utf-8'),
             startedAt,
             endedAt: Date.now(),
             error: errorMessage
         });
+    }
+
+    /**
+     * 判断上游响应是否为 SSE 流。
+     *
+     * @param value content-type 响应头。
+     * @returns 命中 text/event-stream 时返回 true。
+     */
+    private isEventStream(value: string | string[] | undefined): boolean {
+        const text = Array.isArray(value) ? value.join(';') : value ?? '';
+        return text.toLowerCase().includes('text/event-stream');
     }
 
     /**

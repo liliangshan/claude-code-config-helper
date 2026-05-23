@@ -1,0 +1,13 @@
+Homebrew install progress fixture captured while installing claude-code through proxy:
+
+==> Fetching downloads for: claude-code
+-⠳ Cask claude-code (2.1.141) #################################                    Downloading 130.8MB/207.1M
+==> Verifying checksum for '9f2a316eb18e1a3f21464aa9e530417ce0d1ca839d094285e1c6b4a2a7519ffd--claude'/207.1MB
+✔︎ Cask claude-code (2.1.141)                                                      Verified    207.1MB/207.1MB
+==> Installing Cask claude-code
+==> Linking Binary 'claude' to '/opt/homebrew/bin/claude'
+🍺  claude-code was successfully installed!
+
+Note:
+
+This fixture is installer/progress output, not Claude model output. Replace it with authenticated CLI progress or terminal UI output if the Chat implementation needs to normalize ANSI cursor movement from the CLI itself.

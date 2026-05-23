@@ -287,6 +287,23 @@ button:disabled {
     grid-column: 1 / -1;
 }
 
+/** CLI 路径选择行：输入框占满剩余空间，按钮固定宽度。 */
+.path-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.path-picker-row input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.path-picker-row button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
 label {
     color: var(--muted);
     font-size: 12px;

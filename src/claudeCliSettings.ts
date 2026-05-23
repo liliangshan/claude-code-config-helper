@@ -9,7 +9,7 @@
  *   - Windows：`%USERPROFILE%\.claude\settings.json`
  *
  * 与 VS Code settings.json 写入闭环保持一致的触发时机，
- * 让 CLI 与 VS Code 内的 Claude Code 看到相同的当前模型。
+ * 让 CLI 与 VS Code 内的 Claude Code 看到相同的当前中转模型。
  */
 
 import * as fs from 'fs/promises';
@@ -88,42 +88,37 @@ async function writeClaudeCliSettings(
 }
 
 /**
- * 把当前模型选择合并写入 Claude Code CLI 全局配置文件。
+ * 把当前模型选择"应用"到 Claude Code CLI 全局配置文件。
  *
- * 行为：
- *   - 当 `selection` 有值时，把 `model` 字段写为 `<providerId>/<modelId>`；
- *   - 当 `selection` 为 null 时，删除 `model` 字段（保留其它字段）；
- *   - 其它已有键值原样保留，不做覆盖。
+ * 当前行为（按用户要求）：
+ *   - 不再向 `~/.claude/settings.json` 写入 `model` 字段；
+ *   - 切换模型时只删除已有的 `model` 字段，**其它键值原样保留**，
+ *     避免清掉用户手动加的 hooks/permissions/theme 等配置；
+ *   - 真实模型选择通过内置 Chat 启动参数 `--model` 传给 CLI，
+ *     避免 CLI 全局配置受本扩展污染。
  *
  * 该函数不抛出：所有 IO 异常都被吞掉并记入日志，避免影响 VS Code 主流程。
  *
- * @param selection 当前模型选择，可为 null 表示清空。
+ * @param selection 当前模型选择；此实现下不再读取该参数的值，仅保留签名兼容。
  */
 export async function applyCurrentModelToClaudeCli(
     selection: CurrentModelSelection | null
 ): Promise<void> {
+    void selection;
     const filePath = resolveClaudeCliSettingsPath();
     try {
         const current = await readClaudeCliSettings(filePath);
-        const next: Record<string, unknown> = { ...current };
 
-        if (selection && selection.providerId && selection.modelId) {
-            next.model = `${selection.providerId}/${selection.modelId}`;
-        } else {
-            delete next.model;
-        }
-
-        // 与已有内容完全一致时跳过写入，避免无意义磁盘 IO。
-        if (JSON.stringify(current) === JSON.stringify(next)) {
+        // 已经没有 model 字段则无需任何 IO。
+        if (!Object.prototype.hasOwnProperty.call(current, 'model')) {
             return;
         }
 
+        const next: Record<string, unknown> = { ...current };
+        delete next.model;
+
         await writeClaudeCliSettings(filePath, next);
-        Logger.info(
-            `已更新 Claude CLI 配置：${filePath} model=${
-                typeof next.model === 'string' ? next.model : '(已清空)'
-            }`
-        );
+        Logger.info(`已从 Claude CLI 配置中移除 model 字段（保留其它键）：${filePath}`);
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         Logger.error(`写入 Claude CLI 配置失败：${filePath} :: ${message}`);

@@ -61,6 +61,9 @@
             currentModel: 'Current Model',
             notSelected: 'Not selected',
             relayStatus: 'Relay Status',
+            cliPath: 'Claude CLI Path',
+            cliPathPlaceholder: 'No CLI path selected',
+            selectCliPath: 'Select Path',
             port: 'Port',
             autoStartRelay: 'Auto-start local relay when extension activates',
             taskFlowBypassPermissions: 'Task flow bypass permissions mode',
@@ -134,6 +137,9 @@
             currentModel: '当前使用模型',
             notSelected: '未选择',
             relayStatus: '中转服务状态',
+            cliPath: 'Claude CLI 路径',
+            cliPathPlaceholder: '尚未选择 CLI 路径',
+            selectCliPath: '选择路径',
             port: '端口',
             autoStartRelay: '扩展启动时自动启动本地中转',
             taskFlowBypassPermissions: '任务流启用 bypass permissions 模式',
@@ -209,6 +215,9 @@
         currentModel: '目前使用模型',
         notSelected: '未選擇',
         relayStatus: '中轉服務狀態',
+        cliPath: 'Claude CLI 路徑',
+        cliPathPlaceholder: '尚未選擇 CLI 路徑',
+        selectCliPath: '選擇路徑',
         port: '連接埠',
         autoStartRelay: '擴充功能啟動時自動啟動本機中轉',
         taskFlowBypassPermissions: 'Task flow bypass permissions mode',
@@ -282,6 +291,9 @@
         currentModel: '현재 모델',
         notSelected: '선택되지 않음',
         relayStatus: '릴레이 상태',
+        cliPath: 'Claude CLI 경로',
+        cliPathPlaceholder: 'CLI 경로가 선택되지 않았습니다',
+        selectCliPath: '경로 선택',
         port: '포트',
         autoStartRelay: '확장이 활성화될 때 로컬 릴레이 자동 시작',
         taskFlowBypassPermissions: 'Task flow bypass permissions mode',
@@ -355,6 +367,9 @@
         currentModel: '現在のモデル',
         notSelected: '未選択',
         relayStatus: 'リレー状態',
+        cliPath: 'Claude CLI パス',
+        cliPathPlaceholder: 'CLI パス未選択',
+        selectCliPath: 'パスを選択',
         port: 'ポート',
         autoStartRelay: '拡張機能の起動時にローカルリレーを自動起動',
         taskFlowBypassPermissions: 'Task flow bypass permissions mode',
@@ -428,6 +443,9 @@
         currentModel: 'Modèle courant',
         notSelected: 'Non sélectionné',
         relayStatus: 'État du relais',
+        cliPath: 'Chemin Claude CLI',
+        cliPathPlaceholder: 'Aucun chemin CLI sélectionné',
+        selectCliPath: 'Choisir un chemin',
         port: 'Port',
         autoStartRelay: 'Démarrer automatiquement le relais local à l’activation de l’extension',
         taskFlowBypassPermissions: 'Task flow bypass permissions mode',
@@ -501,6 +519,9 @@
         currentModel: 'Aktuelles Modell',
         notSelected: 'Nicht ausgewählt',
         relayStatus: 'Relay-Status',
+        cliPath: 'Claude CLI-Pfad',
+        cliPathPlaceholder: 'Kein CLI-Pfad ausgewählt',
+        selectCliPath: 'Pfad auswählen',
         port: 'Port',
         autoStartRelay: 'Lokales Relay beim Aktivieren der Erweiterung automatisch starten',
         taskFlowBypassPermissions: 'Task flow bypass permissions mode',
@@ -589,23 +610,7 @@
         return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     }
 
-    /** 返回模型是否可在顶部下拉选择。 */
-    function isSelectableModel(model) {
-        return model && model.isUserSelectable !== false;
-    }
 
-    /** 根据当前 providers 生成顶部模型下拉选项。 */
-    function getSelectableModels() {
-        if (!state) return [];
-        const groups = [];
-        for (const provider of state.providers) {
-            if (!provider.enabled) continue;
-            const models = (provider.models || []).filter(isSelectableModel);
-            if (models.length === 0) continue;
-            groups.push({ provider, models });
-        }
-        return groups;
-    }
 
     /** 渲染整个应用。 */
     function render() {
@@ -737,79 +742,26 @@
 
     /** 渲染 Claude Code 顶部配置区。 */
     function renderClaudeCard() {
-        const relay = state.relay;
-        const currentValue = state.currentModel ? `${state.currentModel.providerId}/${state.currentModel.modelId}` : '';
+        const cliPath = state.chatCliPath || '';
         return `
             <section class="card claude-card">
                 <div class="card-title">
                     <div>
-                        <h2 data-i18n="relaySetting">Claude Code Relay Setting</h2>
+                        <h2 data-i18n="relaySetting">Claude Code Chat Setting</h2>
                         <p class="provider-meta" data-i18n="relayDescription">当前模型、端口和环境变量会同步到 Claude Code 运行配置。</p>
                     </div>
                 </div>
                 <div class="grid">
-                    <div class="field">
-                        <label data-i18n="currentModel">当前使用模型</label>
-                        <select id="current-model">
-                            <option value="" data-i18n="notSelected">未选择</option>
-                            ${renderModelOptions(currentValue)}
-                        </select>
-                    </div>
-                    <div class="field">
-                        <label data-i18n="relayStatus">中转服务状态</label>
-                        <div class="status-line"><span class="status-dot"></span>${text(state.relayStatusText)}</div>
-                    </div>
-                    <div class="field">
-                        <label data-i18n="port">端口</label>
-                        <input id="relay-port" type="number" min="1" max="65535" value="${text(relay.port || 17783)}" />
-                    </div>
-                    <div class="checkbox-row">
-                        <input id="relay-autostart" type="checkbox" ${relay.autoStart ? 'checked' : ''} />
-                        <label for="relay-autostart" data-i18n="autoStartRelay">扩展启动时自动启动本地中转</label>
-                    </div>
-                    <div class="checkbox-row checkbox-row-full task-flow-bypass-row">
-                        <input id="task-flow-bypass-permissions" type="checkbox" ${state.taskFlowBypassPermissions ? 'checked' : ''} />
-                        <label for="task-flow-bypass-permissions">
-                            <span data-i18n="taskFlowBypassPermissions">任务流启用 bypass permissions 模式</span>
-                            <span class="task-flow-bypass-hint" data-i18n="taskFlowBypassPermissionsHint">写入两个 bypass 权限设置，仅限可信沙箱。</span>
-                        </label>
-                    </div>
-                    <div class="checkbox-row">
-                        <input id="relay-skip-auth" type="checkbox" ${relay.skipAuthLogin ? 'checked' : ''} />
-                        <label for="relay-skip-auth">skipAuthLogin</label>
-                    </div>
-                    <div class="checkbox-row">
-                        <input id="relay-disable-login" type="checkbox" ${relay.disableLoginPrompt ? 'checked' : ''} />
-                        <label for="relay-disable-login">disableLoginPrompt</label>
-                    </div>
                     <div class="field full">
-                        <label data-i18n="extraEnvVars">额外环境变量（每行 NAME=VALUE）</label>
-                        <textarea id="relay-extra-env">${text((relay.extraEnvVars || []).map((item) => `${item.name}=${item.value}`).join('\n'))}</textarea>
-                    </div>
-                        <div class="field full">
-                            <label data-i18n="operation">操作</label>
-                            <div class="toolbar">
-                                <button id="btn-save-relay" data-i18n="apply">应用</button>
-                                <button id="btn-apply-settings" class="secondary" data-i18n="writeClaudeCodeSettings">一键写入 Claude Code 配置</button>
-                            </div>
+                        <label for="chat-cli-path" data-i18n="cliPath">Claude CLI 路径</label>
+                        <div class="path-picker-row">
+                            <input id="chat-cli-path" type="text" readonly value="${text(cliPath)}" data-i18n-placeholder="cliPathPlaceholder" placeholder="尚未选择 CLI 路径" />
+                            <button id="btn-select-chat-cli" type="button" class="secondary" data-i18n="selectCliPath">选择路径</button>
                         </div>
+                    </div>
                 </div>
             </section>
         `;
-    }
-
-    /** 渲染当前模型下拉框选项。 */
-    function renderModelOptions(currentValue) {
-        return getSelectableModels()
-            .map(({ provider, models }) => `
-                <optgroup label="${text(provider.name)}">
-                    ${models.map((model) => {
-                        const value = `${provider.id}/${model.modelId}`;
-                        return `<option value="${text(value)}" ${value === currentValue ? 'selected' : ''}>${text(model.displayName || model.modelId)} (${text(provider.apiType)})</option>`;
-                    }).join('')}
-                </optgroup>
-            `)
-            .join('');
     }
 
     /** 渲染提供商管理卡片。 */
@@ -864,12 +816,11 @@
         }
         return `
             <table class="model-table">
-                <thead><tr><th>${t('displayName')}</th><th>${t('switch')}</th><th>${t('operation')}</th></tr></thead>
+                <thead><tr><th>${t('displayName')}</th><th>${t('operation')}</th></tr></thead>
                 <tbody>
                     ${provider.models.map((model) => `
                         <tr data-model-id="${text(model.modelId)}">
                             <td>${text(model.displayName || model.modelId)}</td>
-                            <td>${renderSwitch('js-model-selectable', model.isUserSelectable !== false, t('showInModelDropdown'))}</td>
                             <td class="row-actions">
                                 <button class="secondary js-edit-model">${t('edit')}</button>
                                 <button class="danger js-delete-model">${t('delete')}</button>
@@ -951,7 +902,6 @@
                         </select></div>
                         <div class="checkbox-row"><input id="model-vision" type="checkbox" ${model.vision ? 'checked' : ''} /><label for="model-vision">${t('vision')}</label></div>
                         <div class="checkbox-row"><input id="model-tool" type="checkbox" ${model.toolCalling !== false ? 'checked' : ''} /><label for="model-tool">${t('toolCalling')}</label></div>
-                        <div class="checkbox-row"><input id="model-selectable" type="checkbox" ${model.isUserSelectable !== false ? 'checked' : ''} /><label for="model-selectable">${t('showInModelDropdown')}</label></div>
                         <div class="checkbox-row"><input id="model-transform-think" type="checkbox" ${model.transformThink ? 'checked' : ''} /><label for="model-transform-think">Transform Think Tags (&lt;|im_start|&gt;/♩)</label></div>
                         <div class="checkbox-row"><input id="model-preserve-reasoning" type="checkbox" ${model.preserveReasoningContent ? 'checked' : ''} /><label for="model-preserve-reasoning">Preserve reasoning_content</label></div>
                     </div>
@@ -978,13 +928,7 @@
                 post('updateUiLanguage', configuredLanguage);
             });
         });
-        byId('btn-apply-settings', (el) => el.addEventListener('click', saveRelay));
-        byId('btn-save-relay', (el) => el.addEventListener('click', saveRelay));
-        byId('task-flow-bypass-permissions', (el) => el.addEventListener('change', () => {
-            state.taskFlowBypassPermissions = !!el.checked;
-            post('updateTaskFlowBypassPermissions', state.taskFlowBypassPermissions);
-        }));
-        byId('current-model', (el) => el.addEventListener('change', onCurrentModelChanged));
+        byId('btn-select-chat-cli', (el) => el.addEventListener('click', () => post('selectChatCliPath')));
         byId('btn-new-provider', (el) => el.addEventListener('click', () => openProviderModal()));
         byId('btn-cancel-modal', (el) => el.addEventListener('click', closeModal));
         byId('btn-save-provider', (el) => el.addEventListener('click', saveProviderFromModal));
@@ -1000,7 +944,6 @@
             card.querySelector('.js-delete-provider')?.addEventListener('click', () => deleteProvider(providerId));
             card.querySelectorAll('tr[data-model-id]').forEach((row) => {
                 const modelId = row.getAttribute('data-model-id');
-                row.querySelector('.js-model-selectable')?.addEventListener('change', () => toggleModelSelectable(providerId, modelId));
                 row.querySelector('.js-edit-model')?.addEventListener('click', () => openModelModal(providerId, findModel(providerId, modelId)));
                 row.querySelector('.js-delete-model')?.addEventListener('click', () => deleteModel(providerId, modelId));
             });
@@ -1011,39 +954,6 @@
     function byId(id, fn) {
         const el = document.getElementById(id);
         if (el) fn(el);
-    }
-
-    /** 当前模型下拉变更处理。 */
-    function onCurrentModelChanged(event) {
-        const value = event.target.value;
-        if (!value) {
-            state.currentModel = null;
-            render();
-            return;
-        }
-        const slash = value.indexOf('/');
-        state.currentModel = { providerId: value.slice(0, slash), modelId: value.slice(slash + 1) };
-        render();
-    }
-
-    /** 保存中转配置。 */
-    function saveRelay() {
-        const relay = {
-            port: Number(document.getElementById('relay-port').value || 17783),
-            autoStart: document.getElementById('relay-autostart').checked,
-            skipAuthLogin: document.getElementById('relay-skip-auth').checked,
-            disableLoginPrompt: document.getElementById('relay-disable-login').checked,
-            extraEnvVars: parseExtraEnv(document.getElementById('relay-extra-env').value)
-        };
-        post('saveClaudeSettings', { relay, currentModel: state.currentModel });
-    }
-
-    /** 解析额外环境变量文本。 */
-    function parseExtraEnv(raw) {
-        return String(raw || '').split('\n').map((line) => line.trim()).filter(Boolean).map((line) => {
-            const index = line.indexOf('=');
-            return index >= 0 ? { name: line.slice(0, index).trim(), value: line.slice(index + 1) } : { name: line, value: '' };
-        }).filter((item) => item.name);
     }
 
     /** 打开提供商模态框。 */
@@ -1102,7 +1012,6 @@
         model.samplingMode = document.getElementById('model-sampling-mode').value;
         model.vision = document.getElementById('model-vision').checked;
         model.toolCalling = document.getElementById('model-tool').checked;
-        model.isUserSelectable = document.getElementById('model-selectable').checked;
         model.transformThink = document.getElementById('model-transform-think').checked;
         model.preserveReasoningContent = document.getElementById('model-preserve-reasoning').checked;
         if (!existing) target.models.push(model);
@@ -1119,14 +1028,6 @@
         post('saveProviders', providers);
     }
 
-    /** 切换模型是否显示在顶部当前模型下拉中。 */
-    function toggleModelSelectable(providerId, modelId) {
-        const providers = clone(state.providers);
-        const provider = providers.find((item) => item.id === providerId);
-        const model = provider?.models?.find((item) => item.modelId === modelId);
-        if (model) model.isUserSelectable = model.isUserSelectable === false;
-        post('saveProviders', providers);
-    }
 
     /** 展开或隐藏某个提供商的模型列表。 */
     function toggleModels(providerId) {

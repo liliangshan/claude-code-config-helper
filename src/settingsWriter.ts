@@ -4,9 +4,9 @@
  * 严格通过 VS Code 官方 Configuration API 写入用户全局 settings.json，
  * 不直接读写文件。负责：
  *
- * 1. 后续把中转端口与当前模型展开成 ANTHROPIC_* 等环境变量条目；
- * 2. 在写入前用 {@link stripManagedVars} 剥离上一次本扩展写过的条目，保留用户手加的变量；
- * 3. 用 {@link MANAGED_MARKER} 标记本扩展管辖范围。
+ * 1. 清理历史 Relay 版本写入的 ANTHROPIC_* 等环境变量条目；
+ * 2. 用 {@link stripManagedVars} 剥离上一次本扩展写过的条目，保留用户手加的变量；
+ * 3. 根据任务流配置同步官方 Claude Code 危险权限开关。
  */
 
 import * as vscode from 'vscode';
@@ -24,7 +24,7 @@ import {
     TASK_FLOW_BYPASS_PERMISSIONS_KEY
 } from './constants';
 import { Logger } from './logger';
-import type { CurrentModelSelection, ExtraEnvVar, RelayServerConfig } from './types';
+import type { CurrentModelSelection } from './types';
 
 /** Claude Code environmentVariables 中的单条环境变量。 */
 export interface EnvVar {
@@ -75,25 +75,25 @@ export function stripManagedVars(vars: readonly EnvVar[]): EnvVar[] {
 }
 
 /**
- * 把中转配置和当前模型展开为待写入的 managed 环境变量数组（含 marker）。
+ * 构造历史 Relay 版本使用过的 managed 环境变量块。
  *
- * 该函数由 settings.json 写入闭环调用，用于生成本扩展托管的环境变量块。
+ * 该函数仅保留给旧测试或迁移排查使用，新版运行时不再调用。
+ *
+ * @param port 历史 Relay 端口。
+ * @param currentModel 当前模型选择。
+ * @returns 历史版本会写入的托管环境变量列表。
  */
 export function buildManagedVars(
-    relay: RelayServerConfig,
+    port: number,
     currentModel: CurrentModelSelection | null
 ): EnvVar[] {
     const list: EnvVar[] = [{ name: MANAGED_MARKER, value: 'claude-code-relay' }];
 
     list.push({
         name: 'ANTHROPIC_BASE_URL',
-        value: `http://127.0.0.1:${relay.port}`
+        value: `http://127.0.0.1:${port}`
     });
     list.push({ name: 'ANTHROPIC_AUTH_TOKEN', value: 'claude-code-relay' });
-
-    if (relay.skipAuthLogin) {
-        list.push({ name: 'CLAUDE_CODE_SKIP_AUTH_LOGIN', value: '1' });
-    }
 
     if (currentModel) {
         list.push({
@@ -102,65 +102,59 @@ export function buildManagedVars(
         });
     }
 
-    if (relay.extraEnvVars && relay.extraEnvVars.length > 0) {
-        for (const e of relay.extraEnvVars) {
-            if (!e || !e.name || !e.name.trim()) continue;
-            if (e.name === MANAGED_MARKER) continue; // 防止注入冲突
-            list.push({ name: e.name.trim(), value: e.value ?? '' });
-        }
-    }
-
     return list;
 }
 
 /**
  * Claude Code settings 写入器。
  *
- * 提供 {@link applyRelayConfig}（写入中转配置）与 {@link deactivate}（清除本扩展条目）
- * 两个高层操作。所有写入均落到 {@link vscode.ConfigurationTarget.Global}。
+ * 提供历史 Relay 配置清理、CLI 当前模型同步、任务流权限同步与停用清理能力。
+ * 所有写入均落到 {@link vscode.ConfigurationTarget.Global}。
  */
 export class SettingsWriter {
     /**
-    * 把当前中转配置写入 Claude Code 配置。
+     * 把当前模型同步到 Claude Code CLI 全局配置文件。
      *
-     * - 合并策略：保留用户手加的变量，仅替换本扩展先前写入的 managed 区域。
-    * - 同时把 `claudeCode.disableLoginPrompt` 同步为 relay.disableLoginPrompt。
+    * CLI 原生命令会读取 `~/.claude/settings.json` 中的 `model` 字段；
+    * 这里写入带提供商前缀的中转模型 ID，便于后端按 `providerId/modelId` 路由。
      *
-     * @param relay 中转服务配置
-     * @param currentModel 当前模型选择
+     * @param currentModel 当前模型选择；为空时删除 CLI settings 中的 model 字段。
      */
-    public async applyRelayConfig(
-        relay: RelayServerConfig,
-        currentModel: CurrentModelSelection | null
-    ): Promise<void> {
+    public async applyClaudeCliModel(currentModel: CurrentModelSelection | null): Promise<void> {
+        await applyCurrentModelToClaudeCli(currentModel);
+    }
+
+    /**
+     * 清理历史 HTTP Relay 写入的 Claude Code 配置。
+     *
+     * 新版内置 Chat 已不再启动本地 HTTP Relay，因此启动时只移除旧版 managed
+     * 环境变量块，避免官方 Claude Code 继续指向已不存在的 127.0.0.1 端口。
+    * 同时继续同步任务流权限设置；模型由内置 Chat 启动参数 `--model` 控制，不再写入 Claude CLI settings.json。
+     *
+     * @param currentModel 当前模型选择；为空时清空 Claude CLI 模型配置。
+     */
+    public async cleanupLegacyRelaySettings(currentModel: CurrentModelSelection | null): Promise<void> {
         const cfg = vscode.workspace.getConfiguration(CLAUDE_CODE_NAMESPACE);
         const existing = (cfg.get<EnvVar[]>(CLAUDE_CODE_ENV_VARS_KEY) ?? []).filter(
             (v): v is EnvVar => !!v && typeof v.name === 'string'
         );
         const userOwned = stripManagedVars(existing);
-        const managed = buildManagedVars(relay, currentModel);
-
-        const merged = [...userOwned, ...managed];
+        const shouldClearEnv = userOwned.length === 0;
 
         await cfg.update(
             CLAUDE_CODE_ENV_VARS_KEY,
-            merged,
+            shouldClearEnv ? undefined : userOwned,
             vscode.ConfigurationTarget.Global
         );
         await cfg.update(
             CLAUDE_CODE_DISABLE_LOGIN_PROMPT_KEY,
-            !!relay.disableLoginPrompt,
+            false,
             vscode.ConfigurationTarget.Global
         );
         await this.applyTaskFlowPermissionMode();
-// 同步把当前模型写入 Claude Code CLI 的 ~/.claude/settings.json（跨平台）。
-        await applyCurrentModelToClaudeCli(currentModel);
+        await this.applyClaudeCliModel(currentModel);
 
-        
-        Logger.info(
-            `已写入 Claude Code settings (relayPort=${relay.port})，` +
-                `managed=${managed.length}, userOwned=${userOwned.length}`
-        );
+        Logger.info(`已清理历史 Relay settings，userOwned=${userOwned.length}`);
     }
 
     /**
@@ -186,9 +180,7 @@ export class SettingsWriter {
             false,
             vscode.ConfigurationTarget.Global
         );
-
-        // 同步清空 Claude CLI 配置中的 model 字段。
-        await applyCurrentModelToClaudeCli(null);
+        await this.applyClaudeCliModel(null);
 
         Logger.info('已清除本扩展写入的 Claude Code 环境变量');
     }
