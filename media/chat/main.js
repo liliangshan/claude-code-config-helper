@@ -436,6 +436,8 @@
         composerBox.insertAdjacentElement('afterend', shortcutBar);
         renderExpertModelOptions();
         applyI18n();
+        // 如果在运行中创建/重建此栏，立刻同步禁用态。
+        applyRunningDisabledControls(composerState.chatRunning);
     }
 
     /**
@@ -910,11 +912,42 @@
             globalPendingEl.setAttribute('aria-hidden', composerState.chatRunning ? 'false' : 'true');
             globalPendingEl.setAttribute('aria-label', t('loading'));
         }
+        // 运行中禁用：顶部模型选择 / 权限模式选择，以及输入框下方的专家模型
+        // 选择和 CC 任务流按钮，避免在响应过程中误触发切换/重启或弹出面板。
+        applyRunningDisabledControls(composerState.chatRunning);
         if (!(sendEl instanceof HTMLButtonElement)) return;
         sendEl.textContent = composerState.chatRunning ? '■' : '↑';
         sendEl.title = composerState.chatRunning ? t('stopResponse') : t('sendMessage');
         sendEl.setAttribute('aria-label', composerState.chatRunning ? t('stopResponse') : t('sendMessage'));
         sendEl.dataset.mode = composerState.chatRunning ? 'stop' : 'send';
+    }
+
+    /**
+     * 运行中禁用底部交互控件：模型选择、权限模式选择、专家模型选择、CC 任务流按钮。
+     *
+     * 通过原生 `disabled` 属性禁止点击和聚焦，同时给容器加 `is-running-disabled`
+     * 标记，便于 CSS 在需要时进一步降低视觉强度。
+     *
+     * @param {boolean} running 是否运行中。
+     */
+    function applyRunningDisabledControls(running) {
+        const selectors = [
+            '[data-role="model-select"]',
+            '[data-role="permission-mode-select"]',
+            '[data-role="expert-model-select"]',
+            '[data-role="composer-shortcut-bar"] .composer-shortcut-button'
+        ];
+        for (const sel of selectors) {
+            const nodes = document.querySelectorAll(sel);
+            nodes.forEach(node => {
+                if (node instanceof HTMLButtonElement || node instanceof HTMLSelectElement || node instanceof HTMLInputElement) {
+                    node.disabled = !!running;
+                }
+                if (node instanceof HTMLElement) {
+                    node.classList.toggle('is-running-disabled', !!running);
+                }
+            });
+        }
     }
 
     /**
@@ -2227,14 +2260,17 @@
         var isError = !!tool.isError;
 
         var root = document.createElement('div');
-        root.className = 'root_ZUQaOA tool-status-' + status + ' tool-name-' + sanitizeToolClassName(name);
+        // 默认折叠：通过 is-collapsed class 控制
+        root.className = 'root_ZUQaOA tool-status-' + status + ' tool-name-' + sanitizeToolClassName(name) + ' is-collapsed';
         if (segment.id) root.dataset.segmentId = segment.id;
         root.dataset.toolStatus = status;
         root.dataset.toolName = name;
 
-        // 摘要行
-        var summary = document.createElement('div');
+        // 摘要行：作为按钮，点击切换展开/折叠
+        var summary = document.createElement('button');
+        summary.type = 'button';
         summary.className = 'toolSummary_ZUQaOA';
+        summary.setAttribute('aria-expanded', 'false');
 
         var iconSpan = document.createElement('span');
         iconSpan.className = 'toolStatusIcon_ZUQaOA';
@@ -2258,6 +2294,13 @@
         badge.textContent = pickToolStatusLabel(status);
         summary.appendChild(badge);
 
+        // 展开/折叠指示箭头
+        var chevron = document.createElement('span');
+        chevron.className = 'toolChevron_ZUQaOA';
+        chevron.textContent = '▸';
+        chevron.setAttribute('aria-hidden', 'true');
+        summary.appendChild(chevron);
+
         root.appendChild(summary);
 
         // 主体：按工具名分派渲染器
@@ -2265,6 +2308,12 @@
         body.className = 'toolBody_ZUQaOA';
         renderToolBody(body, name, input, resultText, isError, tool, segment);
         root.appendChild(body);
+
+        // 点击摘要行切换展开/折叠
+        summary.addEventListener('click', function () {
+            var collapsed = root.classList.toggle('is-collapsed');
+            summary.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        });
 
         container.appendChild(root);
     }
@@ -3324,11 +3373,19 @@
             if (segment && segment.id) {
                 var existing = content.querySelector('[data-segment-id="' + CSS.escape(segment.id) + '"]');
                 if (existing && existing.parentNode === content) {
+                    // 在替换前记录工具卡片的展开/折叠状态，避免状态刷新时折叠状态被重置。
+                    var wasToolExpanded = existing.classList && existing.classList.contains('root_ZUQaOA')
+                        && !existing.classList.contains('is-collapsed');
                     var replacement = document.createElement('div');
                     replacement.style.display = 'contents';
                     appendSegment(replacement, segment);
                     var newNode = replacement.firstChild;
                     if (newNode) {
+                        if (wasToolExpanded && newNode instanceof HTMLElement && newNode.classList.contains('root_ZUQaOA')) {
+                            newNode.classList.remove('is-collapsed');
+                            var sumBtn = newNode.querySelector(':scope > .toolSummary_ZUQaOA');
+                            if (sumBtn) sumBtn.setAttribute('aria-expanded', 'true');
+                        }
                         content.replaceChild(newNode, existing);
                         continue;
                     }

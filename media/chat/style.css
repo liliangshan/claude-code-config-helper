@@ -859,6 +859,22 @@ select:focus-visible {
     gap: var(--lls-space-2);
     font-weight: 600;
     color: var(--lls-fg);
+    /* 作为按钮使用：清除原生样式，整行可点击 */
+    width: 100%;
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+}
+
+.toolSummary_ZUQaOA:focus-visible {
+    outline: 1px solid var(--lls-info, currentColor);
+    outline-offset: 2px;
+    border-radius: var(--lls-radius-sm, 4px);
 }
 
 .toolStatusIcon_ZUQaOA {
@@ -939,6 +955,36 @@ select:focus-visible {
     margin-top: var(--lls-space-2);
     padding-top: var(--lls-space-2);
     border-top: 1px dashed var(--lls-border);
+}
+
+/* 展开/折叠箭头：默认指向右（折叠），展开时旋转 90° 指向下 */
+.toolChevron_ZUQaOA {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    margin-left: var(--lls-space-2, 8px);
+    font-size: 20px;
+    line-height: 1;
+    font-weight: 700;
+    color: var(--lls-fg-muted);
+    transition: transform var(--lls-transition-fast, 0.15s) ease, color var(--lls-transition-fast, 0.15s) ease;
+    transform: rotate(0deg);
+}
+
+.toolSummary_ZUQaOA:hover .toolChevron_ZUQaOA {
+    color: var(--lls-fg);
+}
+
+.root_ZUQaOA:not(.is-collapsed) > .toolSummary_ZUQaOA > .toolChevron_ZUQaOA {
+    transform: rotate(90deg);
+}
+
+/* 折叠时隐藏主体并去掉与摘要行的间距 */
+.root_ZUQaOA.is-collapsed > .toolBody_ZUQaOA {
+    display: none;
 }
 
 .toolBodyGrid_ZUQaOA {
@@ -1603,6 +1649,18 @@ select:focus-visible {
     overflow: visible;
 }
 
+/* 运行中即使 focus 也保持彗星环显示：覆盖 :focus-within 的边框/阴影，
+   并去掉内部 textarea 的 focus 轮廓，避免视觉上盖掉边框动画。 */
+.composer-box--running:focus-within {
+    border-color: var(--lls-border);
+    box-shadow: none;
+}
+
+.composer-box--running textarea:focus,
+.composer-box--running textarea:focus-visible {
+    outline: none;
+}
+
 /* 彗星头：贴在边框上的细亮蓝色弧。 */
 .composer-box--running::before {
     content: '';
@@ -1722,6 +1780,17 @@ select:focus-visible {
 
 .composer-shortcut-button:active {
     transform: translateY(0);
+}
+
+/* 运行中禁用底部控件：模型选择、权限模式、专家模型、CC 任务流。
+   通过原生 :disabled 命中即可，is-running-disabled 仅作语义标记。 */
+.composer-shortcut-button:disabled,
+.composer-shortcut-select:disabled,
+select[data-role="model-select"]:disabled,
+select[data-role="permission-mode-select"]:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    pointer-events: none;
 }
 
 .composer-box textarea[data-role='composer'] {
