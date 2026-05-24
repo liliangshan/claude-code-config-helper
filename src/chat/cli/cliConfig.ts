@@ -18,6 +18,7 @@ import {
     CONFIG_NAMESPACE
 } from '../../constants';
 import { ConfigManager } from '../../configManager';
+import { readExpertConfigFromVscode, maybeInjectExpertMcpServer } from '../../expertMode/expertConfig';
 import {
     loadAllVscodeMcpJsons,
     logMcpJsonLoadResults,
@@ -70,6 +71,41 @@ export class ChatCliConfigService {
     public constructor(private readonly configManager?: ConfigManager) {}
 
     /**
+     * 当前 Relay 的回环 URL（如 `http://127.0.0.1:3210`）。
+     *
+     * 由 `extension.ts` 在 RelayServer.start() 完成后通过
+     * {@link setExpertRelayEnv} 注入。专家模式启用时会被写入 llsExpert
+     * stdio MCP 子进程的环境变量 `LLS_EXPERT_RELAY_URL`，供其回调扩展宿主。
+     */
+    private expertRelayBaseUrl: string | undefined;
+
+    /**
+     * 当前会话的一次性鉴权 token，与 {@link expertRelayBaseUrl} 配套。
+     *
+     * 写入 expertMcpServer 子进程的 `LLS_EXPERT_RELAY_TOKEN` 环境变量；
+     * 扩展宿主侧 `/__expert/run` 路由会校验 `Authorization: Bearer <token>`，
+     * 阻止外部进程伪造请求触发 spawn 专家 CLI。
+     */
+    private expertRelayAuthToken: string | undefined;
+
+    /**
+     * 注入「专家模式回环 Relay」运行时参数。
+     *
+     * 通常在扩展激活流程的 `ensureRelayServerStarted()` 之后调用一次。如果
+     * 之后 Relay 重启换了端口，应当再次调用该方法刷新。
+     *
+     * @param relayBaseUrl 形如 `http://127.0.0.1:PORT`，传 undefined 表示清除。
+     * @param authToken    本次会话的随机鉴权 token，传 undefined 表示清除。
+     */
+    public setExpertRelayEnv(
+        relayBaseUrl: string | undefined,
+        authToken: string | undefined
+    ): void {
+        this.expertRelayBaseUrl = relayBaseUrl;
+        this.expertRelayAuthToken = authToken;
+    }
+
+    /**
      * 读取当前生效的 Chat CLI 配置快照。
      *
      * @returns 已补齐 cwd、transport 和默认环境变量的配置。
@@ -88,6 +124,16 @@ export class ChatCliConfigService {
         const includeVscodeMcpJson = config.get<boolean>(CHAT_CLI_INCLUDE_VSCODE_MCP_JSON_KEY, true) !== false;
         const mergedMcpServers = this.mergeWithVscodeMcpJson(mcpServers, includeVscodeMcpJson);
         const skills = this.normalizeSkills(config.get<unknown>(CHAT_CLI_SKILLS_KEY, undefined));
+        // 读取并合并出最终生效的专家模式配置；若启用，则把内置 llsExpert MCP server
+        // 自动追加进 mcpServers 字典，让 Claude CLI 通过 --mcp-config 拉起我们的
+        // stdio 子进程并把 ask_expert 工具暴露给主模型。
+        const expertMode = readExpertConfigFromVscode();
+        const finalMcpServers = maybeInjectExpertMcpServer(
+            mergedMcpServers,
+            expertMode,
+            this.expertRelayBaseUrl,
+            this.expertRelayAuthToken
+        );
         return {
             enabled: config.get<boolean>(CHAT_ENABLED_KEY, false),
             cliPath: config.get<string>(CHAT_CLI_PATH_KEY, '').trim(),
@@ -99,9 +145,10 @@ export class ChatCliConfigService {
                 ? { ...DEFAULT_STREAM_JSON_ENV, ...userEnv }
                 : userEnv,
             permissionMode,
-            mcpServers: Object.keys(mergedMcpServers).length > 0 ? mergedMcpServers : undefined,
+            mcpServers: finalMcpServers && Object.keys(finalMcpServers).length > 0 ? finalMcpServers : undefined,
             strictMcpConfig: strictMcpConfig || undefined,
-            skills
+                skills,
+                expertMode
         };
     }
 
@@ -114,6 +161,44 @@ export class ChatCliConfigService {
     public async getConfigWithRelayEnv(relayPort: number): Promise<ChatCliConfig> {
         const config = this.getConfig();
         const relayEnv = this.resolveRelayEnv(relayPort);
+        return {
+            ...config,
+            cliEnv: {
+                ...config.cliEnv,
+                ...relayEnv
+            }
+        };
+    }
+
+    /**
+     * 同步读取当前 Chat CLI 配置，并注入已缓存的本地 Relay 环境变量。
+     *
+     * 与 {@link getConfigWithRelayEnv} 的区别：本方法不需要调用方再次传入端口，
+     * 而是复用 {@link setExpertRelayEnv} 记录下来的 `expertRelayBaseUrl`。
+     * 它专门服务于 ExpertRunnerService：专家 CLI 是在 `/__expert/run` 请求中
+     * 临时启动的，此时 Relay 已经在扩展宿主中运行，且 baseUrl/token 已被同步
+     * 到本服务；直接复用即可。
+     *
+     * 如果尚未缓存 relay baseUrl，则返回普通 {@link getConfig} 结果，调用方可
+     * 继续走原有失败路径（例如专家 CLI 返回未登录错误）。
+     *
+     * @returns 已尽可能合并本地 Relay ANTHROPIC_* 环境变量的配置快照。
+     */
+    public getConfigWithCachedRelayEnv(): ChatCliConfig {
+        const config = this.getConfig();
+        if (!this.expertRelayBaseUrl) {
+            return config;
+        }
+        const relayEnv: Record<string, string> = {
+            CLAUDE_CODE_SKIP_AUTH_LOGIN: '1',
+            CLAUDE_CODE_SKIP_MODEL_VALIDATION: '1',
+            ANTHROPIC_BASE_URL: this.expertRelayBaseUrl,
+            ANTHROPIC_AUTH_TOKEN: 'claude-code-relay',
+            ANTHROPIC_API_KEY: 'claude-code-relay'
+        };
+        if (config.model) {
+            relayEnv.ANTHROPIC_MODEL = config.model;
+        }
         return {
             ...config,
             cliEnv: {

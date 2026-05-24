@@ -35,6 +35,9 @@ export class CliProcess implements vscode.Disposable {
     /** 当前进程状态。 */
     private status: CliProcessStatus = 'idle';
 
+    /** 被主动清理的子进程 pid 集合；这些退出不应上报为 CLI 错误。 */
+    private readonly expectedExitPids = new Set<number>();
+
     /**
      * 使用给定配置启动 CLI 子进程。
      *
@@ -288,7 +291,11 @@ export class CliProcess implements vscode.Disposable {
     /**
      * 构造 stream-json stdin/stdout 启动参数。
      *
-     * `--print` 是 CLI 文档中启用 stream-json 输入输出格式的前置模式。
+    * `--print` 是 CLI 文档中启用 stream-json 输入输出格式的前置模式。
+    * `--permission-prompt-tool stdio` 则接入官方 Claude Code 扩展同款授权通道：
+    * CLI 在 Bash/Edit/Write 等工具需要用户确认时，会向 stdout 发送
+    * `control_request` / `can_use_tool`，扩展宿主确认后再通过 stdin 写回
+    * `control_response`，避免非交互模式下直接报 `This command requires approval`。
      *
      * **关于 `--bare`（已移除）**：早期版本使用 `--bare` 是为了强制 CLI 从
      * `ANTHROPIC_API_KEY` / apiKeyHelper 读取鉴权信息，避免 OAuth/keychain 干扰。
@@ -316,10 +323,26 @@ export class CliProcess implements vscode.Disposable {
         if (permissionMode && !this.hasPermissionModeArgument(args)) {
             args.push('--permission-mode', permissionMode);
         }
+        this.appendPermissionPromptToolArgs(args);
         this.appendMcpArgs(args);
         this.appendSkillArgs(args);
         if (resumeSessionId) args.push('--resume', resumeSessionId);
         return args;
+    }
+
+    /**
+     * 注入 Claude CLI stdio 权限提示工具参数。
+     *
+     * 官方 Claude Code 扩展在提供 `canUseTool` 回调时会自动追加
+     * `--permission-prompt-tool stdio`。当前扩展没有直接使用官方 SDK，因此需要在
+     * 启动参数层显式追加；若用户已在 `chat.cliArgs` 中手动指定同名参数，则尊重
+     * 用户配置，避免重复参数导致 CLI 行为不确定。
+     *
+     * @param args 已构造的启动参数数组（原地修改）。
+     */
+    private appendPermissionPromptToolArgs(args: string[]): void {
+        if (this.hasPermissionPromptToolArgument(args)) return;
+        args.push('--permission-prompt-tool', 'stdio');
     }
 
     /**
@@ -438,6 +461,16 @@ export class CliProcess implements vscode.Disposable {
     }
 
     /**
+     * 判断启动参数中是否已经包含权限提示工具参数。
+     *
+     * @param args 待检查的启动参数。
+     * @returns 已存在 `--permission-prompt-tool` 或 `--permission-prompt-tool=...` 时返回 true。
+     */
+    private hasPermissionPromptToolArgument(args: string[]): boolean {
+        return args.some((arg) => arg === '--permission-prompt-tool' || arg.startsWith('--permission-prompt-tool='));
+    }
+
+    /**
      * 绑定子进程 stdout/stderr/error/exit 事件。
      *
      * @param child 已启动的 CLI 子进程。
@@ -458,6 +491,11 @@ export class CliProcess implements vscode.Disposable {
             this.setStatus('error');
         });
         child.on('exit', (code, signal) => {
+            if (typeof child.pid === 'number' && this.expectedExitPids.delete(child.pid)) {
+                Logger.info(`Chat CLI 已按预期退出：pid=${child.pid}, code=${code ?? 'null'}, signal=${signal ?? 'null'}`);
+                this.setStatus(this.child ? this.status : 'idle');
+                return;
+            }
             Logger.info(`Chat CLI 已退出：code=${code ?? 'null'}, signal=${signal ?? 'null'}`);
             this.setStatus(code === 0 ? 'exited' : 'error');
             this.emitter.emit(EXIT_EVENT, { code, signal, exitedAt: Date.now() } satisfies CliExitEvent);
@@ -473,6 +511,7 @@ export class CliProcess implements vscode.Disposable {
         const child = this.child;
         if (!child) return;
         Logger.info(`停止 Chat CLI：${reason}`);
+        if (typeof child.pid === 'number') this.expectedExitPids.add(child.pid);
         this.child = undefined;
         await new Promise<void>((resolve) => {
             const timer = setTimeout(() => resolve(), 1500);

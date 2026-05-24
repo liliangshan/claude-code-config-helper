@@ -2,6 +2,27 @@
 
 All notable changes to this extension are documented in this file.
 
+## [2.0.0] - 2026-05-25
+
+### Added
+
+- Added an in-chat LLS CCAI task-flow Todo card that renders workflow progress directly above the Chat composer and refreshes when task statuses change.
+- Added animated in-progress task indicators for the task-flow Todo card, replacing the previous static dot state.
+- Added Windows-specific Claude CLI setup guidance in the configuration panel, including the npm mirror install command and the detected `%APPDATA%`-based `claude.exe` path.
+- Added copy buttons for the Windows Claude CLI install command and executable path in the configuration panel.
+
+### Changed
+
+- Changed the LLS CCAI task menu behavior so completed workflows are cleared silently before starting a new task, while still prompting before replacing an actively running workflow.
+- Moved the task-flow Todo card into the Chat footer/composer area so it stays visible near the current input box.
+- Updated the Windows Claude CLI executable path hint to use the extension host environment instead of a hard-coded `C:\Users\用户名\AppData` example.
+- Updated the Windows Claude CLI path display and copy behavior to keep normal Windows single backslashes, for example `C:\Users\lls\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe`.
+
+### Fixed
+
+- Fixed cases where task-flow status updates were received by the Chat Webview but the Todo UI did not appear in the expected composer area.
+- Fixed stale completed-workflow prompts when the user clicks the LLS CCAI task entry after a workflow has already finished.
+
 ## [0.1.4] - 2026-05-23
 
 ### Added

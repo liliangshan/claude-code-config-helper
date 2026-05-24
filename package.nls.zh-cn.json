@@ -47,5 +47,9 @@
     "configuration.chat.includeVscodeMcpJson.description": "同时读取 VS Code 标准的 mcp.json 配置（工作区 .vscode/mcp.json 与用户级 mcp.json），让内置 Chat CLI 也能看到你为 VS Code 配置的 MCP server。顶层支持 `servers`（VS Code 风格）和 `mcpServers`（Claude CLI 风格）两种字段。",
     "configuration.chat.skills.description": "启动 Claude CLI 时允许的技能（skills）。与 SDK options 的 `skills` 字段一致（anthropic.claude-code 2.1.x）：filenameApp 为 'all' 表示允许全部；填名称数组则在 --allowedTools 中注入 Skill(name) 条目；留空或设为 null 表示不注入。",
     "configuration.chat.currentModel.description": "内置 Chat 使用的当前模型。项目/工作区值优先于全局值，并通过 --model 传给 Claude CLI。",
+    "configuration.chat.expertMode.project.enabled.description": "项目级内置专家模式开关（ask_expert MCP 工具）。开启后主 Claude CLI 可看到 ask_expert 并在需要时委托给一个独立的专家 CLI 子进程；专家全过程在 Chat 面板可见，但**不会写入主对话上下文**。本项优先级高于全局设置；不设置时回退到 chat.expertMode.global.enabled。",
+    "configuration.chat.expertMode.project.model.description": "项目级专家子进程使用的模型 id。空字符串表示继承全局值 chat.expertMode.global.model；若全局也为空则专家回退使用主模型。保存于工作区 .vscode/settings.json。",
+    "configuration.chat.expertMode.global.enabled.description": "全局默认的内置专家模式开关，对所有工作区生效（除非某个工作区通过 chat.expertMode.project.enabled 覆盖）。存储于用户设置，可随 Settings Sync 同步。",
+    "configuration.chat.expertMode.global.model.description": "全局默认的专家子进程模型 id。空字符串表示专家回退使用主模型。项目级 chat.expertMode.project.model 优先级高于本项。",
     "configuration.openapicopilot.systemPrompt.description": "与 LLS OAI / openapi-compatible-copilot 共享的系统提示词。"
 }

@@ -95,6 +95,8 @@ export class ConfigManager implements vscode.Disposable {
             providers: this.listProviders(),
             currentModel: this.getCurrentModel(),
             chatCliPath: this.getChatCliPath(),
+            hostPlatform: process.platform,
+            windowsAppDataPath: process.platform === 'win32' ? (process.env.APPDATA ?? '') : '',
             configuredLanguage: this.getConfiguredUiLanguage(),
             resolvedLanguage: this.getResolvedUiLanguage(),
             taskFlowBypassPermissions: this.getTaskFlowBypassPermissions(),

@@ -304,6 +304,70 @@ button:disabled {
     white-space: nowrap;
 }
 
+/* Claude CLI 路径安装提示：显示可复制的 AI/搜索引擎查询语句。 */
+.cli-install-hint {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.cli-install-hint code {
+    padding: 2px 6px;
+    border: 1px solid var(--vscode-input-border, var(--border));
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--input) 82%, var(--vscode-focusBorder));
+    color: var(--vscode-input-foreground, var(--fg));
+    font-family: var(--vscode-editor-font-family, monospace);
+    white-space: normal;
+}
+
+/* Windows Claude CLI 安装提示：在 Windows 下展示安装命令与 exe 路径。 */
+.cli-install-windows {
+    display: flex;
+    flex-direction: column;
+    flex-basis: 100%;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.cli-install-windows-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.cli-install-windows-row code {
+    word-break: break-all;
+}
+
+/* 小型复制图标按钮：用于复制 Claude CLI 安装路径搜索文本。 */
+.icon-copy-button {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border-radius: 4px;
+    color: var(--fg);
+    background: transparent;
+}
+
+.icon-copy-button:hover {
+    background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.15));
+}
+
+.icon-copy-button svg {
+    width: 14px;
+    height: 14px;
+}
+
 label {
     color: var(--muted);
     font-size: 12px;

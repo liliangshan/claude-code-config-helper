@@ -2,7 +2,7 @@
     "name": "claude-code-config-helper",
     "displayName": "%extension.displayName%",
     "description": "%extension.description%",
-    "version": "0.1.4",
+    "version": "2.0.0",
     "publisher": "liliangshan",
     "license": "MIT",
     "repository": {
@@ -181,14 +181,6 @@
                     "name": "%view.chat.name%",
                     "icon": "resources/reference-claude-logo.svg"
                 }
-            ],
-            "claudeRouterChatFallback": [
-                {
-                    "id": "claudeRouter.chatSidebar",
-                    "type": "webview",
-                    "name": "%view.chat.name%",
-                    "icon": "resources/reference-claude-logo.svg"
-                }
             ]
         },
         "configuration": {
@@ -297,23 +289,40 @@
                         "properties": {
                             "type": {
                                 "type": "string",
-                                "enum": ["stdio", "http", "sse", "sdk"],
+                                "enum": [
+                                    "stdio",
+                                    "http",
+                                    "sse",
+                                    "sdk"
+                                ],
                                 "description": "%configuration.chat.mcpServers.type.description%"
                             },
-                            "command": { "type": "string" },
+                            "command": {
+                                "type": "string"
+                            },
                             "args": {
                                 "type": "array",
-                                "items": { "type": "string" }
+                                "items": {
+                                    "type": "string"
+                                }
                             },
                             "env": {
                                 "type": "object",
-                                "additionalProperties": { "type": "string" }
+                                "additionalProperties": {
+                                    "type": "string"
+                                }
                             },
-                            "cwd": { "type": "string" },
-                            "url": { "type": "string" },
+                            "cwd": {
+                                "type": "string"
+                            },
+                            "url": {
+                                "type": "string"
+                            },
                             "headers": {
                                 "type": "object",
-                                "additionalProperties": { "type": "string" }
+                                "additionalProperties": {
+                                    "type": "string"
+                                }
                             }
                         },
                         "additionalProperties": true
@@ -341,11 +350,15 @@
                         },
                         {
                             "type": "string",
-                            "enum": ["all"]
+                            "enum": [
+                                "all"
+                            ]
                         },
                         {
                             "type": "array",
-                            "items": { "type": "string" }
+                            "items": {
+                                "type": "string"
+                            }
                         }
                     ],
                     "description": "%configuration.chat.skills.description%",
@@ -369,6 +382,30 @@
                     "description": "%configuration.chat.currentModel.description%",
                     "scope": "resource"
                 },
+                "claudeCodeConfigHelper.chat.expertMode.project.enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "%configuration.chat.expertMode.project.enabled.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.expertMode.project.model": {
+                    "type": "string",
+                    "default": "",
+                    "description": "%configuration.chat.expertMode.project.model.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.expertMode.global.enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "%configuration.chat.expertMode.global.enabled.description%",
+                    "scope": "application"
+                },
+                "claudeCodeConfigHelper.chat.expertMode.global.model": {
+                    "type": "string",
+                    "default": "",
+                    "description": "%configuration.chat.expertMode.global.model.description%",
+                    "scope": "application"
+                },
                 "openapicopilot.systemPrompt": {
                     "type": "string",
                     "default": "",
@@ -379,27 +416,71 @@
         },
         "menus": {
             "commandPalette": [
-                { "command": "claudeRouter.openConfigPanel" },
-                { "command": "claudeRouter.openSettingsJson" },
-                { "command": "claudeRouter.openGlobalSharedSettings" },
-                { "command": "claudeRouter.openWorkspaceSharedSettings" },
-                { "command": "claudeRouter.chat.open" },
-                { "command": "claudeRouter.chat.selectCli" },
-                { "command": "claudeRouter.chat.restart" },
-                { "command": "claudeRouter.pasteTaskFlowToClaude" },
-                { "command": "claudeRouter.llsCcaiTask.openMenu" },
-                { "command": "claudeRouter.llsCcaiTask.showProgress" },
-                { "command": "claudeRouter.llsCcaiTask.continue" },
-                { "command": "claudeRouter.llsCcaiTask.clear" },
-                { "command": "claudeRouter.reloadWindow" },
-                { "command": "claudeRouter.newProvider" },
-                { "command": "claudeRouter.refreshProviders" },
-                { "command": "claudeRouter.setCurrentModel" },
-                { "command": "claudeRouter.clearCurrentModel" },
-                { "command": "claudeRouter.exportConfig" },
-                { "command": "claudeRouter.importConfig" },
-                { "command": "claudeRouter.editProviderItem", "when": "false" },
-                { "command": "claudeRouter.deleteProviderItem", "when": "false" }
+                {
+                    "command": "claudeRouter.openConfigPanel"
+                },
+                {
+                    "command": "claudeRouter.openSettingsJson"
+                },
+                {
+                    "command": "claudeRouter.openGlobalSharedSettings"
+                },
+                {
+                    "command": "claudeRouter.openWorkspaceSharedSettings"
+                },
+                {
+                    "command": "claudeRouter.chat.open"
+                },
+                {
+                    "command": "claudeRouter.chat.selectCli"
+                },
+                {
+                    "command": "claudeRouter.chat.restart"
+                },
+                {
+                    "command": "claudeRouter.pasteTaskFlowToClaude"
+                },
+                {
+                    "command": "claudeRouter.llsCcaiTask.openMenu"
+                },
+                {
+                    "command": "claudeRouter.llsCcaiTask.showProgress"
+                },
+                {
+                    "command": "claudeRouter.llsCcaiTask.continue"
+                },
+                {
+                    "command": "claudeRouter.llsCcaiTask.clear"
+                },
+                {
+                    "command": "claudeRouter.reloadWindow"
+                },
+                {
+                    "command": "claudeRouter.newProvider"
+                },
+                {
+                    "command": "claudeRouter.refreshProviders"
+                },
+                {
+                    "command": "claudeRouter.setCurrentModel"
+                },
+                {
+                    "command": "claudeRouter.clearCurrentModel"
+                },
+                {
+                    "command": "claudeRouter.exportConfig"
+                },
+                {
+                    "command": "claudeRouter.importConfig"
+                },
+                {
+                    "command": "claudeRouter.editProviderItem",
+                    "when": "false"
+                },
+                {
+                    "command": "claudeRouter.deleteProviderItem",
+                    "when": "false"
+                }
             ],
             "view/title": [
                 {

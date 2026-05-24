@@ -255,6 +255,145 @@ select:focus-visible {
     line-height: 1.6;
 }
 
+/* 任务流 Todo 状态卡片（位于输入框上方的 footer 内） */
+.taskFlowTodoPanel_07S1Yg {
+    width: 100%;
+    margin-bottom: var(--lls-space-2);
+    border: 1px solid var(--lls-border);
+    border-radius: var(--lls-radius-md);
+    background: var(--lls-bg-elevated);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.taskFlowTodoHeader_07S1Yg {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: var(--lls-space-2);
+    padding: 8px 10px;
+    border: 0;
+    background: transparent;
+    color: var(--lls-fg);
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+}
+
+.taskFlowTodoHeader_07S1Yg:hover {
+    background: var(--lls-bg-hover);
+}
+
+.taskFlowTodoChevron_07S1Yg {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: var(--lls-fg-muted);
+    transform: rotate(90deg);
+    transition: transform var(--lls-transition-fast);
+}
+
+.taskFlowTodoPanel_07S1Yg[data-collapsed='true'] .taskFlowTodoChevron_07S1Yg {
+    transform: rotate(0deg);
+}
+
+.taskFlowTodoTitle_07S1Yg {
+    font-size: var(--lls-font-sm);
+    font-weight: 600;
+}
+
+.taskFlowTodoHeaderSpacer_07S1Yg {
+    flex: 1 1 auto;
+}
+
+.taskFlowTodoOpenIcon_07S1Yg {
+    color: var(--lls-fg-muted);
+    font-size: 13px;
+    line-height: 1;
+}
+
+.taskFlowTodoList_07S1Yg {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0 10px 8px 32px;
+}
+
+.taskFlowTodoItem_07S1Yg {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    min-height: 24px;
+    color: var(--lls-fg);
+    font-size: var(--lls-font-sm);
+    line-height: 1.45;
+}
+
+.taskFlowTodoStatusDot_07S1Yg {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    margin-top: 3px;
+    border: 1.5px solid var(--lls-fg-muted);
+    border-radius: 999px;
+    color: var(--lls-bg);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.taskFlowTodoItem_07S1Yg--in_progress .taskFlowTodoStatusDot_07S1Yg {
+    /* 进行中：去掉圆圈占位，改用纯旋转 spinner 表示活动状态。 */
+    border: 1.5px solid transparent;
+    border-top-color: var(--vscode-progressBar-background, var(--lls-accent));
+    border-right-color: var(--vscode-progressBar-background, var(--lls-accent));
+    background: transparent;
+    color: transparent;
+    animation: taskFlowTodoSpinner_07S1Yg 0.9s linear infinite;
+}
+
+@keyframes taskFlowTodoSpinner_07S1Yg {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.taskFlowTodoItem_07S1Yg--completed .taskFlowTodoStatusDot_07S1Yg {
+    border-color: var(--vscode-testing-iconPassed, #73c991);
+    background: var(--vscode-testing-iconPassed, #73c991);
+    color: var(--vscode-editor-background, #1e1e1e);
+}
+
+.taskFlowTodoItem_07S1Yg--blocked .taskFlowTodoStatusDot_07S1Yg {
+    border-color: var(--vscode-testing-iconFailed, #f14c4c);
+    color: var(--vscode-testing-iconFailed, #f14c4c);
+}
+
+.taskFlowTodoText_07S1Yg {
+    display: inline-flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.taskFlowTodoItemTitle_07S1Yg {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.taskFlowTodoItemDesc_07S1Yg {
+    color: var(--lls-fg-muted);
+    font-size: var(--lls-font-xs);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 /* ---------------------------------------------------------------------------
  * 5. 单条消息容器
  * --------------------------------------------------------------------------- */
@@ -335,6 +474,49 @@ select:focus-visible {
 .userMessageActionBtn_07S1Yg:disabled {
     opacity: 0.5;
     cursor: default;
+}
+
+/* 重发编辑态：点击 user 消息下方重发图标后，用多行文本框替换原气泡。 */
+.userMessageResendEditor_07S1Yg {
+    width: min(85%, 760px);
+    display: flex;
+    flex-direction: column;
+    gap: var(--lls-space-2, 6px);
+    padding: var(--lls-space-3, 10px);
+    background: var(--lls-user-bubble-bg);
+    color: var(--lls-user-bubble-fg);
+    border: 1px solid var(--vscode-focusBorder, var(--lls-user-bubble-border));
+    border-radius: var(--lls-radius-lg);
+    border-bottom-right-radius: var(--lls-radius-sm);
+    box-shadow: var(--lls-shadow-sm);
+}
+
+/* 重发编辑框本体：保留多行文本，可用 Shift+Enter 换行。 */
+.userMessageResendTextarea_07S1Yg {
+    width: 100%;
+    min-height: 88px;
+    max-height: 320px;
+    resize: vertical;
+    border: none;
+    outline: none;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+    font-size: var(--lls-font-md);
+    line-height: 1.55;
+}
+
+/* 重发编辑框底部操作栏：右侧显示发送和取消两个图标。 */
+.userMessageResendToolbar_07S1Yg {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--lls-space-1, 4px);
+}
+
+.userMessageResendIcon_07S1Yg--send {
+    color: var(--lls-accent);
 }
 
 /*
@@ -871,6 +1053,52 @@ select:focus-visible {
     color: var(--vscode-editor-foreground, var(--lls-fg));
 }
 
+.toolResultMarkdown_ZUQaOA {
+    max-height: 420px;
+    overflow: auto;
+    padding: var(--lls-space-3);
+    color: var(--vscode-editor-foreground, var(--lls-fg));
+}
+
+.toolResultMarkdown_ZUQaOA > .markdownRoot_07S1Yg {
+    margin: 0;
+}
+
+.toolResultMarkdown_ZUQaOA > .markdownRoot_07S1Yg > :first-child {
+    margin-top: 0;
+}
+
+.toolResultMarkdown_ZUQaOA > .markdownRoot_07S1Yg > :last-child {
+    margin-bottom: 0;
+}
+
+.expertToolStreamWrap_07S1Yg {
+    border-color: color-mix(in srgb, var(--lls-accent) 35%, var(--lls-border));
+}
+
+.expertToolStream_07S1Yg {
+    max-height: 520px;
+}
+
+.expertToolStreamLine_07S1Yg {
+    margin: 0 0 var(--lls-space-2) 0;
+}
+
+.expertToolStreamLine_07S1Yg:last-child {
+    margin-bottom: 0;
+}
+
+.expertToolStreamLine_tool_call_07S1Yg,
+.expertToolStreamLine_tool_result_07S1Yg {
+    color: var(--lls-fg-muted);
+    font-size: var(--lls-font-sm);
+}
+
+.expertToolStreamLine_error_07S1Yg,
+.expertToolStreamLine_cancelled_07S1Yg {
+    color: var(--vscode-errorForeground, #f85149);
+}
+
 /* Diff 块 */
 .toolDiffWrap_ZUQaOA {
     margin-top: var(--lls-space-2);
@@ -1322,6 +1550,7 @@ select:focus-visible {
 
 /* 输入框组合 */
 .composer-box {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: var(--lls-space-2);
@@ -1330,11 +1559,169 @@ select:focus-visible {
     border: 1px solid var(--lls-border);
     border-radius: var(--lls-radius-lg);
     transition: border-color var(--lls-transition-fast), box-shadow var(--lls-transition-fast);
+    overflow: hidden;
 }
 
 .composer-box:focus-within {
     border-color: var(--lls-border-strong);
     box-shadow: 0 0 0 1px var(--lls-border-strong);
+}
+
+/*
+ * 输入框运行中动画 —— "border beam / 彗星沿边框跑"。
+ *
+ * 实现思路完全对齐 VS Code 官方 Chat 输入框：
+ *   - 容器保留灰色 border 作为底环；
+ *   - `::before` 是一个圆锥渐变 (conic-gradient)，只有 ~40deg 角度范围内
+ *     有亮蓝色，其余 360deg 为完全透明；
+ *   - 通过 `-webkit-mask: content-box` + `mask-composite: exclude` 把
+ *     conic 裁成只显示在 1px 边框宽度的"环"上；
+ *   - 用 `@property --lls-input-anim-angle` 注册成 angle 类型，浏览器才能
+ *     在 keyframes 之间平滑插值角度；
+ *   - keyframes 仅修改 conic 的起始角 (`from var(--lls-input-anim-angle)`)，
+ *     伪元素本身不旋转，所以视觉上就是"一颗彗星沿圆角矩形边框跑"，不会
+ *     出现"中间一条线在转"的错觉；
+ *   - `::after` 用同一思路 + `filter: blur()` 做光晕，跟着彗星头一起走。
+ *
+ * 停止时由 main.js 移除 .composer-box--running 类，伪元素自动隐藏。
+ */
+@property --lls-input-anim-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 135deg;
+}
+
+@keyframes lls-input-working-border-spin {
+    from { --lls-input-anim-angle: 135deg; }
+    to   { --lls-input-anim-angle: 495deg; }
+}
+
+.composer-box--running {
+    border-color: var(--lls-border);
+    box-shadow: none;
+    /* 彗星环依赖 ::before/::after 绝对定位到边框区，必须允许溢出在 1px 边外。 */
+    overflow: visible;
+}
+
+/* 彗星头：贴在边框上的细亮蓝色弧。 */
+.composer-box--running::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: conic-gradient(
+        from var(--lls-input-anim-angle),
+        transparent 0deg,
+        color-mix(in srgb, var(--lls-info) 92%, transparent) 18deg,
+        color-mix(in srgb, var(--lls-info) 70%, transparent) 32deg,
+        color-mix(in srgb, var(--lls-info) 36%, transparent) 52deg,
+        transparent 90deg,
+        transparent 360deg
+    );
+    -webkit-mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+    mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+    opacity: 1;
+    animation: lls-input-working-border-spin 2.2s linear infinite;
+    z-index: 2;
+}
+
+/* 彗星光晕：更宽 + 模糊，跟随彗星头一起走（共用同一角度变量）。 */
+.composer-box--running::after {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: inherit;
+    padding: 2px;
+    background: conic-gradient(
+        from var(--lls-input-anim-angle),
+        transparent 0deg,
+        color-mix(in srgb, var(--lls-info) 55%, transparent) 22deg,
+        color-mix(in srgb, var(--lls-info) 28%, transparent) 50deg,
+        transparent 90deg,
+        transparent 360deg
+    );
+    -webkit-mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+    mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    filter: blur(1.5px);
+    pointer-events: none;
+    opacity: 1;
+    animation: lls-input-working-border-spin 2.2s linear infinite;
+    z-index: 1;
+}
+
+.composer-box--running > * {
+    position: relative;
+    z-index: 3;
+}
+
+/* 输入框下方快捷入口：由 main.js 动态插入，不写死在 index.html 中 */
+.composer-shortcut-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.composer-shortcut-button {
+    min-height: 26px;
+    padding: 0 10px;
+    border: 1px solid var(--lls-border);
+    border-radius: 999px;
+    background: var(--lls-bg-elevated);
+    color: var(--lls-fg-muted);
+    font-size: var(--lls-font-xs);
+    line-height: 1;
+    transition: background var(--lls-transition-fast), border-color var(--lls-transition-fast), color var(--lls-transition-fast), transform var(--lls-transition-fast);
+}
+
+.composer-shortcut-select {
+    min-height: 26px;
+    max-width: 240px;
+    padding: 0 10px;
+    border: 1px solid var(--lls-border);
+    border-radius: 999px;
+    background: var(--lls-bg-elevated);
+    color: var(--lls-fg-muted);
+    font-size: var(--lls-font-xs);
+    cursor: pointer;
+    transition: background var(--lls-transition-fast), border-color var(--lls-transition-fast), color var(--lls-transition-fast);
+}
+
+.composer-shortcut-select:hover {
+    background: var(--lls-bg-hover);
+    border-color: var(--lls-border-strong);
+    color: var(--lls-fg);
+}
+
+.composer-shortcut-select option {
+    background: var(--vscode-dropdown-background, var(--lls-bg-elevated));
+    color: var(--vscode-dropdown-foreground, var(--lls-fg));
+}
+
+.composer-shortcut-button:hover {
+    background: var(--lls-bg-hover);
+    border-color: var(--lls-border-strong);
+    color: var(--lls-fg);
+    transform: translateY(-1px);
+}
+
+.composer-shortcut-button:active {
+    transform: translateY(0);
 }
 
 .composer-box textarea[data-role='composer'] {
@@ -1472,6 +1859,13 @@ select:focus-visible {
 @keyframes lls-pulse {
     0%, 80%, 100% { opacity: 0.3; transform: scale(0.85); }
     40% { opacity: 1; transform: scale(1.1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .composer-box--running::before,
+    .composer-box--running::after {
+        animation: none;
+    }
 }
 
 /* ---------------------------------------------------------------------------
@@ -1792,4 +2186,135 @@ body.vscode-high-contrast .ask-modal__custom-input {
         padding-left: var(--lls-space-4);
         padding-right: var(--lls-space-4);
     }
+}
+
+/* ========================================================================
+ * Expert mode 折叠面板（ExpertPanel）
+ * 详见 media/chat/main.js 中 handleExpertEvent / ensureExpertPanel。
+ * ====================================================================== */
+.expertPanel_07S1Yg {
+    border: 1px solid var(--lls-border, rgba(128, 128, 128, 0.3));
+    border-radius: 6px;
+    margin: 6px 0 12px 0;
+    background: var(--vscode-editorWidget-background, rgba(127, 127, 127, 0.05));
+    overflow: hidden;
+    font-size: 0.92em;
+}
+.expertPanelRunning_07S1Yg {
+    border-color: var(--vscode-charts-blue, #3794ff);
+}
+.expertPanelDone_07S1Yg {
+    border-color: var(--vscode-charts-green, #4caf50);
+}
+.expertPanelError_07S1Yg {
+    border-color: var(--vscode-charts-red, #f44336);
+}
+.expertPanelCancelled_07S1Yg {
+    border-color: var(--vscode-charts-orange, #ff9800);
+}
+.expertPanelHeader_07S1Yg {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+    user-select: none;
+    background: var(--vscode-editorHoverWidget-background, rgba(127, 127, 127, 0.08));
+    border-bottom: 1px solid var(--lls-border, rgba(128, 128, 128, 0.2));
+}
+.expertPanelTitle_07S1Yg {
+    font-weight: 600;
+}
+.expertPanelModel_07S1Yg {
+    color: var(--vscode-descriptionForeground, #888);
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 0.85em;
+}
+.expertPanelStatus_07S1Yg {
+    margin-left: auto;
+    color: var(--vscode-descriptionForeground, #888);
+    font-style: italic;
+}
+.expertPanelToggle_07S1Yg {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: inherit;
+    padding: 0 4px;
+    font-size: 1.1em;
+}
+.expertPanelBody_07S1Yg {
+    padding: 8px 10px;
+    max-height: 480px;
+    overflow-y: auto;
+}
+.expertPanelCollapsed_07S1Yg .expertPanelBody_07S1Yg {
+    display: none;
+    border-top: none;
+}
+.expertPanelCollapsed_07S1Yg .expertPanelHeader_07S1Yg {
+    border-bottom: none;
+}
+.expertPanelQuestion_07S1Yg {
+    padding: 6px 8px;
+    margin-bottom: 8px;
+    background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.1));
+    border-left: 3px solid var(--vscode-textLink-foreground, #3794ff);
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.95em;
+}
+.expertPanelEvents_07S1Yg {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.expertEvent_07S1Yg {
+    padding: 4px 6px;
+    border-left: 2px solid transparent;
+}
+.expertEventCompact_07S1Yg {
+    padding: 2px 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.expertEvent_analysis_07S1Yg {
+    border-left-color: var(--vscode-charts-blue, #3794ff);
+}
+.expertEvent_tool_call_07S1Yg {
+    border-left-color: var(--vscode-charts-purple, #b48ead);
+}
+.expertEvent_tool_result_07S1Yg {
+    border-left-color: var(--vscode-charts-yellow, #d7ba7d);
+}
+.expertEvent_final_07S1Yg {
+    border-left-color: var(--vscode-charts-green, #4caf50);
+}
+.expertEvent_error_07S1Yg {
+    border-left-color: var(--vscode-charts-red, #f44336);
+}
+.expertEvent_cancelled_07S1Yg {
+    border-left-color: var(--vscode-charts-orange, #ff9800);
+}
+.expertEventLabel_07S1Yg {
+    display: inline-block;
+    font-weight: 600;
+    font-size: 0.85em;
+    color: var(--vscode-descriptionForeground, #888);
+    margin-bottom: 2px;
+}
+.expertEventCompact_07S1Yg .expertEventLabel_07S1Yg {
+    display: block;
+    margin-bottom: 0;
+    color: var(--vscode-foreground, inherit);
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-weight: 500;
+}
+.expertEventDetail_07S1Yg {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 0.88em;
+    line-height: 1.45;
 }

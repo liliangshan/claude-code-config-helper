@@ -112,7 +112,17 @@
             providerNotFound: 'Provider not found',
             modelIdRequired: 'Model ID is required',
             confirmDeleteProvider: 'Delete this provider?',
-            adLabel: 'AD'
+            adLabel: 'AD',
+            cliInstallHint: 'Tip: If you have not installed Claude CLI or do not know its path, ask an AI assistant or search engine:',
+            cliInstallQuery: 'How to install Claude CLI and where is the Claude CLI installation path?',
+            windowsCliInstallHint: 'Windows install command:',
+            windowsCliPathHint: 'Windows executable path after npm global install:',
+            copyWindowsCliInstall: 'Copy Windows install command',
+            copyWindowsCliPath: 'Copy Windows executable path',
+            windowsCliInstallCopied: 'Windows install command copied',
+            windowsCliPathCopied: 'Windows executable path copied',
+            copyCliInstallQuery: 'Copy search text',
+            cliInstallQueryCopied: 'Search text copied'
         },
         'zh-cn': {
             loading: '正在加载配置...',
@@ -188,7 +198,17 @@
             providerNotFound: '提供商不存在',
             modelIdRequired: '模型 ID 必填',
             confirmDeleteProvider: '确定删除该提供商吗？',
-            adLabel: '广告'
+            adLabel: '广告',
+            cliInstallHint: '提示：如果你还没安装 Claude CLI，或不知道安装路径在哪，请用 AI 或搜索引擎搜索：',
+            cliInstallQuery: '如何安装 Claude CLI 及 Claude CLI的安装路径在哪？',
+            windowsCliInstallHint: 'Windows 安装方法：',
+            windowsCliPathHint: 'Windows npm 全局安装后的可执行文件路径：',
+            copyWindowsCliInstall: '复制 Windows 安装命令',
+            copyWindowsCliPath: '复制 Windows 可执行文件路径',
+            windowsCliInstallCopied: '已复制 Windows 安装命令',
+            windowsCliPathCopied: '已复制 Windows 可执行文件路径',
+            copyCliInstallQuery: '复制搜索文本',
+            cliInstallQueryCopied: '已复制搜索文本'
         }
     };
 
@@ -573,14 +593,119 @@
         adLabel: 'ANZEIGE'
     };
 
+    /** Claude CLI 路径提示文案补丁：多语言统一维护，避免静态翻译对象长行继续膨胀。 */
+    Object.assign(translations['zh-tw'], {
+        cliInstallHint: '提示：如果你尚未安裝 Claude CLI，或不知道安裝路徑在哪，請用 AI 或搜尋引擎搜尋：',
+        cliInstallQuery: '如何安裝 Claude CLI 及 Claude CLI 的安裝路徑在哪？',
+        copyCliInstallQuery: '複製搜尋文字',
+        cliInstallQueryCopied: '已複製搜尋文字'
+    });
+    Object.assign(translations.ko, {
+        cliInstallHint: '팁: Claude CLI를 아직 설치하지 않았거나 설치 경로를 모른다면 AI 또는 검색 엔진에서 검색하세요:',
+        cliInstallQuery: 'Claude CLI 설치 방법 및 Claude CLI 설치 경로는 어디인가요?',
+        copyCliInstallQuery: '검색 문구 복사',
+        cliInstallQueryCopied: '검색 문구를 복사했습니다'
+    });
+    Object.assign(translations.ja, {
+        cliInstallHint: 'ヒント: Claude CLI をまだインストールしていない、またはインストール先が分からない場合は、AI か検索エンジンで検索してください:',
+        cliInstallQuery: 'Claude CLI のインストール方法と Claude CLI のインストールパスはどこですか？',
+        copyCliInstallQuery: '検索文をコピー',
+        cliInstallQueryCopied: '検索文をコピーしました'
+    });
+    Object.assign(translations.fr, {
+        cliInstallHint: 'Astuce : si vous n’avez pas encore installé Claude CLI ou si vous ne connaissez pas son chemin, demandez à une IA ou recherchez :',
+        cliInstallQuery: 'Comment installer Claude CLI et où se trouve le chemin d’installation de Claude CLI ?',
+        copyCliInstallQuery: 'Copier le texte de recherche',
+        cliInstallQueryCopied: 'Texte de recherche copié'
+    });
+    Object.assign(translations.de, {
+        cliInstallHint: 'Tipp: Wenn Claude CLI noch nicht installiert ist oder Sie den Pfad nicht kennen, fragen Sie eine KI oder suchen Sie nach:',
+        cliInstallQuery: 'Wie installiert man Claude CLI und wo befindet sich der Installationspfad von Claude CLI?',
+        copyCliInstallQuery: 'Suchtext kopieren',
+        cliInstallQueryCopied: 'Suchtext kopiert'
+    });
+
+    /** Windows Claude CLI 安装与路径提示文案补丁，未单独翻译的语言回落英文。 */
+    Object.keys(translations).forEach((language) => {
+        Object.assign(translations[language], {
+            windowsCliInstallHint: translations[language].windowsCliInstallHint || translations.en.windowsCliInstallHint,
+            windowsCliPathHint: translations[language].windowsCliPathHint || translations.en.windowsCliPathHint,
+            copyWindowsCliInstall: translations[language].copyWindowsCliInstall || translations.en.copyWindowsCliInstall,
+            copyWindowsCliPath: translations[language].copyWindowsCliPath || translations.en.copyWindowsCliPath,
+            windowsCliInstallCopied: translations[language].windowsCliInstallCopied || translations.en.windowsCliInstallCopied,
+            windowsCliPathCopied: translations[language].windowsCliPathCopied || translations.en.windowsCliPathCopied
+        });
+    });
+
     /** 读取翻译文案，缺失时回落英文，再回落 key 本身。 */
     function t(key) {
         return translations[currentLanguage]?.[key] || translations.en[key] || key;
     }
 
+    /** Windows npm 全局安装 Claude CLI 的命令。 */
+    const WINDOWS_CLI_INSTALL_COMMAND = 'npm install -g @anthropic-ai/claude-code --registry=https://registry.npmmirror.com/';
+
+    /** 无法从宿主环境读取 APPDATA 时展示的 Windows APPDATA 示例路径。 */
+    const FALLBACK_WINDOWS_APP_DATA_PATH = 'C:/Users/用户名/AppData/Roaming';
+
+    /** Windows npm 全局安装后 Claude CLI 可执行文件相对 APPDATA 的路径片段。 */
+    const WINDOWS_CLI_EXECUTABLE_SUFFIX = 'npm/node_modules/@anthropic-ai/claude-code/bin/claude.exe';
+
     /** 使用命名值格式化翻译模板。 */
     function tf(key, values) {
         return t(key).replace(/\{(\w+)\}/g, (_, name) => values?.[name] ?? '');
+    }
+
+    /** 判断当前扩展宿主系统是否为 Windows。 */
+    function isWindowsHost() {
+        return state?.hostPlatform === 'win32';
+    }
+
+    /** 读取宿主进程 APPDATA 环境变量；读取不到时回落示例路径。 */
+    function getWindowsAppDataPath() {
+        return state?.windowsAppDataPath || FALLBACK_WINDOWS_APP_DATA_PATH;
+    }
+
+    /**
+     * 拼接 Windows 路径并统一为单反斜杠内部格式。
+     *
+     * @param {...string} parts 路径片段。
+     * @returns {string} 单反斜杠 Windows 路径。
+     */
+    function joinWindowsPath(...parts) {
+        return parts
+            .filter(Boolean)
+            .map((part) => String(part).replace(/[\\/]+$/g, '').replace(/^[\\/]+/g, ''))
+            .join('\\')
+            .replace(/[\\/]+/g, '\\');
+    }
+
+    /** 获取 Windows Claude CLI 可执行文件路径，展示和复制时保持单反斜杠。 */
+    function getWindowsCliExecutablePath() {
+        return joinWindowsPath(getWindowsAppDataPath(), WINDOWS_CLI_EXECUTABLE_SUFFIX);
+    }
+
+    /** 渲染仅 Windows 系统显示的 Claude CLI npm 安装命令与可执行文件路径提示。 */
+    function renderWindowsCliInstallHint() {
+        if (!isWindowsHost()) return '';
+        const executablePath = getWindowsCliExecutablePath();
+        return `
+                            <div class="cli-install-windows" role="note">
+                                <div class="cli-install-windows-row">
+                                    <span data-i18n="windowsCliInstallHint">${t('windowsCliInstallHint')}</span>
+                                    <code>${text(WINDOWS_CLI_INSTALL_COMMAND)}</code>
+                                    <button id="btn-copy-windows-cli-install" type="button" class="icon-copy-button" data-i18n-title="copyWindowsCliInstall" data-i18n-aria-label="copyWindowsCliInstall" title="${text(t('copyWindowsCliInstall'))}">
+                                        <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 4.5A1.5 1.5 0 0 1 5.5 3H12a1 1 0 0 1 1 1v8.5A1.5 1.5 0 0 1 11.5 14h-6A1.5 1.5 0 0 1 4 12.5zM5.5 4a.5.5 0 0 0-.5.5v8a.5.5 0 0 0 .5.5h6a.5.5 0 0 0 .5-.5V4zM3 11H2.5A1.5 1.5 0 0 1 1 9.5v-6A1.5 1.5 0 0 1 2.5 2H9v1H2.5a.5.5 0 0 0-.5.5v6a.5.5 0 0 0 .5.5H3z"/></svg>
+                                    </button>
+                                </div>
+                                <div class="cli-install-windows-row">
+                                    <span data-i18n="windowsCliPathHint">${t('windowsCliPathHint')}</span>
+                                    <code>${text(executablePath)}</code>
+                                    <button id="btn-copy-windows-cli-path" type="button" class="icon-copy-button" data-i18n-title="copyWindowsCliPath" data-i18n-aria-label="copyWindowsCliPath" title="${text(t('copyWindowsCliPath'))}">
+                                        <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 4.5A1.5 1.5 0 0 1 5.5 3H12a1 1 0 0 1 1 1v8.5A1.5 1.5 0 0 1 11.5 14h-6A1.5 1.5 0 0 1 4 12.5zM5.5 4a.5.5 0 0 0-.5.5v8a.5.5 0 0 0 .5.5h6a.5.5 0 0 0 .5-.5V4zM3 11H2.5A1.5 1.5 0 0 1 1 9.5v-6A1.5 1.5 0 0 1 2.5 2H9v1H2.5a.5.5 0 0 0-.5.5v6a.5.5 0 0 0 .5.5H3z"/></svg>
+                                    </button>
+                                </div>
+                            </div>`;
     }
 
     /** 对当前 DOM 应用 i18n 文案。 */
@@ -758,6 +883,14 @@
                             <input id="chat-cli-path" type="text" readonly value="${text(cliPath)}" data-i18n-placeholder="cliPathPlaceholder" placeholder="尚未选择 CLI 路径" />
                             <button id="btn-select-chat-cli" type="button" class="secondary" data-i18n="selectCliPath">选择路径</button>
                         </div>
+                        <div class="cli-install-hint" role="note">
+                            <span data-i18n="cliInstallHint">提示：如果你还没安装 Claude CLI，或不知道安装路径在哪，请用 AI 或搜索引擎搜索：</span>
+                            <code data-i18n="cliInstallQuery">如何安装 Claude CLI 及 Claude CLI的安装路径在哪？</code>
+                            <button id="btn-copy-cli-install-query" type="button" class="icon-copy-button" data-i18n-title="copyCliInstallQuery" data-i18n-aria-label="copyCliInstallQuery" title="复制搜索文本">
+                                <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 4.5A1.5 1.5 0 0 1 5.5 3H12a1 1 0 0 1 1 1v8.5A1.5 1.5 0 0 1 11.5 14h-6A1.5 1.5 0 0 1 4 12.5zM5.5 4a.5.5 0 0 0-.5.5v8a.5.5 0 0 0 .5.5h6a.5.5 0 0 0 .5-.5V4zM3 11H2.5A1.5 1.5 0 0 1 1 9.5v-6A1.5 1.5 0 0 1 2.5 2H9v1H2.5a.5.5 0 0 0-.5.5v6a.5.5 0 0 0 .5.5H3z"/></svg>
+                            </button>
+                            ${renderWindowsCliInstallHint()}
+                        </div>
                     </div>
                 </div>
             </section>
@@ -929,6 +1062,9 @@
             });
         });
         byId('btn-select-chat-cli', (el) => el.addEventListener('click', () => post('selectChatCliPath')));
+        byId('btn-copy-cli-install-query', (el) => el.addEventListener('click', copyCliInstallQuery));
+        byId('btn-copy-windows-cli-install', (el) => el.addEventListener('click', copyWindowsCliInstallCommand));
+        byId('btn-copy-windows-cli-path', (el) => el.addEventListener('click', copyWindowsCliExecutablePath));
         byId('btn-new-provider', (el) => el.addEventListener('click', () => openProviderModal()));
         byId('btn-cancel-modal', (el) => el.addEventListener('click', closeModal));
         byId('btn-save-provider', (el) => el.addEventListener('click', saveProviderFromModal));
@@ -948,6 +1084,65 @@
                 row.querySelector('.js-delete-model')?.addEventListener('click', () => deleteModel(providerId, modelId));
             });
         });
+    }
+
+    /**
+     * 复制 Claude CLI 安装路径查询文本。
+     *
+     * 用户可以把该问题直接粘贴到 AI 助手或搜索引擎中，快速了解 Claude CLI 的
+     * 安装方式以及 macOS / Windows / Linux 下常见可执行文件路径。
+     */
+    function copyCliInstallQuery() {
+        copyTextWithToast(t('cliInstallQuery'), 'cliInstallQueryCopied');
+    }
+
+    /** 复制 Windows Claude CLI npm 安装命令。 */
+    function copyWindowsCliInstallCommand() {
+        copyTextWithToast(WINDOWS_CLI_INSTALL_COMMAND, 'windowsCliInstallCopied');
+    }
+
+    /** 复制 Windows Claude CLI 可执行文件路径，路径中的反斜杠保持 Windows 单反斜杠格式。 */
+    function copyWindowsCliExecutablePath() {
+        copyTextWithToast(getWindowsCliExecutablePath(), 'windowsCliPathCopied');
+    }
+
+    /**
+     * 复制指定文本并显示对应成功提示。
+     *
+     * @param {string} value 待复制文本。
+     * @param {string} successKey 成功提示 i18n key。
+     */
+    function copyTextWithToast(value, successKey) {
+        if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(value).then(
+                () => showToast('success', t(successKey)),
+                () => fallbackCopyText(value, successKey)
+            );
+            return;
+        }
+        fallbackCopyText(value, successKey);
+    }
+
+    /**
+     * 使用临时 textarea 复制文本，作为 Clipboard API 不可用时的回退方案。
+     *
+     * @param {string} value 待复制文本。
+     * @param {string} successKey 成功提示 i18n key。
+     */
+    function fallbackCopyText(value, successKey) {
+        const textarea = document.createElement('textarea');
+        textarea.value = value;
+        textarea.setAttribute('readonly', 'readonly');
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            showToast('success', t(successKey));
+        } finally {
+            textarea.remove();
+        }
     }
 
     /** 按 ID 查找元素并执行回调。 */

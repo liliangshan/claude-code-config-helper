@@ -67,6 +67,40 @@ export interface ChatCliConfig {
      * - 缺省 / 空数组  不向 allowedTools 注入任何 Skill 条目
      */
     skills?: 'all' | string[];
+
+    /**
+     * 专家模式配置（按「项目 > 全局 > 默认」三层合并后的最终结果）。
+     *
+     * - 由 `resolveExpertConfig()` 从 `chat.expertMode.project.*` /
+     *   `chat.expertMode.global.*` 两个 scope 合并得到；
+     * - 若 `enabled === true`，`ChatCliConfigService.getConfig()` 会在 `mcpServers`
+     *   字典中追加内置 `llsExpert` server，使主模型可看到 `ask_expert` 工具；
+     * - 该字段由专家进程的 `buildExpertConfig()` 在派生子配置时**反向移除**，
+     *   防止专家递归调用专家（详见 `EXPERT_MODE_DESIGN.md` §6.3）。
+     */
+    expertMode?: ExpertModeConfig;
+}
+
+/**
+ * 专家模式配置。
+ *
+ * 该类型同时被两个 scope 复用：
+ * - 项目级（`resource` scope，写入 `.vscode/settings.json`）
+ * - 全局级（`application` scope，写入用户设置 / Settings Sync）
+ *
+ * 实际运行时由 `resolveExpertConfig()` 按「项目 > 全局 > 默认」三层覆盖合并，
+ * 因此本接口字段都是「已解析后」的最终值（非 `Partial`）。
+ */
+export interface ExpertModeConfig {
+    /** 是否启用专家模式（即是否在主 CLI 工具列表中注入 `ask_expert`）。 */
+    enabled: boolean;
+    /**
+     * 专家使用的模型 id。
+     *
+     * 空字符串表示「未显式选择」，ExpertRunner 会回退到主模型 id；
+     * 主模型 id 也为空时认为专家模式不可用，主模型不会看到 `ask_expert` 工具。
+     */
+    model: string;
 }
 
 /**

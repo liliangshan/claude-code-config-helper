@@ -1,18 +1,27 @@
-/** @file 扩展入口：接入内置 Chat Webview、任务流状态栏与配置视图。 */
+/** @file 扩展入口：接入内置 Chat Webview、任务流服务与配置视图。 */
 
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 
-import { StreamJsonCliAdapter, type ParsedCliEvent } from './chat/cli/cliAdapter';
+import { StreamJsonCliAdapter, type ParsedCliEvent, type ToolPermissionRequestEvent } from './chat/cli/cliAdapter';
 import { ChatCliConfigService } from './chat/cli/cliConfig';
 import { CliProcess } from './chat/cli/cliProcess';
 import { CliResolver } from './chat/cli/cliResolver';
 import { ChatCliSessionStore } from './chat/cli/sessionStore';
 import { ChatViewHost } from './chat/chatViewHost';
-import type { ChatComposerAttachment, ChatMessage, ChatModelOption, ChatQuickPermissionMode, ChatSegment, ChatUiLanguage, WebviewToExtension } from './chat/protocol';
+import type { ChatComposerAttachment, ChatMessage, ChatModelOption, ChatQuickPermissionMode, ChatSegment, ChatUiLanguage, LlsTaskSnapshotPayload, WebviewToExtension } from './chat/protocol';
 import { ConfigManager } from './configManager';
-import { CHAT_FALLBACK_VIEW_ID, CHAT_SECONDARY_VIEW_ID, COMMANDS, PROVIDERS_VIEW_ID } from './constants';
+import {
+    CHAT_EXPERT_MODE_GLOBAL_ENABLED_KEY,
+    CHAT_EXPERT_MODE_GLOBAL_MODEL_KEY,
+    CHAT_EXPERT_MODE_PROJECT_ENABLED_KEY,
+    CHAT_EXPERT_MODE_PROJECT_MODEL_KEY,
+    CHAT_SECONDARY_VIEW_ID,
+    COMMANDS,
+    CONFIG_NAMESPACE,
+    PROVIDERS_VIEW_ID
+} from './constants';
 import { Logger } from './logger';
 import { AutoContinueScheduler } from './llsTask/autoContinue';
 import { getLlsCcaiTaskTexts } from './llsTask/messages';
@@ -25,8 +34,8 @@ import { OpenAIChatProxyAdapter } from './relay/openaiChatProxy';
 import { OpenAIResponsesProxyAdapter } from './relay/openaiResponsesProxy';
 import { createRelayRouter } from './relay/router';
 import { RelayServer } from './relay/server';
+import { ExpertRunnerService } from './expertMode/expertRunnerService';
 import { SettingsWriter } from './settingsWriter';
-import { TaskFlowStatusBar } from './taskFlowStatusBar';
 import type { ResolvedAppLanguage } from './types';
 import { ConfigWebviewViewProvider } from './views/configView';
 import { SharedOpenApiCopilotSettingsPanel } from './views/sharedSettingsView';
@@ -40,9 +49,6 @@ let extensionContext: vscode.ExtensionContext | undefined;
 /** 模块级侧栏配置视图 Provider，便于命令聚焦与 deactivate 兜底释放。 */
 let configViewProvider: ConfigWebviewViewProvider | undefined;
 
-/** 模块级任务流状态栏组件实例。 */
-let taskFlowStatusBar: TaskFlowStatusBar | undefined;
-
 /** 模块级 LLS CCAI 任务流服务实例。 */
 let llsTaskService: LlsTaskService | undefined;
 
@@ -51,6 +57,16 @@ let autoContinueScheduler: AutoContinueScheduler | undefined;
 
 /** 模块级本地 HTTP 中转服务实例，一个扩展宿主/工作区使用一个随机空闲端口。 */
 let relayServer: RelayServer | undefined;
+
+/**
+ * 模块级 ExpertRunnerService 实例引用。
+ *
+ * 由 activate 阶段在 RelayRouter 装配时同步创建，并保存到此处，便于
+ * {@link syncExpertRelayEnvIfPossible} 在 Relay 启动后读取它的 authToken
+ * 同步给 ChatCliConfigService。deactivate 时不需要单独释放（其内部不持
+ * 有长期资源）。
+ */
+let expertRunnerServiceRef: ExpertRunnerService | undefined;
 
 /** 模块级 Chat CLI 配置服务实例。 */
 let chatCliConfigService: ChatCliConfigService | undefined;
@@ -96,6 +112,9 @@ let chatSessionPersistTimer: NodeJS.Timeout | undefined;
 
 /** 当前正在接收流式输出的 assistant 消息 ID。 */
 let activeAssistantMessageId: string | undefined;
+
+/** 最近一次主对话 ask_expert 工具调用的上下文，用于专家实时事件挂载。 */
+let pendingExpertToolContext: { parentMessageId: string; callId: string; toolSegmentId: string } | undefined;
 
 /** 最近一次 Chat CLI 是否由用户主动取消，用于避免误报异常退出。 */
 let chatCliCancelRequested = false;
@@ -204,8 +223,37 @@ async function syncClaudeCliModelSettingsSafely(): Promise<void> {
 async function ensureRelayServerStarted(): Promise<number> {
     if (!relayServer) throw new Error('本地中转服务尚未初始化');
     const existing = relayServer.getActualPort();
-    if (existing) return existing;
-    return relayServer.start();
+    if (existing) {
+        syncExpertRelayEnvIfPossible(existing);
+        return existing;
+    }
+    const port = await relayServer.start();
+    syncExpertRelayEnvIfPossible(port);
+    return port;
+}
+
+/**
+ * 把当前 Relay 实际端口 + 鉴权 token 同步到 `ChatCliConfigService`。
+ *
+ * 这是「专家模式回环链路」拼接的关键一步：只有当 ChatCliConfigService
+ * 持有相同的 baseUrl + token，下一次 `getConfig()` 才会把它们写入
+ * expertMcpServer 子进程的 env，让其能反向 fetch 回 `/__expert/run`。
+ *
+ * 任何环节缺失（chatCliConfigService 未初始化、expertRunnerService 未创建）
+ * 都静默忽略——专家模式只是「增强」，不应阻断主对话。
+ *
+ * @param port Relay 实际监听端口。
+ */
+function syncExpertRelayEnvIfPossible(port: number): void {
+    try {
+        if (!chatCliConfigService || !expertRunnerServiceRef) return;
+        const baseUrl = `http://127.0.0.1:${port}`;
+        chatCliConfigService.setExpertRelayEnv(baseUrl, expertRunnerServiceRef.getAuthToken());
+    } catch (err) {
+        Logger.warn(
+            `同步专家 Relay 环境变量失败：${err instanceof Error ? err.message : String(err)}`
+        );
+    }
 }
 
 /**
@@ -217,32 +265,106 @@ function buildTaskFlowPrompt(): string {
     return '@lls-task 请根据当前任务流继续推进：先检查未完成项，再给出下一步执行计划。';
 }
 
+/** Chat 底部专家模型下拉框的解析结果。 */
+interface EffectiveExpertModelSelection {
+    /** 是否启用专家；false 表示关闭专家。 */
+    enabled: boolean;
+    /** 生效专家模型 ID，关闭或未配置时为空字符串。 */
+    modelId: string;
+}
+
+/** 从配置 inspect 结果中读取工作区层级值。 */
+function getInspectedWorkspaceValue<T>(inspect: { workspaceFolderValue?: T; workspaceValue?: T } | undefined): T | undefined {
+    return inspect?.workspaceFolderValue ?? inspect?.workspaceValue;
+}
+
+/** 从配置 inspect 结果中读取全局层级值。 */
+function getInspectedGlobalValue<T>(inspect: { globalValue?: T } | undefined): T | undefined {
+    return inspect?.globalValue;
+}
+
+/**
+ * 按「项目 > 全局 > 关闭」规则读取专家模型下拉框当前值。
+ *
+ * 项目显式关闭时直接关闭；项目没有非关闭配置时读取全局；全局也没有时关闭。
+ */
+function readEffectiveExpertModelSelection(): EffectiveExpertModelSelection {
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    const projectEnabled = getInspectedWorkspaceValue(config.inspect<boolean>(CHAT_EXPERT_MODE_PROJECT_ENABLED_KEY));
+    const projectModel = (getInspectedWorkspaceValue(config.inspect<string>(CHAT_EXPERT_MODE_PROJECT_MODEL_KEY)) ?? '').trim();
+    if (projectEnabled === false) return { enabled: false, modelId: '' };
+    if (projectEnabled === true && projectModel.length > 0) return { enabled: true, modelId: projectModel };
+    if (projectModel.length > 0) return { enabled: true, modelId: projectModel };
+
+    const globalEnabled = getInspectedGlobalValue(config.inspect<boolean>(CHAT_EXPERT_MODE_GLOBAL_ENABLED_KEY));
+    const globalModel = (getInspectedGlobalValue(config.inspect<string>(CHAT_EXPERT_MODE_GLOBAL_MODEL_KEY)) ?? '').trim();
+    if (globalEnabled === false) return { enabled: false, modelId: '' };
+    if (globalEnabled === true && globalModel.length > 0) return { enabled: true, modelId: globalModel };
+    if (globalModel.length > 0) return { enabled: true, modelId: globalModel };
+    return { enabled: false, modelId: '' };
+}
+
+/**
+ * 保存专家模型下拉框选择，并同步写入项目配置与全局配置。
+ *
+ * @param modelId 专家模型 ID；空字符串表示关闭专家。
+ */
+async function saveExpertModelSelection(modelId: string): Promise<void> {
+    const normalizedModelId = modelId.trim();
+    const enabled = normalizedModelId.length > 0;
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    await config.update(CHAT_EXPERT_MODE_PROJECT_ENABLED_KEY, enabled, vscode.ConfigurationTarget.Workspace);
+    await config.update(CHAT_EXPERT_MODE_PROJECT_MODEL_KEY, normalizedModelId, vscode.ConfigurationTarget.Workspace);
+    await config.update(CHAT_EXPERT_MODE_GLOBAL_ENABLED_KEY, enabled, vscode.ConfigurationTarget.Global);
+    await config.update(CHAT_EXPERT_MODE_GLOBAL_MODEL_KEY, normalizedModelId, vscode.ConfigurationTarget.Global);
+    configManager?.notifyChanged();
+}
+
 /**
  * 打开 LLS CCAI 任务流统一菜单。
  *
- * 根据当前快照路由到：打开设置、粘贴启动占位提示、展示进度或清空已完成任务流。
+ * 行为规则：
+ * 1. 当前没有任务流 → 直接把启动提示词填入内置 Chat 输入框，无提示。
+ * 2. 当前任务流已完成 → 静默清空当前任务流并把启动提示词填入输入框，无提示。
+ * 3. 当前任务流仍在运行 → 弹确认框，让用户选择"继续推进"或"清空并重新开始"，
+ *    避免在运行中误清掉模型已有的上下文。
  */
 async function openLlsCcaiTaskMenu(): Promise<void> {
     if (!configManager || !llsTaskService) return;
     const texts = getLlsCcaiTaskTexts(configManager.getResolvedUiLanguage());
     const snapshot = llsTaskService.getSnapshot();
-    if (snapshot.workflow && !llsTaskService.isWorkflowCompleted()) {
+
+    // 1) 无任务流：直接填入启动提示词。
+    if (!snapshot.workflow) {
+        await fillBuiltInChatComposer(texts.startPrompt, true);
+        return;
+    }
+
+    // 2) 已完成任务流：静默清空 + 填入启动提示词，不再弹确认。
+    if (llsTaskService.isWorkflowCompleted()) {
+        autoContinueScheduler?.cancel('点击 CC 任务流：自动清空已完成任务流');
+        llsTaskService.clear();
+        await fillBuiltInChatComposer(texts.startPrompt, true);
+        return;
+    }
+
+    // 3) 运行中任务流：仍需提示，避免误清正在进行的上下文。
+    const continueLabel = texts.continueAction;
+    const clearLabel = texts.clearAndNew;
+    const cancelLabel = texts.cancel;
+    const choice = await vscode.window.showInformationMessage(
+        texts.runningTooltip,
+        continueLabel,
+        clearLabel,
+        cancelLabel
+    );
+    if (choice === continueLabel) {
         await fillBuiltInChatComposer(llsTaskService.buildContinuePrompt(), true);
-        return;
+    } else if (choice === clearLabel) {
+        autoContinueScheduler?.cancel('用户从任务流菜单清空运行中任务流');
+        llsTaskService.clear();
+        await fillBuiltInChatComposer(texts.startPrompt, true);
     }
-    if (snapshot.workflow && llsTaskService.isWorkflowCompleted()) {
-        const confirmed = await vscode.window.showInformationMessage(
-            texts.completedTooltip,
-            texts.clearAndNew,
-            texts.cancel
-        );
-        if (confirmed === texts.clearAndNew) {
-            autoContinueScheduler?.cancel('用户从任务流菜单清空已完成任务流');
-            llsTaskService.clear();
-        }
-        return;
-    }
-    await fillBuiltInChatComposer(texts.startPrompt, true);
 }
 
 /**
@@ -500,13 +622,13 @@ async function startChatCliFromCurrentConfig(options: { forceRestart?: boolean }
     const config = await chatCliConfigService.getConfigWithRelayEnv(relayPort);
     await syncClaudeCliModelSettingsSafely();
     const persistedSessionId = await chatCliSessionStore?.readSessionId(config.cwd);
-    const launchConfig = { ...config, resumeSessionId: undefined };
+    const launchConfig = { ...config, resumeSessionId: persistedSessionId };
     Logger.info('准备启动 Chat CLI 配置：' + JSON.stringify({
         cwd: launchConfig.cwd,
         cliPath: launchConfig.cliPath,
         model: launchConfig.model,
         hasPersistedSession: !!persistedSessionId,
-        resumeDisabledForFreshModel: true,
+        willResumePersistedSession: !!launchConfig.resumeSessionId,
         anthropicBaseUrl: launchConfig.cliEnv.ANTHROPIC_BASE_URL || '',
         hasAnthropicAuthToken: !!launchConfig.cliEnv.ANTHROPIC_AUTH_TOKEN,
         hasAnthropicApiKey: !!launchConfig.cliEnv.ANTHROPIC_API_KEY,
@@ -528,13 +650,12 @@ async function startChatCliFromCurrentConfig(options: { forceRestart?: boolean }
 }
 
 /**
- * 在启动 Chat CLI 之前枚举当前 VS Code 注册的 MCP 工具并写入日志。
+ * 在启动 Chat CLI 之前枚举当前 VS Code 注册的 MCP 工具数量并写入日志。
  *
  * VS Code 稳定 API `vscode.lm.tools` 返回 `LanguageModelToolInformation[]`，
  * 字段包括 `name / description / inputSchema / tags`。MCP 注册的工具通常带有
  * `mcp` 标签或名称以 `mcp_` 前缀开头（不同 VS Code 版本/扩展可能略有差异），
- * 这里把两种识别条件都纳入，并把命中的工具列表与 tags 一并打到扩展输出日志中，
- * 便于人工核对当前 IDE 侧可见的 MCP 工具能力。
+ * 这里把两种识别条件都纳入；为避免输出日志过长，不再打印工具明细。
  *
  * 本函数仅记录日志，不阻塞 CLI 启动，所有异常都会被吞掉并降级为一条 warn。
  */
@@ -552,27 +673,7 @@ function logMcpToolsBeforeCliStart(): void {
             if (typeof tool.name === 'string' && tool.name.toLowerCase().startsWith('mcp_')) return true;
             return false;
         });
-        const summary = mcpTools.map((tool) => {
-            // VS Code 稳定 API LanguageModelToolInformation 只会暴露 name / description /
-            // inputSchema / tags 这几个字段，**不会**透出 MCP server 的启动命令、env、url 等
-            // 注册信息（出于扩展隔离设计）。这里把工具上能拿到的全部字段都打出来，便于
-            // 排查"为什么没有环境变量"——答案是：VS Code 根本没给。
-            const objectKeys = Object.keys(tool as unknown as Record<string, unknown>);
-            return {
-                name: tool.name,
-                tags: Array.from(tool.tags ?? []),
-                description: typeof tool.description === 'string'
-                    ? tool.description.slice(0, 200)
-                    : '',
-                inputSchemaKeys: tool.inputSchema && typeof tool.inputSchema === 'object'
-                    ? Object.keys(tool.inputSchema as Record<string, unknown>)
-                    : [],
-                rawObjectKeys: objectKeys
-            };
-        });
         Logger.info(`启动 Chat CLI 前枚举到 MCP 工具：count=${mcpTools.length}/${allTools.length}`);
-        Logger.info('MCP 工具明细（VS Code 稳定 API 仅暴露 name/description/inputSchema/tags，不含环境变量/启动命令）：'
-            + JSON.stringify(summary, null, 2));
     } catch (error) {
         Logger.warn('启动 Chat CLI 前枚举 MCP 工具失败：' + (error instanceof Error ? error.message : String(error)));
     }
@@ -650,9 +751,92 @@ async function handleParsedCliEvent(event: ParsedCliEvent): Promise<void> {
             await chatCliSessionStore?.writeSessionId(event.cwd, event.sessionId);
             Logger.info(`已保存 Chat CLI session_id 到 ${event.cwd}/.LLSOAI`);
             return;
+        case 'tool/permissionRequest':
+            await handleToolPermissionRequest(event);
+            return;
         default:
             return;
     }
+}
+
+/**
+ * 处理 Claude CLI stdio 工具授权请求。
+ *
+ * 当前实现先使用 VS Code 模态确认框打通官方 `can_use_tool` 授权闭环：CLI 发出
+ * `control_request` 后，本函数向用户展示工具名与关键参数；用户选择允许/拒绝后，
+ * 再通过 `StreamJsonCliAdapter.respondToToolPermission` 写回 `control_response`。
+ * 这样 Bash 等需要授权的工具在非交互 stream-json 模式下也能继续执行。
+ *
+ * @param event 适配器解析出的工具授权请求事件。
+ */
+async function handleToolPermissionRequest(event: ToolPermissionRequestEvent): Promise<void> {
+    const adapter = streamJsonCliAdapter;
+    if (!adapter) {
+        Logger.warn(`收到工具授权请求但 stream-json 适配器不存在：requestId=${event.requestId}`);
+        return;
+    }
+    const allow = '允许本次执行';
+    const deny = '拒绝';
+    const message = buildToolPermissionPromptMessage(event);
+    Logger.info(`等待用户确认工具授权：requestId=${event.requestId}, tool=${event.toolName}`);
+    const choice = await vscode.window.showWarningMessage(message, { modal: true }, allow, deny);
+    if (choice === allow) {
+        adapter.respondToToolPermission(event.requestId, {
+            behavior: 'allow',
+            updatedInput: event.input,
+            updatedPermissions: []
+        });
+        await showChatToast('success', `已允许 ${event.toolName} 本次执行`);
+        return;
+    }
+    adapter.respondToToolPermission(event.requestId, {
+        behavior: 'deny',
+        message: '用户拒绝了本次工具调用。',
+        interrupt: false
+    });
+    await showChatToast('warn', `已拒绝 ${event.toolName} 本次执行`);
+}
+
+/**
+ * 构造展示给用户的工具授权确认文案。
+ *
+ * 为避免 VS Code 弹窗过长，工具输入会被格式化并截断；对于 Bash 命令优先展示
+ * `command` 字段，方便用户快速判断是否允许。
+ *
+ * @param event 工具授权请求事件。
+ * @returns 可直接传给 showWarningMessage 的提示文本。
+ */
+function buildToolPermissionPromptMessage(event: ToolPermissionRequestEvent): string {
+    const title = event.title || event.displayName || `${event.toolName} 需要授权`;
+    const reason = event.decisionReason || event.description || 'Claude CLI 请求确认是否允许执行该工具。';
+    const inputPreview = formatToolPermissionInput(event.input);
+    const blockedPath = event.blockedPath ? `\n\n路径：${event.blockedPath}` : '';
+    return `${title}\n\n工具：${event.toolName}\n原因：${reason}${blockedPath}\n\n参数：\n${inputPreview}`;
+}
+
+/**
+ * 格式化工具授权请求参数并限制长度。
+ *
+ * @param input 工具原始输入。
+ * @returns 截断后的可读参数文本。
+ */
+function formatToolPermissionInput(input: unknown): string {
+    const limit = 1200;
+    let text: string;
+    if (input && typeof input === 'object' && !Array.isArray(input)) {
+        const record = input as Record<string, unknown>;
+        const command = record.command;
+        if (typeof command === 'string' && command.trim()) {
+            text = command;
+        } else {
+            text = JSON.stringify(input, null, 2);
+        }
+    } else if (typeof input === 'string') {
+        text = input;
+    } else {
+        text = JSON.stringify(input, null, 2) ?? String(input);
+    }
+    return text.length > limit ? `${text.slice(0, limit)}…` : text;
 }
 
 /**
@@ -673,7 +857,9 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
                 cliPath: chatCliConfigService?.getConfig().cliPath ?? ''
             });
             await postChatModelOptions();
+            await postChatExpertModelOptions();
             await postChatPermissionMode();
+            await postChatTaskFlowStatus();
             await postActiveEditorAttachmentToChat();
             return;
         case 'user/send':
@@ -697,6 +883,12 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
         case 'permissionMode/select':
             await selectChatPermissionMode(message.mode);
             return;
+        case 'expert/model/select':
+            await selectChatExpertModel(message.modelId);
+            return;
+        case 'taskFlow/open':
+            await openLlsCcaiTaskMenu();
+            return;
         case 'cli/selectPath':
             await selectChatCli();
             await postChatUiLanguage();
@@ -717,7 +909,7 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
             await appendAssistantSegments([{ kind: 'markdown', text: '\n（已请求取消当前输出）\n' }], true);
             return;
         case 'user/resend':
-            await handleUserResend(message.id);
+            await handleUserResend(message.id, message.text);
             return;
         case 'session/clear':
             chatMessages = [];
@@ -771,11 +963,49 @@ async function postChatModelOptions(): Promise<void> {
 }
 
 /**
+ * 读取专家模型下拉框可选项，并推送当前按「项目 > 全局 > 关闭」解析的选择。
+ */
+async function postChatExpertModelOptions(): Promise<void> {
+    if (!configManager) return;
+    const current = readEffectiveExpertModelSelection();
+    const models: ChatModelOption[] = [];
+    for (const provider of configManager.listProviders()) {
+        if (!provider.enabled) continue;
+        for (const model of provider.models) {
+            if (model.isUserSelectable === false) continue;
+            models.push({
+                providerId: provider.id,
+                providerName: provider.name,
+                modelId: model.modelId,
+                displayName: model.displayName || model.modelId,
+                selected: current.enabled && current.modelId === model.modelId
+            });
+        }
+    }
+    await chatViewHost?.postMessage({ type: 'expert/model/options', models, current });
+}
+
+/**
  * 读取当前 Chat CLI 权限模式并推送到 Chat Webview。
  */
 async function postChatPermissionMode(): Promise<void> {
     const mode = normalizeQuickPermissionMode(chatCliConfigService?.getConfig().permissionMode);
     await chatViewHost?.postMessage({ type: 'permissionMode/current', mode });
+}
+
+/**
+ * 读取当前 LLS CCAI / CC 任务流快照并推送到 Chat Webview。
+ *
+ * Webview 会根据该状态在聊天上方显示或隐藏 Todo 状态卡片；任务流创建、更新、
+ * 清空以及缺失工具标记变化都会触发该函数，从而保证界面与服务状态一致。
+ */
+async function postChatTaskFlowStatus(): Promise<void> {
+    if (!llsTaskService) return;
+    const snapshot = llsTaskService.getSnapshot() as LlsTaskSnapshotPayload;
+    const delivered = await chatViewHost?.postMessage({ type: 'taskFlow/status', snapshot });
+    if (!delivered && snapshot.workflow && chatViewHost && chatCliConfigService && !chatViewHost.hasResolvedView()) {
+        await chatViewHost.open(chatMessages, chatCliConfigService.getConfig().cliPath);
+    }
 }
 
 /**
@@ -819,6 +1049,26 @@ async function selectChatModel(providerId: string, modelId: string): Promise<voi
     Logger.info(`Chat 输入框切换模型：${provider.name}/${model.displayName || model.modelId}，将通过 --model 重启 CLI`);
     await restartChatCli({ silent: true });
     await showChatToast('success', `模型已切换为：${provider.name}/${model.displayName || model.modelId}`);
+}
+
+/**
+ * 从 Chat 输入框下方专家下拉框切换专家模型，并同步保存项目与全局配置。
+ *
+ * @param modelId 专家模型 ID；空字符串表示关闭专家。
+ */
+async function selectChatExpertModel(modelId: string): Promise<void> {
+    await saveExpertModelSelection(modelId);
+    await postChatExpertModelOptions();
+    const current = readEffectiveExpertModelSelection();
+    if (!current.enabled) {
+        Logger.info('Chat 输入框关闭专家模式，已同步保存项目与全局配置');
+        await restartChatCli({ silent: true });
+        await showChatToast('success', '专家已关闭');
+        return;
+    }
+    Logger.info(`Chat 输入框切换专家模型：${current.modelId}，已同步保存项目与全局配置`);
+    await restartChatCli({ silent: true });
+    await showChatToast('success', `专家模型已切换为：${current.modelId}`);
 }
 
 /**
@@ -925,51 +1175,32 @@ function sanitizeUploadFileName(name: string, mime: string): string {
  * 但仍有可见编辑器时，保留上一次上下文，避免默认文件被误清空。
  */
 async function postActiveEditorAttachmentToChat(): Promise<void> {
-    Logger.show();
     const editor = vscode.window.activeTextEditor;
     const uri = editor?.document.uri;
     const version = ++chatEditorSelectionVersion;
-    Logger.info(
-        '刷新 Chat 默认上下文文件/选区：' + JSON.stringify({
-            hasEditor: !!editor,
-            visibleTextEditors: vscode.window.visibleTextEditors.length,
-            documentFileName: editor?.document.fileName,
-            scheme: uri?.scheme,
-            fsPath: uri?.fsPath,
-            languageId: editor?.document.languageId,
-            isUntitled: editor?.document.isUntitled,
-            selection: editor ? serializeSelection(editor.selection) : undefined
-        })
-    );
     if (!editor) {
         if (vscode.window.visibleTextEditors.length > 0 && lastChatEditorAttachment) {
-            Logger.info(`刷新 Chat 默认上下文文件/选区：active editor 为空但仍有可见编辑器，保留 ${lastChatEditorAttachment.path}`);
             await chatViewHost?.postMessage({ type: 'composer/defaultAttachment', attachment: lastChatEditorAttachment });
             return;
         }
         lastChatEditorAttachment = undefined;
-        Logger.info('刷新 Chat 默认上下文文件/选区：未找到活动编辑器，清空默认附件');
         await chatViewHost?.postMessage({ type: 'composer/defaultAttachment' });
         return;
     }
     if (!uri || uri.scheme === 'comment' || uri.scheme === 'output' || uri.scheme !== 'file') {
         if (lastChatEditorAttachment && vscode.window.visibleTextEditors.length > 0) {
-            Logger.info(`刷新 Chat 默认上下文文件/选区：忽略 ${uri?.scheme ?? 'unknown'} 文档，保留 ${lastChatEditorAttachment.path}`);
             await chatViewHost?.postMessage({ type: 'composer/defaultAttachment', attachment: lastChatEditorAttachment });
             return;
         }
         lastChatEditorAttachment = undefined;
-        Logger.info('刷新 Chat 默认上下文文件/选区：未找到本地 file 文档，清空默认附件');
         await chatViewHost?.postMessage({ type: 'composer/defaultAttachment' });
         return;
     }
     const attachment = buildEditorAttachment(editor);
     if (version !== chatEditorSelectionVersion) {
-        Logger.info(`刷新 Chat 默认上下文文件/选区：丢弃过期快照 ${attachment.path}`);
         return;
     }
     lastChatEditorAttachment = attachment;
-    Logger.info(`刷新 Chat 默认上下文文件/选区：使用 ${formatAttachmentForPrompt(attachment)}`);
     await chatViewHost?.postMessage({ type: 'composer/defaultAttachment', attachment });
 }
 
@@ -1573,8 +1804,9 @@ async function appendLocalChatMessage(role: ChatMessage['role'], text: string, s
  * 若目标消息不存在、不是 user 角色或缺少原始文本，则直接放弃并提示。
  *
  * @param id 待重发的消息 id。
+ * @param editedText Webview 重发编辑框提交的覆盖文本；为空时使用原消息文本。
  */
-async function handleUserResend(id: string): Promise<void> {
+async function handleUserResend(id: string, editedText?: string): Promise<void> {
     const index = chatMessages.findIndex((item) => item.id === id);
     if (index < 0) {
         Logger.warn(`收到 user/resend 但目标消息不存在：id=${id}`);
@@ -1585,7 +1817,11 @@ async function handleUserResend(id: string): Promise<void> {
         Logger.warn(`收到 user/resend 但目标消息不是 user 角色：id=${id}, role=${target.role}`);
         return;
     }
-    const promptText = typeof target.text === 'string' ? target.text : extractPlainTextFromSegments(target.segments);
+    const promptText = typeof editedText === 'string' && editedText.trim()
+        ? editedText
+        : typeof target.text === 'string'
+            ? target.text
+            : extractPlainTextFromSegments(target.segments);
     if (!promptText) {
         Logger.warn(`收到 user/resend 但目标消息缺少原始文本：id=${id}`);
         await chatViewHost?.postMessage({
@@ -1668,6 +1904,7 @@ async function appendAssistantSegments(segments: ChatSegment[], done: boolean): 
     // 按 segment.id 去重合并：相同 id 的片段视为对同一 segment 的多次更新（典型场景为工具卡片）
     // —— 此时应原地替换已有 segment，而不是追加新条目，以避免重复渲染。
     for (const incoming of segments) {
+        rememberExpertToolContext(message.id, incoming);
         if (incoming.id) {
             const existingIndex = message.segments.findIndex((item) => item.id === incoming.id);
             if (existingIndex >= 0) {
@@ -1689,6 +1926,28 @@ async function appendAssistantSegments(segments: ChatSegment[], done: boolean): 
         pending: message.pending,
         append: true
     });
+}
+
+/**
+ * 记录主模型刚发起的 ask_expert 工具卡片上下文。
+ *
+ * Relay 收到 `/__expert/run` 时，MCP 工具参数里未必包含 parentMessageId/callId；
+ * 因此扩展宿主需要在看到主 CLI 的工具卡片 segment 时保存一次上下文，随后由
+ * expertHandler 注入给 ExpertRunnerService，确保专家事件能实时挂到正确位置。
+ *
+ * @param parentMessageId 当前 assistant 消息 id。
+ * @param segment 本次 patch 到达的 ChatSegment。
+ */
+function rememberExpertToolContext(parentMessageId: string, segment: ChatSegment): void {
+    const tool = segment.tool;
+    if (!segment.id || segment.kind !== 'tool' || !tool) return;
+    if (tool.name !== 'mcp__llsExpert__ask_expert' && tool.name !== 'ask_expert') return;
+    const callId = segment.id.startsWith('tool:') ? segment.id.slice('tool:'.length) : segment.id;
+    pendingExpertToolContext = {
+        parentMessageId,
+        callId,
+        toolSegmentId: segment.id
+    };
 }
 
 /**
@@ -2055,7 +2314,7 @@ async function showSimulateEnterResultHint(): Promise<void> {
 /**
  * VS Code 扩展激活函数。
  *
- * 激活后会初始化设置页、状态栏、本地 HTTP 中转服务、settings.json 写入闭环与命令入口。
+ * 激活后会初始化设置页、任务流服务、本地 HTTP 中转服务、settings.json 写入闭环与命令入口。
  *
  * @param context 扩展上下文，由 VS Code 注入。
  */
@@ -2080,10 +2339,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         await appendUserMessageAndSend(text);
     });
     configViewProvider = new ConfigWebviewViewProvider(context, configManager);
-    taskFlowStatusBar = new TaskFlowStatusBar(configManager, llsTaskService);
     settingsWriter = new SettingsWriter();
     relayServer = new RelayServer({ desiredPort: 0 });
     const debugRecorder = new DebugRecorder();
+    // 装配「专家模式」组合根：ExpertRunnerService 持有 chatCliConfigService +
+    // chatViewHost，对外暴露 run() 给 relay 路由调用；并产出一次性鉴权 token
+    // 同步注入到 ChatCliConfigService（写到 expertMcpServer 子进程的 env）和
+    // RelayRouter（用于 `/__expert/run` 入口校验）。
+    const expertRunnerService = new ExpertRunnerService(chatCliConfigService, chatViewHost);
+    expertRunnerServiceRef = expertRunnerService;
     // 注：token 使用量统计由 CLI 自己在最终 `result` 事件中携带（usage / modelUsage），
     // 经 stream-json 适配器解析为 `kind:'usage'` ChatSegment 与最后一条消息同帧到达，
     // 因此 Relay 侧不再单独上报 usage，三个 proxy 的 usageSink 参数保持 undefined。
@@ -2095,7 +2359,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             new AnthropicProxyAdapter(debugRecorder, { configManager, llsTaskService, autoContinueScheduler }),
             new OpenAIChatProxyAdapter(debugRecorder, { configManager, llsTaskService, autoContinueScheduler }),
             new OpenAIResponsesProxyAdapter(debugRecorder, { configManager, llsTaskService, autoContinueScheduler })
-        ]
+        ],
+        expertHandler: {
+            authToken: expertRunnerService.getAuthToken(),
+            run: (body, signal) =>
+                expertRunnerService.run({
+                    args: {
+                        question: body.question,
+                        context: body.context,
+                        goal: body.goal,
+                        constraints: body.constraints,
+                        toolSegmentId: body.toolSegmentId
+                    },
+                    parentMessageId: body.parentMessageId ?? pendingExpertToolContext?.parentMessageId,
+                    callId: body.callId ?? pendingExpertToolContext?.callId,
+                    toolSegmentId: body.toolSegmentId ?? pendingExpertToolContext?.toolSegmentId,
+                    signal
+                })
+        }
     }));
     relayServer.setOnHit(() => clearHttpExpectation('relay_hit'));
     void cleanupLegacyRelaySettingsSafely();
@@ -2104,7 +2385,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     context.subscriptions.push(cliProcess);
     context.subscriptions.push(chatViewHost);
     context.subscriptions.push(llsTaskService);
-    context.subscriptions.push(taskFlowStatusBar);
+    context.subscriptions.push(llsTaskService.onDidChange(() => {
+        void postChatTaskFlowStatus();
+    }));
     context.subscriptions.push(relayServer);
     context.subscriptions.push(
         configViewProvider,
@@ -2112,9 +2395,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             webviewOptions: { retainContextWhenHidden: true }
         }),
         vscode.window.registerWebviewViewProvider(CHAT_SECONDARY_VIEW_ID, chatViewHost, {
-            webviewOptions: { retainContextWhenHidden: true }
-        }),
-        vscode.window.registerWebviewViewProvider(CHAT_FALLBACK_VIEW_ID, chatViewHost, {
             webviewOptions: { retainContextWhenHidden: true }
         })
     );
@@ -2128,6 +2408,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             void syncClaudeCliModelSettingsSafely();
             void postChatModelOptions().catch((err: unknown) => {
                 Logger.warn(`刷新 Chat 模型列表失败：${err instanceof Error ? err.message : String(err)}`);
+            });
+            void postChatExpertModelOptions().catch((err: unknown) => {
+                Logger.warn(`刷新 Chat 专家模型列表失败：${err instanceof Error ? err.message : String(err)}`);
             });
         })
     );
@@ -2178,9 +2461,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // 当前活动编辑器变化时，刷新 Chat 输入框默认上下文文件。
     context.subscriptions.push(
-        vscode.window.onDidChangeActiveTextEditor((editor) => {
-            Logger.show();
-            Logger.info(`检测到活动编辑器变化：${editor?.document.uri.toString() ?? 'none'}`);
+        vscode.window.onDidChangeActiveTextEditor((_editor) => {
             void postActiveEditorAttachmentToChat().catch((err: unknown) => {
                 Logger.warn(`刷新 Chat 默认上下文文件失败：${err instanceof Error ? err.message : String(err)}`);
             });
@@ -2290,7 +2571,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 /**
  * VS Code 扩展停用函数。
  *
- * 停用时释放 Chat、任务流状态栏、Webview Provider 与 ConfigManager。
+ * 停用时释放 Chat、任务流服务、Webview Provider 与 ConfigManager。
  */
 export function deactivate(): void {
     void flushPersistedChatSession();
@@ -2310,10 +2591,9 @@ export function deactivate(): void {
     chatViewHost = undefined;
     cliResolver = undefined;
     chatCliConfigService = undefined;
+    expertRunnerServiceRef = undefined;
     configViewProvider?.dispose();
     configViewProvider = undefined;
-    taskFlowStatusBar?.dispose();
-    taskFlowStatusBar = undefined;
     llsTaskService?.dispose();
     llsTaskService = undefined;
     configManager?.dispose();

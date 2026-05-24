@@ -37,11 +37,59 @@ import type { CliChunk } from './types';
 // 对外类型契约（与重写前完全兼容）
 // =============================================================================
 
+/** Claude CLI stdio 权限请求事件。 */
+export interface ToolPermissionRequestEvent {
+    /** 事件类型。 */
+    type: 'tool/permissionRequest';
+    /** CLI control_request 的请求 ID，用于 control_response 回写配对。 */
+    requestId: string;
+    /** 请求授权的工具名称，例如 Bash/Edit/Write。 */
+    toolName: string;
+    /** 工具原始输入参数。 */
+    input: unknown;
+    /** Claude CLI 提供的可选建议列表。 */
+    suggestions?: unknown[];
+    /** CLI 侧工具调用 ID（如果存在）。 */
+    toolUseId?: string;
+    /** 权限请求标题（如果 CLI 提供）。 */
+    title?: string;
+    /** 权限请求显示名（如果 CLI 提供）。 */
+    displayName?: string;
+    /** 权限请求描述（如果 CLI 提供）。 */
+    description?: string;
+    /** CLI 判定需要授权的原因（如果提供）。 */
+    decisionReason?: string;
+    /** 被权限策略拦截的路径（如果提供）。 */
+    blockedPath?: string;
+    /** 原始 control_request.request 对象，便于后续兼容 CLI 新字段。 */
+    rawRequest: Record<string, unknown>;
+}
+
+/** Claude CLI stdio 权限响应结果。 */
+export type ToolPermissionResponseResult =
+    | {
+          /** 允许本次工具调用继续执行。 */
+          behavior: 'allow';
+          /** 可选：修改后的工具输入；默认沿用原输入。 */
+          updatedInput?: unknown;
+          /** 可选：本次确认附带更新的权限规则。 */
+          updatedPermissions?: unknown[];
+      }
+    | {
+          /** 拒绝本次工具调用。 */
+          behavior: 'deny';
+          /** 返回给 Claude CLI / 模型的拒绝原因。 */
+          message?: string;
+          /** 是否中断当前模型回合。 */
+          interrupt?: boolean;
+      };
+
 /** 适配器解析出的 CLI 事件类型。 */
 export type ParsedCliEvent =
     | { type: 'segments'; segments: ChatSegment[]; done?: boolean }
     | { type: 'error'; message: string; detail?: string }
     | { type: 'session/init'; sessionId: string; cwd: string }
+    | ToolPermissionRequestEvent
     | { type: 'done' };
 
 // =============================================================================
@@ -148,6 +196,9 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     /** 当前用户轮次是否已经向聊天区输出过 assistant 正文，用于 result 兜底去重。 */
     private hasEmittedAssistantContent = false;
 
+    /** 最近累计的 assistant 可见文本，用于最终 result 兜底去重。 */
+    private recentAssistantText = '';
+
     /** tool_use_id → 工具卡片 segment 引用，便于 tool_result 回填。 */
     private readonly toolSegmentById = new Map<string, ChatSegment>();
 
@@ -210,10 +261,35 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      */
     public async sendUserMessage(text: string): Promise<void> {
         this.hasEmittedAssistantContent = false;
+        this.recentAssistantText = '';
         const jsonLine = JSON.stringify(this.buildUserMessageLine(text));
         Logger.info(`stream-json 适配器准备写入用户消息：textLength=${text.length}, jsonLength=${jsonLine.length}`);
         this.process.send(jsonLine);
         Logger.info('stream-json 适配器已调用 CliProcess.send');
+    }
+
+    /**
+     * 将用户对 CLI 工具授权请求的选择写回 Claude CLI stdin。
+     *
+     * Claude CLI 在启用 `--permission-prompt-tool stdio` 后，会通过 stdout 发出
+     * `control_request` / `can_use_tool` 请求；宿主必须按相同 `request_id` 写回
+     * `control_response`，否则当前工具调用会一直等待。本方法封装官方 SDK 的
+     * stdio 回写形态，供 extension.ts 在用户点击允许/拒绝后调用。
+     *
+     * @param requestId control_request 中的请求 ID。
+     * @param result 用户确认后的允许或拒绝结果。
+     */
+    public respondToToolPermission(requestId: string, result: ToolPermissionResponseResult): void {
+        const jsonLine = JSON.stringify({
+            type: 'control_response',
+            response: {
+                subtype: 'success',
+                request_id: requestId,
+                response: result
+            }
+        });
+        Logger.info(`stream-json 适配器写回工具授权响应：requestId=${requestId}, behavior=${result.behavior}`);
+        this.process.send(jsonLine);
     }
 
     /**
@@ -520,6 +596,10 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         const initEvent = this.parseSystemInitEvent(record);
         if (initEvent) return initEvent;
 
+        // 1.5. Claude CLI stdio 控制请求（官方 canUseTool 权限回调通道）
+        const permissionRequest = this.parseToolPermissionRequest(record);
+        if (permissionRequest) return permissionRequest;
+
         // 2. Anthropic 官方 stream-json
         const streamEvent = this.parseAnthropicStreamEvent(record);
         if (streamEvent) return streamEvent;
@@ -548,6 +628,74 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         // 7. 完全无法识别 → 原文降级
         Logger.debug('未识别的 CLI JSON 事件，按原始文本降级显示', record);
         return this.parseDisplayText(rawLine + '\n');
+    }
+
+    /**
+     * 解析 Claude CLI `--permission-prompt-tool stdio` 发出的工具授权请求。
+     *
+     * 官方扩展通过 Agent SDK 的 `canUseTool` 回调处理该通道；底层在线路上表现为
+     * `type: "control_request"` 且 request subtype 为 `can_use_tool`。这里做宽松
+     * 字段兼容：不同 CLI 小版本可能把 `request_id` 放在顶层或 request 内部，也
+     * 可能使用 `tool_name` / `toolName` 命名。
+     *
+     * @param record 已 JSON.parse 的顶层事件对象。
+     * @returns 解析成功时返回权限请求事件，否则返回 undefined。
+     */
+    private parseToolPermissionRequest(record: Record<string, unknown>): ToolPermissionRequestEvent | undefined {
+        if (record.type !== 'control_request') return undefined;
+        const request = this.asRecord(record.request);
+        if (!request || request.subtype !== 'can_use_tool') return undefined;
+        const requestId = this.readFirstString(record, request, ['request_id', 'requestId', 'id']);
+        const toolName = this.readFirstString(request, request, ['tool_name', 'toolName', 'name']);
+        if (!requestId || !toolName) {
+            Logger.warn('收到不完整的 can_use_tool control_request，已按原始事件降级', record);
+            return undefined;
+        }
+        return {
+            type: 'tool/permissionRequest',
+            requestId,
+            toolName,
+            input: request.input,
+            suggestions: Array.isArray(request.suggestions) ? request.suggestions : undefined,
+            toolUseId: this.readFirstString(request, request, ['tool_use_id', 'toolUseID', 'toolUseId']),
+            title: this.readFirstString(request, request, ['title']),
+            displayName: this.readFirstString(request, request, ['display_name', 'displayName']),
+            description: this.readFirstString(request, request, ['description']),
+            decisionReason: this.readFirstString(request, request, ['decision_reason', 'decisionReason']),
+            blockedPath: this.readFirstString(request, request, ['blocked_path', 'blockedPath']),
+            rawRequest: request
+        };
+    }
+
+    /**
+     * 将 unknown 值安全收窄为普通对象。
+     *
+     * @param value 待收窄值。
+     * @returns 普通对象时返回自身，否则返回 undefined。
+     */
+    private asRecord(value: unknown): Record<string, unknown> | undefined {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+        return value as Record<string, unknown>;
+    }
+
+    /**
+     * 从多个候选字段名中读取第一个字符串值。
+     *
+     * @param primary 优先读取的对象。
+     * @param fallback 兜底读取的对象。
+     * @param keys 候选字段名列表。
+     * @returns 找到字符串字段时返回该值，否则返回 undefined。
+     */
+    private readFirstString(
+        primary: Record<string, unknown>,
+        fallback: Record<string, unknown>,
+        keys: string[]
+    ): string | undefined {
+        for (const key of keys) {
+            const value = primary[key] ?? fallback[key];
+            if (typeof value === 'string' && value.trim()) return value;
+        }
+        return undefined;
     }
 
     // -------------------------------------------------------------------------
@@ -992,6 +1140,45 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     }
 
     /**
+     * 将 assistant 文本里以 `<think>...</think>` 形式内联的"伪思考块"
+     * 转换为与 Anthropic 原生 thinking 块视觉一致的引用块格式。
+     *
+     * 背景：部分 OpenAI-compatible 上游模型不会按 Anthropic 协议输出独立的
+     * thinking 块，而是把模型内部思考写在普通 text 块里并用 `<think>...</think>`
+     * 包起来。`<think>` 不是合法 HTML/Markdown 标签，会被 webview 的 markdown
+     * 渲染器当成 raw HTML 处理，导致 `</think>` 之后的正文一并被吞掉无法渲染。
+     *
+     * 本方法在文本进入 ChatParser 之前做一次预处理：
+     * - 匹配所有成对 `<think>...</think>`，去除标签，将思考内容套上 `> 💭 `
+     *   引用块前缀，并在前后补空行保证 markdown 引用块独立成段。
+     * - 未闭合的 `<think>` 视为思考块直到字符串结尾，避免残留裸标签影响渲染。
+     * - 标签外的剩余文本原样保留，作为正常 markdown 输出。
+     *
+     * @param text 原始 assistant 文本（可能内联 `<think>...</think>`）。
+     * @returns 已规范化、可直接交给 ChatParser 的 markdown 文本。
+     */
+    private normalizeInlineThinkBlocks(text: string): string {
+        if (!text || (!text.includes('<think>') && !text.includes('</think>'))) return text;
+        const PAIRED = /<think>([\s\S]*?)<\/think>/gi;
+        let normalized = text.replace(PAIRED, (_match, inner: string) => {
+            const formatted = this.formatThinkingChunk(inner ?? '');
+            return `\n\n${formatted}\n`;
+        });
+        // 处理未闭合的开标签（罕见，但应避免裸标签泄漏到 webview）。
+        const openIdx = normalized.toLowerCase().indexOf('<think>');
+        if (openIdx >= 0) {
+            const head = normalized.slice(0, openIdx);
+            const rest = normalized.slice(openIdx + '<think>'.length);
+            const formatted = this.formatThinkingChunk(rest);
+            normalized = `${head}\n\n${formatted}\n`;
+        }
+        // 保证文本以换行结尾，避免下游 chunkMarkdown 把末尾正文留在 pendingLine
+        // 缓冲里直到下次 flushParser 才输出（这是导致"</think> 之后正文不显示"的关键原因）。
+        if (!normalized.endsWith('\n')) normalized += '\n';
+        return normalized;
+    }
+
+    /**
      * 尝试美化 JSON 字符串；解析失败返回 undefined。
      *
      * @param raw JSON 字符串。
@@ -1066,7 +1253,10 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
             if (blockType === 'text' && typeof block.text === 'string' && block.text) {
                 // 非流式完整文本：不能直接走增量 chunker，否则无换行短文本会留在 pendingLine
                 // 中，直到进程 flush 才输出；这里应立即转换为可渲染片段。
-                const parsed = this.parseDisplayText(block.text);
+                // 同时把上游用 <think>...</think> 形式内联的伪思考块预先转成 markdown 引用块，
+                // 避免裸 HTML 标签让 webview 渲染器把 </think> 之后的正文一并吞掉。
+                const normalized = this.normalizeInlineThinkBlocks(block.text);
+                const parsed = this.parseCompleteDisplayText(normalized);
                 if (parsed.type === 'segments') segments.push(...parsed.segments);
                 if (parsed.type === 'segments' && parsed.segments.length > 0) this.hasEmittedAssistantContent = true;
                 continue;
@@ -1118,8 +1308,13 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         const usageSegment = this.buildUsageSegmentFromResult(record);
         // 优先把已有正文与 usage 合并到同一帧返回。
         const tailSegments: ChatSegment[] = [];
-        if (!this.hasEmittedAssistantContent && text) {
-            const parsed = this.parseDisplayText(text);
+        if (text) {
+            // result.result 兜底渲染时也要先把 <think>...</think> 转成引用块，
+            // 与 parseSdkWrapperEvent 中的 text 分支保持一致的渲染行为。
+            const normalized = this.normalizeInlineThinkBlocks(text);
+            const parsed = this.hasEmittedAssistantContent
+                ? this.parseDisplayTextIfMissingFromTail(normalized)
+                : this.parseCompleteDisplayText(normalized);
             if (parsed.type === 'segments' && parsed.segments.length > 0) {
                 this.hasEmittedAssistantContent = true;
                 tailSegments.push(...parsed.segments);
@@ -1128,6 +1323,26 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         if (usageSegment) tailSegments.push(usageSegment);
         if (tailSegments.length === 0) return { type: 'done' };
         return { type: 'segments', segments: tailSegments, done: true };
+    }
+
+    /**
+     * 在最终 result 帧中为已流式输出过的正文做一次轻量兜底解析。
+     *
+     * Claude CLI 的最终 `result` 事件通常只需要补 usage；但在 OpenAI Responses
+     * 转换链路下，主聊天区可能已收到中间 assistant 文本，最后一帧却只携带
+     * `usage+done`。某些 Webview 增量替换/重绘路径会让最后一段短文本在视觉上
+     * 丢失，因此这里在最终 `record.result` 与最近一次 assistant 文本不完全重复时，
+     * 再追加一次 Markdown 兜底片段，确保用户最终答案一定可见。
+     *
+     * @param text CLI result.result 的规范化文本。
+     * @returns 需要补渲染的 segments；若判断为重复则返回空 segments。
+     */
+    private parseDisplayTextIfMissingFromTail(text: string): ParsedCliEvent {
+        const normalizedText = text.trim();
+        if (!normalizedText) return { type: 'segments', segments: [] };
+        const recentText = this.recentAssistantText.trim();
+        if (recentText.endsWith(normalizedText)) return { type: 'segments', segments: [] };
+        return this.parseCompleteDisplayText(text);
     }
 
     /**
@@ -1225,7 +1440,8 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         const name = typeof block.name === 'string' ? block.name : 'tool';
         const id = typeof block.id === 'string' ? block.id : undefined;
         const inputValue = block.input;
-        const inputPretty = this.tryStringifyValue(inputValue);
+        const inputWithUiMeta = this.attachToolUiMetadata(name, id, inputValue);
+        const inputPretty = this.tryStringifyValue(inputWithUiMeta);
         const segment: ChatSegment = {
             id: this.buildToolSegmentId(id),
             kind: 'tool',
@@ -1235,13 +1451,36 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
                 status: 'running',
                 summary: this.buildToolSummary(name, 'running'),
                 detail: inputPretty,
-                input: inputValue
+                input: inputWithUiMeta
             },
             sourceText: inputPretty,
             confidence: 'high'
         };
         if (id) this.toolSegmentById.set(id, segment);
         return segment;
+    }
+
+    /**
+     * 为 ask_expert 工具入参加入仅供本地 UI 使用的关联元数据。
+     *
+     * Claude CLI 会把 MCP tool_use.input 原样传给 expertMcpServer；这里追加
+     * `toolSegmentId` 后，扩展宿主就能在专家事件里带回同一个 id，webview 因而
+     * 可以把专家实时过程追加到主聊天 ask_expert 工具卡片，而不是等最终
+     * tool_result 一次性渲染。
+     *
+     * @param name 工具名。
+     * @param toolUseId Claude/Anthropic tool_use_id。
+     * @param inputValue 原始工具入参。
+     * @returns 可能附带 UI 元数据的新入参对象。
+     */
+    private attachToolUiMetadata(name: string, toolUseId: string | undefined, inputValue: unknown): unknown {
+        if (name !== 'mcp__llsExpert__ask_expert' && name !== 'ask_expert') return inputValue;
+        if (!toolUseId) return inputValue;
+        if (!inputValue || typeof inputValue !== 'object' || Array.isArray(inputValue)) return inputValue;
+        return {
+            ...(inputValue as Record<string, unknown>),
+            toolSegmentId: this.buildToolSegmentId(toolUseId)
+        };
     }
 
     /**
@@ -1547,12 +1786,57 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      * @returns segments 事件。
      */
     private parseDisplayText(text: string): ParsedCliEvent {
+        return this.parseDisplayTextInternal(text, false);
+    }
+
+    /**
+     * 解析一段已完整到达的 assistant 文本，并强制刷新尾部半行。
+     *
+     * 非流式 SDK wrapper 事件和最终 `result.result` 都是完整文本。如果文本中包含
+     * 换行但最后一行没有换行符，普通流式解析会把最后一行留在 `pendingLine`，
+     * 等下一帧再输出；当下一帧只有 usage/done 时，尾部短文本（例如数字 `1`）就会
+     * 在聊天区缺失。因此完整文本路径必须在本次解析结束后立即 flush。
+     *
+     * @param text 已完整到达的文本。
+     * @returns segments 事件。
+     */
+    private parseCompleteDisplayText(text: string): ParsedCliEvent {
+        return this.parseDisplayTextInternal(text, true);
+    }
+
+    /**
+     * 解析可见文本的内部实现。
+     *
+     * @param text 待解析文本。
+     * @param forceFlushTail 是否强制刷新尾部未换行的半行。
+     * @returns segments 事件。
+     */
+    private parseDisplayTextInternal(text: string, forceFlushTail: boolean): ParsedCliEvent {
+        this.rememberAssistantText(text);
         if (!text.includes('\n')) {
             return { type: 'segments', segments: [{ kind: 'markdown', text }] };
         }
         const parsed = parseChunk(this.parserState, { source: 'stdout', text });
         this.parserState = parsed.state;
-        return { type: 'segments', segments: parsed.segments };
+        const segments = [...parsed.segments];
+        if (forceFlushTail) {
+            const tailSegments = flushParser(this.parserState);
+            if (tailSegments.length > 0) segments.push(...tailSegments);
+        }
+        return { type: 'segments', segments };
+    }
+
+    /**
+     * 记录最近一轮 assistant 可见文本，供最终 result 事件判断是否重复。
+     *
+     * 只保留尾部一小段，避免长会话或大段输出占用额外内存；去重只需要判断
+     * `record.result` 是否已经出现在最近尾部即可。
+     *
+     * @param text 本次即将显示到聊天区的文本片段。
+     */
+    private rememberAssistantText(text: string): void {
+        if (!text) return;
+        this.recentAssistantText = (this.recentAssistantText + text).slice(-8000);
     }
 
     /**

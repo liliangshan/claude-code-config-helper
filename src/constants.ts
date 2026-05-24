@@ -149,6 +149,39 @@ export const CHAT_CLI_SKILLS_KEY = 'chat.skills';
 export const CHAT_CLI_INCLUDE_VSCODE_MCP_JSON_KEY = 'chat.includeVscodeMcpJson';
 
 /**
+ * 项目级专家模式开关：`claudeCodeConfigHelper.chat.expertMode.project.enabled`。
+ *
+ * scope=`resource`，写入 `.vscode/settings.json`。`undefined` 表示「未在项目级显式
+ * 设置」，会回退到全局级开关 {@link CHAT_EXPERT_MODE_GLOBAL_ENABLED_KEY}。
+ *
+ * 详见 `EXPERT_MODE_DESIGN.md` §8。
+ */
+export const CHAT_EXPERT_MODE_PROJECT_ENABLED_KEY = 'chat.expertMode.project.enabled';
+
+/**
+ * 项目级专家模型 id：`claudeCodeConfigHelper.chat.expertMode.project.model`。
+ *
+ * scope=`resource`。空字符串视为「未设置」，会回退到全局级
+ * {@link CHAT_EXPERT_MODE_GLOBAL_MODEL_KEY}；两者都为空时由 ExpertRunner 回退到主模型。
+ */
+export const CHAT_EXPERT_MODE_PROJECT_MODEL_KEY = 'chat.expertMode.project.model';
+
+/**
+ * 全局专家模式开关：`claudeCodeConfigHelper.chat.expertMode.global.enabled`。
+ *
+ * scope=`application`，写入用户设置 / Settings Sync，跨工作区生效。
+ * 项目级 {@link CHAT_EXPERT_MODE_PROJECT_ENABLED_KEY} 优先级更高。
+ */
+export const CHAT_EXPERT_MODE_GLOBAL_ENABLED_KEY = 'chat.expertMode.global.enabled';
+
+/**
+ * 全局专家模型 id：`claudeCodeConfigHelper.chat.expertMode.global.model`。
+ *
+ * scope=`application`。空字符串视为「未设置」，由 ExpertRunner 回退到主模型。
+ */
+export const CHAT_EXPERT_MODE_GLOBAL_MODEL_KEY = 'chat.expertMode.global.model';
+
+/**
  * 本扩展所有命令 id 的集中定义。
  * 与 package.json 的 contributes.commands 保持一致。
  */
@@ -207,14 +240,8 @@ export const PROVIDERS_VIEW_ID = 'claudeRouter.providersView';
 /** 右侧 Secondary Sidebar 中的 Chat WebviewView id。 */
 export const CHAT_SECONDARY_VIEW_ID = 'claudeRouter.chatSidebarSecondary';
 
-/** 不支持 Secondary Sidebar 时 Activity Bar 兜底 Chat WebviewView id。 */
-export const CHAT_FALLBACK_VIEW_ID = 'claudeRouter.chatSidebar';
-
 /** 右侧 Secondary Sidebar Chat 容器 id。 */
 export const CHAT_SECONDARY_CONTAINER_ID = 'claudeRouterChatSecondary';
-
-/** Activity Bar 兜底 Chat 容器 id。 */
-export const CHAT_FALLBACK_CONTAINER_ID = 'claudeRouterChatFallback';
 
 /**
  * 输出通道（OutputChannel）的显示名。

@@ -3,7 +3,7 @@
 import * as fs from 'fs/promises';
 import * as vscode from 'vscode';
 
-import { CHAT_FALLBACK_CONTAINER_ID, CHAT_FALLBACK_VIEW_ID, CHAT_SECONDARY_CONTAINER_ID, CHAT_SECONDARY_VIEW_ID } from '../constants';
+import { CHAT_SECONDARY_CONTAINER_ID, CHAT_SECONDARY_VIEW_ID } from '../constants';
 import { Logger } from '../logger';
 import type { ChatMessage, ExtensionToWebview, WebviewToExtension } from './protocol';
 
@@ -17,7 +17,6 @@ type ChatWebviewTarget = { view: vscode.WebviewView; webview: vscode.Webview };
  * 管理右侧 Chat WebviewView 生命周期和扩展/Webview 消息收发。
  *
  * 该类优先把 Chat 放到 VS Code Secondary Sidebar，视觉位置与官方 Claude Code 类似；
- * 如运行环境无法使用右侧侧边栏，则使用 Activity Bar 兜底视图。
  * 该类只负责视图创建、HTML 注入、postMessage 和 Webview 消息转发，
  * 不直接包含 CLI 协议、任务流注入或解析器业务逻辑。
  */
@@ -30,6 +29,9 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
 
     /** 最近一次用于初始化 Webview 的 CLI 路径。 */
     private cliPath = '';
+
+    /** 最近一次任务流状态消息，用于 Webview 延迟创建后补发顶部 Todo 卡片状态。 */
+    private lastTaskFlowStatus: Extract<ExtensionToWebview, { type: 'taskFlow/status' }> | undefined;
 
     /** 按消息 ID 合并的流式 patch 队列。 */
     private readonly patchQueue = new Map<string, Extract<ExtensionToWebview, { type: 'message/patch' }>>();
@@ -78,6 +80,7 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
         // React 前端期望消息以 {type: "from-extension", message: ...} 格式接收，
         // 因此初始化消息也需要包装
         await this.postMessage({ type: 'session/init', messages: this.initialMessages, cliPath: this.cliPath });
+        await this.postLastTaskFlowStatus();
     }
 
     /**
@@ -92,10 +95,21 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
         if (this.target) {
             this.target.view.show(false);
             await this.postMessage({ type: 'session/init', messages: initialMessages, cliPath });
+            await this.postLastTaskFlowStatus();
             return;
         }
         await this.revealSidebarView();
         await this.postMessage({ type: 'session/init', messages: initialMessages, cliPath });
+        await this.postLastTaskFlowStatus();
+    }
+
+    /**
+     * 判断当前 Chat Webview 是否已经由 VS Code 创建并解析。
+     *
+     * @returns 已存在可直接 postMessage 的 Webview 时返回 true。
+     */
+    public hasResolvedView(): boolean {
+        return !!this.target;
     }
 
     /**
@@ -108,6 +122,11 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
      * @returns Webview 不存在时返回 false，否则返回 postMessage 结果。
      */
     public async postMessage(message: ExtensionToWebview): Promise<boolean> {
+        if (message.type === 'taskFlow/status') {
+            this.lastTaskFlowStatus = message;
+            const taskCount = message.snapshot?.workflow?.tasks?.length ?? 0;
+            Logger.info(`[ChatViewHost] postMessage taskFlow/status：tasks=${taskCount}, hasTarget=${!!this.target}`);
+        }
         const webview = this.target?.webview;
         if (!webview) return false;
         if (message.type === 'message/patch' && message.append) {
@@ -139,20 +158,25 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
     /**
      * 按官方 Claude Code 的方式优先打开 Secondary Sidebar 中的 Chat 视图。
      *
-     * VS Code 会在执行容器打开命令后按需调用 resolveWebviewView；如果运行环境
-     * 不支持 secondarySidebar 贡献点，则切换上下文到 Activity Bar 兜底视图。
+     * VS Code 会在执行容器打开命令后按需调用 resolveWebviewView。这里不再注册
+     * Activity Bar 兜底视图，避免 Chat 图标出现在左侧活动栏。
      */
     private async revealSidebarView(): Promise<void> {
         await vscode.commands.executeCommand('setContext', 'claudeRouter.chat.useActivityBarFallback', false);
-        try {
-            await vscode.commands.executeCommand(`workbench.view.extension.${CHAT_SECONDARY_CONTAINER_ID}`);
-            await vscode.commands.executeCommand(`${CHAT_SECONDARY_VIEW_ID}.focus`);
-        } catch (err) {
-            Logger.warn(`打开右侧 Chat 侧边栏失败，改用 Activity Bar 兜底：${err instanceof Error ? err.message : String(err)}`);
-            await vscode.commands.executeCommand('setContext', 'claudeRouter.chat.useActivityBarFallback', true);
-            await vscode.commands.executeCommand(`workbench.view.extension.${CHAT_FALLBACK_CONTAINER_ID}`);
-            await vscode.commands.executeCommand(`${CHAT_FALLBACK_VIEW_ID}.focus`);
-        }
+        await vscode.commands.executeCommand(`workbench.view.extension.${CHAT_SECONDARY_CONTAINER_ID}`);
+        await vscode.commands.executeCommand(`${CHAT_SECONDARY_VIEW_ID}.focus`);
+    }
+
+    /**
+     * 将缓存的最近一次任务流状态补发给 Webview。
+     *
+     * 任务流工具可能在 Chat Webview 尚未 resolve 时已经创建 workflow；此时
+     * `postMessage` 会因为没有 target 而返回 false。缓存后在视图创建或重新打开时
+     * 补发，可确保用户看到 “Workflow created ...” 后顶部 Todo 卡片不会丢失。
+     */
+    private async postLastTaskFlowStatus(): Promise<void> {
+        if (!this.lastTaskFlowStatus) return;
+        await this.postMessage(this.lastTaskFlowStatus);
     }
 
     /**

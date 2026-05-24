@@ -169,6 +169,14 @@ export interface ChatModelOption {
 /** Chat 输入框快捷权限模式选项。 */
 export type ChatQuickPermissionMode = 'acceptEdits' | 'bypassPermissions';
 
+/** Chat 底部专家下拉框的当前选择状态。 */
+export interface ChatExpertModelSelection {
+    /** 是否启用专家；false 表示「关闭专家」。 */
+    enabled: boolean;
+    /** 专家模型 ID；关闭或未设置时为空字符串。 */
+    modelId: string;
+}
+
 /** Chat Webview 当前支持的界面语言。 */
 export type ChatUiLanguage = 'en' | 'zh-cn' | 'zh-tw' | 'ko' | 'ja' | 'fr' | 'de';
 
@@ -207,7 +215,109 @@ export type ExtensionToWebview =
     | { type: 'composer/addAttachments'; attachments: ChatComposerAttachment[]; focus?: boolean }
     | { type: 'composer/replaceAttachment'; clientId: string; attachment: ChatComposerAttachment; focus?: boolean }
     | { type: 'permissionMode/current'; mode: ChatQuickPermissionMode }
-    | { type: 'model/options'; models: ChatModelOption[]; current?: { providerId: string; modelId: string } | null };
+    | { type: 'model/options'; models: ChatModelOption[]; current?: { providerId: string; modelId: string } | null }
+    | {
+          /** 推送当前 LLS CCAI / CC 任务流快照，用于 Chat 顶部 Todo 状态卡片实时刷新。 */
+          type: 'taskFlow/status';
+          /** 当前任务流状态快照；workflow 为 null 时前端隐藏 Todo 卡片。 */
+          snapshot: LlsTaskSnapshotPayload;
+      }
+        | {
+                    /** 推送专家模型下拉框可选项与当前有效选择。 */
+                    type: 'expert/model/options';
+                    /** 可作为专家模型的模型列表。 */
+                    models: ChatModelOption[];
+                    /** 当前按照「项目 > 全局 > 关闭」规则解析出的专家选择。 */
+                    current: ChatExpertModelSelection;
+            }
+    | {
+          /**
+           * 推送一条专家模式事件（{@link ExpertEventPayload}）。
+           *
+           * Webview 收到后将事件按 `parentMessageId` 聚合到 `ExpertPanel`
+           * 折叠面板中渲染。`start` 事件创建面板（默认展开），`final` /
+           * `error` / `cancelled` 事件会触发自动折叠（用户可手动展开）。
+           *
+           * 专家事件**不进入** `chatMessages` 数组，也不会持久化到 sessionStore，
+           * 因此 webview 关闭后丢失是预期行为。
+           */
+          type: 'expert/event';
+          /** 事件 payload（详见 `src/expertMode/expertEvents.ts`）。 */
+          event: ExpertEventPayload;
+      };
+
+/** Chat Webview 可渲染的任务流任务状态。 */
+export type LlsTaskStatusPayload = 'pending' | 'in_progress' | 'completed' | 'blocked';
+
+/** Chat Webview 可渲染的单个任务流任务。 */
+export interface LlsTaskItemPayload {
+    /** 任务唯一 ID。 */
+    id: string;
+    /** 任务标题。 */
+    title: string;
+    /** 任务描述。 */
+    description: string;
+    /** 当前任务状态。 */
+    status: LlsTaskStatusPayload;
+}
+
+/** Chat Webview 可渲染的任务流内容。 */
+export interface LlsTaskWorkflowPayload {
+    /** 任务流标题。 */
+    title: string;
+    /** 任务流摘要。 */
+    summary: string;
+    /** 任务列表。 */
+    tasks: LlsTaskItemPayload[];
+}
+
+/** Chat Webview 可渲染的任务流快照。 */
+export interface LlsTaskSnapshotPayload {
+    /** 当前任务流；不存在表示尚未启动。 */
+    workflow: LlsTaskWorkflowPayload | null;
+    /** 最近一次错误信息。 */
+    lastError?: string;
+    /** 最近一次更新时间戳。 */
+    updatedAt: number;
+}
+
+/**
+ * 专家事件 webview 透传 payload。
+ *
+ * 这是 `ExpertEvent` 的 webview 协议视图（字段集与 `expertMode/expertEvents.ts`
+ * 中的 `ExpertEvent` 一致；之所以在此重新声明，是为了让 `protocol.ts` 不依赖
+ * `src/expertMode/*`，保持协议层零内部依赖）。
+ */
+export interface ExpertEventPayload {
+    /** 当前专家 run 的稳定 id。 */
+    runId: string;
+    /** 关联的主对话 assistant 消息 id（用于挂载面板位置）。 */
+    parentMessageId: string;
+    /** 关联的 ask_expert tool_use_id。 */
+    callId: string;
+    /** 主聊天区 ask_expert 工具卡片的 ChatSegment.id，用于实时追加专家 Output。 */
+    toolSegmentId?: string;
+    /** 事件产生时间戳（毫秒）。 */
+    ts: number;
+    /** 事件种类。 */
+    kind: 'start' | 'analysis' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'cancelled';
+    /** `kind='start'` 时：自包含的用户问题。 */
+    question?: string;
+    /** `kind='start'` 时：实际使用的专家模型 id。 */
+    expertModel?: string;
+    /** `kind='analysis' | 'final' | 'error' | 'cancelled'` 时的文本内容。 */
+    text?: string;
+    /** `kind='tool_call' | 'tool_result'` 时的工具名。 */
+    toolName?: string;
+    /** `kind='tool_call'` 时的工具入参。 */
+    toolArgs?: unknown;
+    /** `kind='tool_result'` 时的结果摘要（已截断）。 */
+    toolResultSummary?: string;
+    /** `kind='tool_result'` 时：该工具结果是否为错误。 */
+    toolIsError?: boolean;
+    /** `kind='final' | 'error' | 'cancelled'` 时：本次 run 总耗时（毫秒）。 */
+    durationMs?: number;
+}
 
 /** Webview 发送给扩展宿主的消息。 */
 export type WebviewToExtension =
@@ -223,12 +333,33 @@ export type WebviewToExtension =
           type: 'user/resend';
           /** 待重发的 user 消息 ID。 */
           id: string;
+          /**
+           * 用户在重发编辑框中修改后的文本。
+           *
+           * 未传或为空字符串时，扩展端继续回退到目标消息保存的原始文本，兼容旧版
+           * Webview 直接点击重发的行为。
+           */
+          text?: string;
       }
     | { type: 'session/clear' }
     | { type: 'file/pick' }
     | { type: 'file/uploadBlob'; clientId: string; name: string; displayName?: string; size: number; mime: string; base64: string }
     | { type: 'model/select'; providerId: string; modelId: string }
     | { type: 'permissionMode/select'; mode: ChatQuickPermissionMode }
+    | {
+          /**
+           * 保存专家模型下拉框选择。
+           *
+           * `modelId` 为空字符串表示关闭专家；非空时会同时写入项目配置和全局配置。
+           */
+          type: 'expert/model/select';
+          /** 选择的专家模型 ID；空字符串表示「关闭专家」。 */
+          modelId: string;
+      }
+    | {
+          /** 打开 LLS CCAI / CC 任务流菜单，用于替代原状态栏中的 CC 任务流按钮。 */
+          type: 'taskFlow/open';
+      }
     | { type: 'file/open'; path: string; line?: number; endLine?: number }
     | { type: 'cli/restart' }
     | { type: 'cli/selectPath' }

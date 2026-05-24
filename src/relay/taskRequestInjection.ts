@@ -25,6 +25,7 @@ import {
     buildUpdateLlsCcaiTaskWorkflowTool,
     mergeAnthropicTools
 } from '../llsTask/tools';
+import { EXPERT_NATIVE_AGENT_TOOL_NAME } from '../expertMode/expertConstants';
 
 /** Claude Code 用于在执行中询问用户的工具名，任务流自动执行阶段会过滤掉。 */
 const ASK_USER_QUESTION_TOOL_NAME = 'AskUserQuestion';
@@ -149,7 +150,15 @@ export function injectLlsTaskRequestBody(
             systemRules.push(sharedSystemPrompt);
         }
         // 工具列表中需要剔除的同名/冲突工具，按场景累加。
-        const blockedToolNames = new Set<string>();
+        //
+        // **永久剔除项**：
+        // - `Agent`（Claude CLI 原生 sub-agent / Task 工具）—— 与我们的 `ask_expert`
+        //   能力高度重叠且不受 relay 控制，主模型若两者都看到会随机选择，导致
+        //   专家模式的可见性面板、单 turn 调用上限、防递归保护等机制全部失效。
+        //   无论本扩展专家模式是否开启，都强制走我们的 `ask_expert` 工具；
+        //   即使专家模式关闭，移除 `Agent` 也只是把 sub-agent 能力收回，主对话本身
+        //   仍能完成所有任务，不影响功能。
+        const blockedToolNames = new Set<string>([EXPERT_NATIVE_AGENT_TOOL_NAME]);
         if (shouldInjectWorkflowExecution && deps && language) {
             builtIns.push(buildUpdateLlsCcaiTaskWorkflowTool());
             blockedToolNames.add(ASK_USER_QUESTION_TOOL_NAME);

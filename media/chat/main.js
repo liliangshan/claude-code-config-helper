@@ -13,27 +13,103 @@
     const DEFAULT_CHAT_LANGUAGE = 'en';
     const chatTranslations = {
         en: {
-            statusInitializing: 'Initializing…', copySource: 'Copy source', copySourceTitle: 'Copy current Webview body source', restart: 'Restart', restartTitle: 'Restart CLI', clear: 'Clear', clearTitle: 'Clear chat history', dropFilesHere: 'Drop files here as context', contextPanelAria: 'Added context files', defaultCurrentFile: 'Current file shown by default', clearContext: 'Clear context', contextMenu: 'Context menu', composerPlaceholder: 'Ask, edit, or agent…', attachFile: 'Select context files', modelSelectTitle: 'Switch model and automatically restart Chat CLI', modelSelectAria: 'Switch model', modelLoading: 'Loading models…', permissionModeTitle: 'Switch Claude CLI permission mode and automatically restart Chat CLI', permissionModeAria: 'Switch permission mode', sendMessage: 'Send message', stopResponse: 'Stop current response', noModelConfigured: 'No model configured', selectModel: 'Select a model', permissionAcceptEdits: 'Current: acceptEdits (automatically accept edit tools)', permissionBypass: 'Current: bypassPermissions (skip permission checks, fully trust current workspace)', emptyState: 'LLS CLAUDE CHAT - Start a conversation', longTextOutput: 'Long text output', longCodeBlock: 'Long code block', longDiffOutput: 'Long diff output', copy: 'Copy', copyCode: 'Copy code', usageModel: 'Model ', usageInput: 'Input ', usageOutput: 'Output ', usageCacheWrite: 'Cache write ', usageCacheRead: 'Cache read ', assistantNeedsConfirmation: 'Assistant needs your confirmation', askManyQuestions: 'There are {count} questions. You must reply before continuing.', askOneQuestion: 'Choose an option, or write a custom reply below (required).', noQuestionText: '(No question text)', multiSelect: 'Multiple selection', customReplyLabel: 'Other reply (optional): write your thoughts or why you did not choose an option', customReplyPlaceholder: 'For example: I want to use another implementation…', sendReply: 'Send reply', askUserReplyIntro: 'I replied to your question as follows:', askUserPicked: '   Selected: {items}', askUserNoPick: '   Selected: (no option selected)', askUserExtra: 'Additional note:', vscodeDiagnostics: 'VS Code diagnostics', toolRunning: 'Running', toolSuccess: 'Success', toolFailed: 'Failed', toolPermissionDenied: 'Permission required', toolPending: 'Pending', collapsibleSummary: '{label} ({count} characters, click to expand)', truncatedChars: '… truncated {count} characters', resendTitle: 'Resend: delete this message and following context, then send again', resendAria: 'Resend this message', loading: 'Loading', cliNotSelected: 'CLI not selected', cliStatus: 'CLI status: {status}{detail}', unknownError: 'Unknown error', copiedBodySource: 'Copied body source', copyBodySourceFailed: 'Failed to copy body source', removeAttachment: 'Remove {name}', genericFile: 'File'
+            statusInitializing: 'Initializing…', copySource: 'Copy source', copySourceTitle: 'Copy current Webview body source', restart: 'Restart', restartTitle: 'Restart CLI', clear: 'Clear', clearTitle: 'Clear chat history', dropFilesHere: 'Drop files here as context', contextPanelAria: 'Added context files', defaultCurrentFile: 'Current file shown by default', clearContext: 'Clear context', contextMenu: 'Context menu', composerPlaceholder: 'Ask, edit, or agent…', attachFile: 'Select context files', modelSelectTitle: 'Switch model and automatically restart Chat CLI', modelSelectAria: 'Switch model', modelLoading: 'Loading models…', permissionModeTitle: 'Switch Claude CLI permission mode and automatically restart Chat CLI', permissionModeAria: 'Switch permission mode', sendMessage: 'Send message', stopResponse: 'Stop current response', noModelConfigured: 'No model configured', selectModel: 'Select a model', permissionAcceptEdits: 'Current: acceptEdits (automatically accept edit tools)', permissionBypass: 'Current: bypassPermissions (skip permission checks, fully trust current workspace)', emptyState: 'LLS CLAUDE CHAT - Start a conversation', longTextOutput: 'Long text output', longCodeBlock: 'Long code block', longDiffOutput: 'Long diff output', copy: 'Copy', copyCode: 'Copy code', usageModel: 'Model ', usageInput: 'Input ', usageOutput: 'Output ', usageCacheWrite: 'Cache write ', usageCacheRead: 'Cache read ', assistantNeedsConfirmation: 'Assistant needs your confirmation', askManyQuestions: 'There are {count} questions. You must reply before continuing.', askOneQuestion: 'Choose an option, or write a custom reply below (required).', noQuestionText: '(No question text)', multiSelect: 'Multiple selection', customReplyLabel: 'Other reply (optional): write your thoughts or why you did not choose an option', customReplyPlaceholder: 'For example: I want to use another implementation…', sendReply: 'Send reply', askUserReplyIntro: 'I replied to your question as follows:', askUserPicked: '   Selected: {items}', askUserNoPick: '   Selected: (no option selected)', askUserExtra: 'Additional note:', vscodeDiagnostics: 'VS Code diagnostics', toolRunning: 'Running', toolSuccess: 'Success', toolFailed: 'Failed', toolPermissionDenied: 'Permission required', toolPending: 'Pending', collapsibleSummary: '{label} ({count} characters, click to expand)', truncatedChars: '… truncated {count} characters', resendTitle: 'Resend: delete this message and following context, then send again', resendAria: 'Resend this message', loading: 'Loading', cliNotSelected: 'CLI not selected', cliStatus: 'CLI status: {status}{detail}', unknownError: 'Unknown error', copiedBodySource: 'Copied body source', copyBodySourceFailed: 'Failed to copy body source', removeAttachment: 'Remove {name}', genericFile: 'File', closeExpert: 'Disable expert', expertModelSelectTitle: 'Select project expert model', expertModelSelectAria: 'Select project expert model', ccTaskFlow: 'CC task flow', expertPanelTitle: 'Expert run', expertPanelStatusRunning: 'running…', expertPanelStatusDone: 'completed', expertPanelStatusError: 'failed', expertPanelStatusCancelled: 'cancelled', expertPanelToggleAria: 'Toggle expert panel', expertEventStart: 'Start', expertEventAnalysis: 'Analysis', expertEventToolCall: 'Tool call', expertEventToolResult: 'Tool result', expertEventFinal: 'Final answer', expertEventError: 'Error', expertEventCancelled: 'Cancelled'
         },
         'zh-cn': {
-            statusInitializing: '正在初始化…', copySource: '复制源码', copySourceTitle: '复制当前 Webview body 源码', restart: '重启', restartTitle: '重启 CLI', clear: '清空', clearTitle: '清空聊天内容', dropFilesHere: '拖放文件到这里作为上下文', contextPanelAria: '已添加的上下文文件', defaultCurrentFile: '默认显示当前文件', clearContext: '清空上下文', contextMenu: '上下文菜单', composerPlaceholder: '询问、编辑或代理…', attachFile: '选择上下文文件', modelSelectTitle: '切换模型，切换后自动重启 Chat CLI', modelSelectAria: '切换模型', modelLoading: '模型加载中…', permissionModeTitle: '切换 Claude CLI 权限模式，切换后自动重启 Chat CLI', permissionModeAria: '切换权限模式', sendMessage: '发送消息', stopResponse: '停止当前响应', noModelConfigured: '未配置模型', selectModel: '请选择模型', permissionAcceptEdits: '当前：acceptEdits（自动接受编辑类工具）', permissionBypass: '当前：bypassPermissions（跳过权限检查，完全信任当前工作区）', emptyState: 'LLS CLAUDE CHAT - 开始对话', longTextOutput: '长文本输出', longCodeBlock: '长代码块', longDiffOutput: '长 diff 输出', copy: '复制', copyCode: '复制代码', usageModel: '模型 ', usageInput: '输入 ', usageOutput: '输出 ', usageCacheWrite: '缓存写 ', usageCacheRead: '缓存读 ', assistantNeedsConfirmation: '助手需要您的确认', askManyQuestions: '共 {count} 个问题，必须回复后才能继续', askOneQuestion: '请选择一个选项，或在下方填写自定义回复（必须回复）', noQuestionText: '(无问题文本)', multiSelect: '可多选', customReplyLabel: '其他回复（可选）：写下你的想法或不选某项的理由', customReplyPlaceholder: '例如：我想换一种实现方式…', sendReply: '发送回复', askUserReplyIntro: '我对你的问题做了如下回复：', askUserPicked: '   选择：{items}', askUserNoPick: '   选择：（未选择任何选项）', askUserExtra: '补充说明：', vscodeDiagnostics: 'VS Code 诊断', toolRunning: '执行中', toolSuccess: '成功', toolFailed: '失败', toolPermissionDenied: '需要授权', toolPending: '等待', collapsibleSummary: '{label}（{count} 字符，点击展开）', truncatedChars: '… 已截断 {count} 字符', resendTitle: '重发：删除此消息及其后续上下文并重新发送', resendAria: '重发此消息', loading: '加载中', cliNotSelected: 'CLI 未选择', cliStatus: 'CLI 状态：{status}{detail}', unknownError: '未知错误', copiedBodySource: '已复制 body 源码', copyBodySourceFailed: '复制 body 源码失败', removeAttachment: '移除 {name}', genericFile: '文件'
+            statusInitializing: '正在初始化…', copySource: '复制源码', copySourceTitle: '复制当前 Webview body 源码', restart: '重启', restartTitle: '重启 CLI', clear: '清空', clearTitle: '清空聊天内容', dropFilesHere: '拖放文件到这里作为上下文', contextPanelAria: '已添加的上下文文件', defaultCurrentFile: '默认显示当前文件', clearContext: '清空上下文', contextMenu: '上下文菜单', composerPlaceholder: '询问、编辑或代理…', attachFile: '选择上下文文件', modelSelectTitle: '切换模型，切换后自动重启 Chat CLI', modelSelectAria: '切换模型', modelLoading: '模型加载中…', permissionModeTitle: '切换 Claude CLI 权限模式，切换后自动重启 Chat CLI', permissionModeAria: '切换权限模式', sendMessage: '发送消息', stopResponse: '停止当前响应', noModelConfigured: '未配置模型', selectModel: '请选择模型', permissionAcceptEdits: '当前：acceptEdits（自动接受编辑类工具）', permissionBypass: '当前：bypassPermissions（跳过权限检查，完全信任当前工作区）', emptyState: 'LLS CLAUDE CHAT - 开始对话', longTextOutput: '长文本输出', longCodeBlock: '长代码块', longDiffOutput: '长 diff 输出', copy: '复制', copyCode: '复制代码', usageModel: '模型 ', usageInput: '输入 ', usageOutput: '输出 ', usageCacheWrite: '缓存写 ', usageCacheRead: '缓存读 ', assistantNeedsConfirmation: '助手需要您的确认', askManyQuestions: '共 {count} 个问题，必须回复后才能继续', askOneQuestion: '请选择一个选项，或在下方填写自定义回复（必须回复）', noQuestionText: '(无问题文本)', multiSelect: '可多选', customReplyLabel: '其他回复（可选）：写下你的想法或不选某项的理由', customReplyPlaceholder: '例如：我想换一种实现方式…', sendReply: '发送回复', askUserReplyIntro: '我对你的问题做了如下回复：', askUserPicked: '   选择：{items}', askUserNoPick: '   选择：（未选择任何选项）', askUserExtra: '补充说明：', vscodeDiagnostics: 'VS Code 诊断', toolRunning: '执行中', toolSuccess: '成功', toolFailed: '失败', toolPermissionDenied: '需要授权', toolPending: '等待', collapsibleSummary: '{label}（{count} 字符，点击展开）', truncatedChars: '… 已截断 {count} 字符', resendTitle: '重发：删除此消息及其后续上下文并重新发送', resendAria: '重发此消息', loading: '加载中', cliNotSelected: 'CLI 未选择', cliStatus: 'CLI 状态：{status}{detail}', unknownError: '未知错误', copiedBodySource: '已复制 body 源码', copyBodySourceFailed: '复制 body 源码失败', removeAttachment: '移除 {name}', genericFile: '文件', closeExpert: '关闭专家', expertModelSelectTitle: '选择项目专家模型', expertModelSelectAria: '选择项目专家模型', ccTaskFlow: 'CC任务流', expertPanelTitle: '专家运行', expertPanelStatusRunning: '运行中…', expertPanelStatusDone: '已完成', expertPanelStatusError: '失败', expertPanelStatusCancelled: '已取消', expertPanelToggleAria: '展开/折叠专家面板', expertEventStart: '开始', expertEventAnalysis: '分析', expertEventToolCall: '工具调用', expertEventToolResult: '工具结果', expertEventFinal: '最终答案', expertEventError: '错误', expertEventCancelled: '已取消'
         }
     };
     chatTranslations['zh-tw'] = {
-        statusInitializing: '正在初始化…', copySource: '複製原始碼', copySourceTitle: '複製目前 Webview body 原始碼', restart: '重新啟動', restartTitle: '重新啟動 CLI', clear: '清除', clearTitle: '清除聊天內容', dropFilesHere: '將檔案拖放到這裡作為上下文', contextPanelAria: '已新增的上下文檔案', defaultCurrentFile: '預設顯示目前檔案', clearContext: '清除上下文', contextMenu: '上下文選單', composerPlaceholder: '提問、編輯或代理…', attachFile: '選擇上下文檔案', modelSelectTitle: '切換模型，切換後會自動重新啟動 Chat CLI', modelSelectAria: '切換模型', modelLoading: '模型載入中…', permissionModeTitle: '切換 Claude CLI 權限模式，切換後會自動重新啟動 Chat CLI', permissionModeAria: '切換權限模式', sendMessage: '傳送訊息', stopResponse: '停止目前回應', noModelConfigured: '尚未設定模型', selectModel: '請選擇模型', permissionAcceptEdits: '目前：acceptEdits（自動接受編輯類工具）', permissionBypass: '目前：bypassPermissions（略過權限檢查，完全信任目前工作區）', emptyState: 'LLS CLAUDE CHAT - 開始對話', longTextOutput: '長文字輸出', longCodeBlock: '長程式碼區塊', longDiffOutput: '長 diff 輸出', copy: '複製', copyCode: '複製程式碼', usageModel: '模型 ', usageInput: '輸入 ', usageOutput: '輸出 ', usageCacheWrite: '快取寫入 ', usageCacheRead: '快取讀取 ', assistantNeedsConfirmation: '助手需要您的確認', askManyQuestions: '共有 {count} 個問題，必須回覆後才能繼續', askOneQuestion: '請選擇一個選項，或在下方填寫自訂回覆（必須回覆）', noQuestionText: '(沒有問題文字)', multiSelect: '可複選', customReplyLabel: '其他回覆（選填）：寫下你的想法或未選某項的理由', customReplyPlaceholder: '例如：我想換一種實作方式…', sendReply: '傳送回覆', askUserReplyIntro: '我對你的問題做了如下回覆：', askUserPicked: '   選擇：{items}', askUserNoPick: '   選擇：（未選擇任何選項）', askUserExtra: '補充說明：', vscodeDiagnostics: 'VS Code 診斷', toolRunning: '執行中', toolSuccess: '成功', toolFailed: '失敗', toolPermissionDenied: '需要授權', toolPending: '等待', collapsibleSummary: '{label}（{count} 個字元，點擊展開）', truncatedChars: '… 已截斷 {count} 個字元', resendTitle: '重送：刪除此訊息及後續上下文並重新傳送', resendAria: '重送此訊息', loading: '載入中', cliNotSelected: '尚未選擇 CLI', cliStatus: 'CLI 狀態：{status}{detail}', unknownError: '未知錯誤', copiedBodySource: '已複製 body 原始碼', copyBodySourceFailed: '複製 body 原始碼失敗', removeAttachment: '移除 {name}', genericFile: '檔案'
+        statusInitializing: '正在初始化…', copySource: '複製原始碼', copySourceTitle: '複製目前 Webview body 原始碼', restart: '重新啟動', restartTitle: '重新啟動 CLI', clear: '清除', clearTitle: '清除聊天內容', dropFilesHere: '將檔案拖放到這裡作為上下文', contextPanelAria: '已新增的上下文檔案', defaultCurrentFile: '預設顯示目前檔案', clearContext: '清除上下文', contextMenu: '上下文選單', composerPlaceholder: '提問、編輯或代理…', attachFile: '選擇上下文檔案', modelSelectTitle: '切換模型，切換後會自動重新啟動 Chat CLI', modelSelectAria: '切換模型', modelLoading: '模型載入中…', permissionModeTitle: '切換 Claude CLI 權限模式，切換後會自動重新啟動 Chat CLI', permissionModeAria: '切換權限模式', sendMessage: '傳送訊息', stopResponse: '停止目前回應', noModelConfigured: '尚未設定模型', selectModel: '請選擇模型', permissionAcceptEdits: '目前：acceptEdits（自動接受編輯類工具）', permissionBypass: '目前：bypassPermissions（略過權限檢查，完全信任目前工作區）', emptyState: 'LLS CLAUDE CHAT - 開始對話', longTextOutput: '長文字輸出', longCodeBlock: '長程式碼區塊', longDiffOutput: '長 diff 輸出', copy: '複製', copyCode: '複製程式碼', usageModel: '模型 ', usageInput: '輸入 ', usageOutput: '輸出 ', usageCacheWrite: '快取寫入 ', usageCacheRead: '快取讀取 ', assistantNeedsConfirmation: '助手需要您的確認', askManyQuestions: '共有 {count} 個問題，必須回覆後才能繼續', askOneQuestion: '請選擇一個選項，或在下方填寫自訂回覆（必須回覆）', noQuestionText: '(沒有問題文字)', multiSelect: '可複選', customReplyLabel: '其他回覆（選填）：寫下你的想法或未選某項的理由', customReplyPlaceholder: '例如：我想換一種實作方式…', sendReply: '傳送回覆', askUserReplyIntro: '我對你的問題做了如下回覆：', askUserPicked: '   選擇：{items}', askUserNoPick: '   選擇：（未選擇任何選項）', askUserExtra: '補充說明：', vscodeDiagnostics: 'VS Code 診斷', toolRunning: '執行中', toolSuccess: '成功', toolFailed: '失敗', toolPermissionDenied: '需要授權', toolPending: '等待', collapsibleSummary: '{label}（{count} 個字元，點擊展開）', truncatedChars: '… 已截斷 {count} 個字元', resendTitle: '重送：刪除此訊息及後續上下文並重新傳送', resendAria: '重送此訊息', loading: '載入中', cliNotSelected: '尚未選擇 CLI', cliStatus: 'CLI 狀態：{status}{detail}', unknownError: '未知錯誤', copiedBodySource: '已複製 body 原始碼', copyBodySourceFailed: '複製 body 原始碼失敗', removeAttachment: '移除 {name}', genericFile: '檔案', expertPanelTitle: '專家執行', expertPanelStatusRunning: '執行中…', expertPanelStatusDone: '已完成', expertPanelStatusError: '失敗', expertPanelStatusCancelled: '已取消', expertPanelToggleAria: '展開/收合專家面板', expertEventStart: '開始', expertEventAnalysis: '分析', expertEventToolCall: '工具呼叫', expertEventToolResult: '工具結果', expertEventFinal: '最終回答', expertEventError: '錯誤', expertEventCancelled: '已取消'
     };
     chatTranslations.ko = {
-        statusInitializing: '초기화 중…', copySource: '소스 복사', copySourceTitle: '현재 Webview body 소스 복사', restart: '재시작', restartTitle: 'CLI 재시작', clear: '비우기', clearTitle: '채팅 내용 비우기', dropFilesHere: '파일을 여기에 끌어 놓아 컨텍스트로 추가', contextPanelAria: '추가된 컨텍스트 파일', defaultCurrentFile: '기본적으로 현재 파일 표시', clearContext: '컨텍스트 지우기', contextMenu: '컨텍스트 메뉴', composerPlaceholder: '질문, 편집 또는 에이전트…', attachFile: '컨텍스트 파일 선택', modelSelectTitle: '모델 전환, 전환 후 Chat CLI 자동 재시작', modelSelectAria: '모델 전환', modelLoading: '모델 로드 중…', permissionModeTitle: 'Claude CLI 권한 모드 전환, 전환 후 Chat CLI 자동 재시작', permissionModeAria: '권한 모드 전환', sendMessage: '메시지 보내기', stopResponse: '현재 응답 중지', noModelConfigured: '설정된 모델 없음', selectModel: '모델 선택', permissionAcceptEdits: '현재: acceptEdits(편집 도구 자동 승인)', permissionBypass: '현재: bypassPermissions(권한 확인 건너뛰기, 현재 작업 영역 완전 신뢰)', emptyState: 'LLS CLAUDE CHAT - 대화 시작', longTextOutput: '긴 텍스트 출력', longCodeBlock: '긴 코드 블록', longDiffOutput: '긴 diff 출력', copy: '복사', copyCode: '코드 복사', usageModel: '모델 ', usageInput: '입력 ', usageOutput: '출력 ', usageCacheWrite: '캐시 쓰기 ', usageCacheRead: '캐시 읽기 ', assistantNeedsConfirmation: '어시스턴트가 확인을 요청합니다', askManyQuestions: '질문이 {count}개 있습니다. 계속하려면 답변해야 합니다.', askOneQuestion: '옵션을 선택하거나 아래에 사용자 지정 답변을 입력하세요(필수).', noQuestionText: '(질문 텍스트 없음)', multiSelect: '다중 선택 가능', customReplyLabel: '기타 답변(선택): 생각이나 선택하지 않은 이유를 적어 주세요', customReplyPlaceholder: '예: 다른 구현 방식으로 바꾸고 싶습니다…', sendReply: '답변 보내기', askUserReplyIntro: '질문에 대해 다음과 같이 답변했습니다:', askUserPicked: '   선택: {items}', askUserNoPick: '   선택: (선택한 옵션 없음)', askUserExtra: '추가 설명:', vscodeDiagnostics: 'VS Code 진단', toolRunning: '실행 중', toolSuccess: '성공', toolFailed: '실패', toolPermissionDenied: '권한 필요', toolPending: '대기 중', collapsibleSummary: '{label}({count}자, 클릭하여 펼치기)', truncatedChars: '… {count}자 잘림', resendTitle: '다시 보내기: 이 메시지와 이후 컨텍스트를 삭제하고 다시 전송', resendAria: '이 메시지 다시 보내기', loading: '로드 중', cliNotSelected: 'CLI가 선택되지 않음', cliStatus: 'CLI 상태: {status}{detail}', unknownError: '알 수 없는 오류', copiedBodySource: 'body 소스를 복사했습니다', copyBodySourceFailed: 'body 소스 복사 실패', removeAttachment: '{name} 제거', genericFile: '파일'
+        statusInitializing: '초기화 중…', copySource: '소스 복사', copySourceTitle: '현재 Webview body 소스 복사', restart: '재시작', restartTitle: 'CLI 재시작', clear: '비우기', clearTitle: '채팅 내용 비우기', dropFilesHere: '파일을 여기에 끌어 놓아 컨텍스트로 추가', contextPanelAria: '추가된 컨텍스트 파일', defaultCurrentFile: '기본적으로 현재 파일 표시', clearContext: '컨텍스트 지우기', contextMenu: '컨텍스트 메뉴', composerPlaceholder: '질문, 편집 또는 에이전트…', attachFile: '컨텍스트 파일 선택', modelSelectTitle: '모델 전환, 전환 후 Chat CLI 자동 재시작', modelSelectAria: '모델 전환', modelLoading: '모델 로드 중…', permissionModeTitle: 'Claude CLI 권한 모드 전환, 전환 후 Chat CLI 자동 재시작', permissionModeAria: '권한 모드 전환', sendMessage: '메시지 보내기', stopResponse: '현재 응답 중지', noModelConfigured: '설정된 모델 없음', selectModel: '모델 선택', permissionAcceptEdits: '현재: acceptEdits(편집 도구 자동 승인)', permissionBypass: '현재: bypassPermissions(권한 확인 건너뛰기, 현재 작업 영역 완전 신뢰)', emptyState: 'LLS CLAUDE CHAT - 대화 시작', longTextOutput: '긴 텍스트 출력', longCodeBlock: '긴 코드 블록', longDiffOutput: '긴 diff 출력', copy: '복사', copyCode: '코드 복사', usageModel: '모델 ', usageInput: '입력 ', usageOutput: '출력 ', usageCacheWrite: '캐시 쓰기 ', usageCacheRead: '캐시 읽기 ', assistantNeedsConfirmation: '어시스턴트가 확인을 요청합니다', askManyQuestions: '질문이 {count}개 있습니다. 계속하려면 답변해야 합니다.', askOneQuestion: '옵션을 선택하거나 아래에 사용자 지정 답변을 입력하세요(필수).', noQuestionText: '(질문 텍스트 없음)', multiSelect: '다중 선택 가능', customReplyLabel: '기타 답변(선택): 생각이나 선택하지 않은 이유를 적어 주세요', customReplyPlaceholder: '예: 다른 구현 방식으로 바꾸고 싶습니다…', sendReply: '답변 보내기', askUserReplyIntro: '질문에 대해 다음과 같이 답변했습니다:', askUserPicked: '   선택: {items}', askUserNoPick: '   선택: (선택한 옵션 없음)', askUserExtra: '추가 설명:', vscodeDiagnostics: 'VS Code 진단', toolRunning: '실행 중', toolSuccess: '성공', toolFailed: '실패', toolPermissionDenied: '권한 필요', toolPending: '대기 중', collapsibleSummary: '{label}({count}자, 클릭하여 펼치기)', truncatedChars: '… {count}자 잘림', resendTitle: '다시 보내기: 이 메시지와 이후 컨텍스트를 삭제하고 다시 전송', resendAria: '이 메시지 다시 보내기', loading: '로드 중', cliNotSelected: 'CLI가 선택되지 않음', cliStatus: 'CLI 상태: {status}{detail}', unknownError: '알 수 없는 오류', copiedBodySource: 'body 소스를 복사했습니다', copyBodySourceFailed: 'body 소스 복사 실패', removeAttachment: '{name} 제거', genericFile: '파일', expertPanelTitle: '전문가 실행', expertPanelStatusRunning: '실행 중…', expertPanelStatusDone: '완료됨', expertPanelStatusError: '실패', expertPanelStatusCancelled: '취소됨', expertPanelToggleAria: '전문가 패널 토글', expertEventStart: '시작', expertEventAnalysis: '분석', expertEventToolCall: '도구 호출', expertEventToolResult: '도구 결과', expertEventFinal: '최종 답변', expertEventError: '오류', expertEventCancelled: '취소됨'
     };
     chatTranslations.ja = {
-        statusInitializing: '初期化中…', copySource: 'ソースをコピー', copySourceTitle: '現在の Webview body ソースをコピー', restart: '再起動', restartTitle: 'CLI を再起動', clear: 'クリア', clearTitle: 'チャット内容をクリア', dropFilesHere: 'ファイルをここにドロップしてコンテキストに追加', contextPanelAria: '追加済みのコンテキストファイル', defaultCurrentFile: '既定で現在のファイルを表示', clearContext: 'コンテキストをクリア', contextMenu: 'コンテキストメニュー', composerPlaceholder: '質問、編集、またはエージェント…', attachFile: 'コンテキストファイルを選択', modelSelectTitle: 'モデルを切り替え、切り替え後に Chat CLI を自動再起動', modelSelectAria: 'モデルを切り替え', modelLoading: 'モデルを読み込み中…', permissionModeTitle: 'Claude CLI 権限モードを切り替え、切り替え後に Chat CLI を自動再起動', permissionModeAria: '権限モードを切り替え', sendMessage: 'メッセージを送信', stopResponse: '現在の応答を停止', noModelConfigured: 'モデルが設定されていません', selectModel: 'モデルを選択してください', permissionAcceptEdits: '現在: acceptEdits（編集系ツールを自動承認）', permissionBypass: '現在: bypassPermissions（権限チェックをスキップし、現在のワークスペースを完全に信頼）', emptyState: 'LLS CLAUDE CHAT - 会話を開始', longTextOutput: '長いテキスト出力', longCodeBlock: '長いコードブロック', longDiffOutput: '長い diff 出力', copy: 'コピー', copyCode: 'コードをコピー', usageModel: 'モデル ', usageInput: '入力 ', usageOutput: '出力 ', usageCacheWrite: 'キャッシュ書き込み ', usageCacheRead: 'キャッシュ読み取り ', assistantNeedsConfirmation: 'アシスタントが確認を求めています', askManyQuestions: '{count} 件の質問があります。続行するには回答が必要です。', askOneQuestion: '選択肢を選ぶか、下にカスタム返信を入力してください（必須）。', noQuestionText: '(質問テキストなし)', multiSelect: '複数選択可', customReplyLabel: 'その他の返信（任意）：考えや選択しない理由を書いてください', customReplyPlaceholder: '例：別の実装方法に変更したいです…', sendReply: '返信を送信', askUserReplyIntro: '質問に対して次のように回答しました:', askUserPicked: '   選択: {items}', askUserNoPick: '   選択:（選択された項目はありません）', askUserExtra: '補足説明:', vscodeDiagnostics: 'VS Code 診断', toolRunning: '実行中', toolSuccess: '成功', toolFailed: '失敗', toolPermissionDenied: '権限が必要', toolPending: '待機中', collapsibleSummary: '{label}（{count} 文字、クリックして展開）', truncatedChars: '… {count} 文字を切り詰めました', resendTitle: '再送信: このメッセージと後続のコンテキストを削除して再送信', resendAria: 'このメッセージを再送信', loading: '読み込み中', cliNotSelected: 'CLI が未選択', cliStatus: 'CLI 状態: {status}{detail}', unknownError: '不明なエラー', copiedBodySource: 'body ソースをコピーしました', copyBodySourceFailed: 'body ソースのコピーに失敗しました', removeAttachment: '{name} を削除', genericFile: 'ファイル'
+        statusInitializing: '初期化中…', copySource: 'ソースをコピー', copySourceTitle: '現在の Webview body ソースをコピー', restart: '再起動', restartTitle: 'CLI を再起動', clear: 'クリア', clearTitle: 'チャット内容をクリア', dropFilesHere: 'ファイルをここにドロップしてコンテキストに追加', contextPanelAria: '追加済みのコンテキストファイル', defaultCurrentFile: '既定で現在のファイルを表示', clearContext: 'コンテキストをクリア', contextMenu: 'コンテキストメニュー', composerPlaceholder: '質問、編集、またはエージェント…', attachFile: 'コンテキストファイルを選択', modelSelectTitle: 'モデルを切り替え、切り替え後に Chat CLI を自動再起動', modelSelectAria: 'モデルを切り替え', modelLoading: 'モデルを読み込み中…', permissionModeTitle: 'Claude CLI 権限モードを切り替え、切り替え後に Chat CLI を自動再起動', permissionModeAria: '権限モードを切り替え', sendMessage: 'メッセージを送信', stopResponse: '現在の応答を停止', noModelConfigured: 'モデルが設定されていません', selectModel: 'モデルを選択してください', permissionAcceptEdits: '現在: acceptEdits（編集系ツールを自動承認）', permissionBypass: '現在: bypassPermissions（権限チェックをスキップし、現在のワークスペースを完全に信頼）', emptyState: 'LLS CLAUDE CHAT - 会話を開始', longTextOutput: '長いテキスト出力', longCodeBlock: '長いコードブロック', longDiffOutput: '長い diff 出力', copy: 'コピー', copyCode: 'コードをコピー', usageModel: 'モデル ', usageInput: '入力 ', usageOutput: '出力 ', usageCacheWrite: 'キャッシュ書き込み ', usageCacheRead: 'キャッシュ読み取り ', assistantNeedsConfirmation: 'アシスタントが確認を求めています', askManyQuestions: '{count} 件の質問があります。続行するには回答が必要です。', askOneQuestion: '選択肢を選ぶか、下にカスタム返信を入力してください（必須）。', noQuestionText: '(質問テキストなし)', multiSelect: '複数選択可', customReplyLabel: 'その他の返信（任意）：考えや選択しない理由を書いてください', customReplyPlaceholder: '例：別の実装方法に変更したいです…', sendReply: '返信を送信', askUserReplyIntro: '質問に対して次のように回答しました:', askUserPicked: '   選択: {items}', askUserNoPick: '   選択:（選択された項目はありません）', askUserExtra: '補足説明:', vscodeDiagnostics: 'VS Code 診断', toolRunning: '実行中', toolSuccess: '成功', toolFailed: '失敗', toolPermissionDenied: '権限が必要', toolPending: '待機中', collapsibleSummary: '{label}（{count} 文字、クリックして展開）', truncatedChars: '… {count} 文字を切り詰めました', resendTitle: '再送信: このメッセージと後続のコンテキストを削除して再送信', resendAria: 'このメッセージを再送信', loading: '読み込み中', cliNotSelected: 'CLI が未選択', cliStatus: 'CLI 状態: {status}{detail}', unknownError: '不明なエラー', copiedBodySource: 'body ソースをコピーしました', copyBodySourceFailed: 'body ソースのコピーに失敗しました', removeAttachment: '{name} を削除', genericFile: 'ファイル', expertPanelTitle: 'エキスパート実行', expertPanelStatusRunning: '実行中…', expertPanelStatusDone: '完了', expertPanelStatusError: '失敗', expertPanelStatusCancelled: 'キャンセル', expertPanelToggleAria: 'エキスパートパネル切り替え', expertEventStart: '開始', expertEventAnalysis: '分析', expertEventToolCall: 'ツール呼び出し', expertEventToolResult: 'ツール結果', expertEventFinal: '最終回答', expertEventError: 'エラー', expertEventCancelled: 'キャンセル'
     };
     chatTranslations.fr = {
-        statusInitializing: 'Initialisation…', copySource: 'Copier la source', copySourceTitle: 'Copier la source du body Webview actuel', restart: 'Redémarrer', restartTitle: 'Redémarrer le CLI', clear: 'Effacer', clearTitle: 'Effacer le contenu du chat', dropFilesHere: 'Déposez les fichiers ici comme contexte', contextPanelAria: 'Fichiers de contexte ajoutés', defaultCurrentFile: 'Afficher le fichier actuel par défaut', clearContext: 'Effacer le contexte', contextMenu: 'Menu de contexte', composerPlaceholder: 'Demander, modifier ou agent…', attachFile: 'Sélectionner des fichiers de contexte', modelSelectTitle: 'Changer de modèle et redémarrer automatiquement Chat CLI', modelSelectAria: 'Changer de modèle', modelLoading: 'Chargement des modèles…', permissionModeTitle: 'Changer le mode d’autorisation Claude CLI et redémarrer automatiquement Chat CLI', permissionModeAria: 'Changer le mode d’autorisation', sendMessage: 'Envoyer le message', stopResponse: 'Arrêter la réponse actuelle', noModelConfigured: 'Aucun modèle configuré', selectModel: 'Sélectionner un modèle', permissionAcceptEdits: 'Actuel : acceptEdits (accepter automatiquement les outils d’édition)', permissionBypass: 'Actuel : bypassPermissions (ignorer les contrôles d’autorisation, faire pleinement confiance à l’espace de travail actuel)', emptyState: 'LLS CLAUDE CHAT - Commencer une conversation', longTextOutput: 'Sortie texte longue', longCodeBlock: 'Bloc de code long', longDiffOutput: 'Sortie diff longue', copy: 'Copier', copyCode: 'Copier le code', usageModel: 'Modèle ', usageInput: 'Entrée ', usageOutput: 'Sortie ', usageCacheWrite: 'Écriture cache ', usageCacheRead: 'Lecture cache ', assistantNeedsConfirmation: 'L’assistant a besoin de votre confirmation', askManyQuestions: 'Il y a {count} questions. Vous devez répondre avant de continuer.', askOneQuestion: 'Choisissez une option ou saisissez une réponse personnalisée ci-dessous (obligatoire).', noQuestionText: '(Aucun texte de question)', multiSelect: 'Sélection multiple', customReplyLabel: 'Autre réponse (facultatif) : indiquez vos pensées ou pourquoi vous n’avez pas choisi une option', customReplyPlaceholder: 'Par exemple : je veux utiliser une autre implémentation…', sendReply: 'Envoyer la réponse', askUserReplyIntro: 'J’ai répondu à votre question comme suit :', askUserPicked: '   Sélection : {items}', askUserNoPick: '   Sélection : (aucune option sélectionnée)', askUserExtra: 'Note complémentaire :', vscodeDiagnostics: 'Diagnostics VS Code', toolRunning: 'En cours', toolSuccess: 'Succès', toolFailed: 'Échec', toolPermissionDenied: 'Autorisation requise', toolPending: 'En attente', collapsibleSummary: '{label} ({count} caractères, cliquez pour développer)', truncatedChars: '… {count} caractères tronqués', resendTitle: 'Renvoyer : supprimer ce message et le contexte suivant, puis renvoyer', resendAria: 'Renvoyer ce message', loading: 'Chargement', cliNotSelected: 'CLI non sélectionné', cliStatus: 'État CLI : {status}{detail}', unknownError: 'Erreur inconnue', copiedBodySource: 'Source body copiée', copyBodySourceFailed: 'Échec de la copie de la source body', removeAttachment: 'Supprimer {name}', genericFile: 'Fichier'
+        statusInitializing: 'Initialisation…', copySource: 'Copier la source', copySourceTitle: 'Copier la source du body Webview actuel', restart: 'Redémarrer', restartTitle: 'Redémarrer le CLI', clear: 'Effacer', clearTitle: 'Effacer le contenu du chat', dropFilesHere: 'Déposez les fichiers ici comme contexte', contextPanelAria: 'Fichiers de contexte ajoutés', defaultCurrentFile: 'Afficher le fichier actuel par défaut', clearContext: 'Effacer le contexte', contextMenu: 'Menu de contexte', composerPlaceholder: 'Demander, modifier ou agent…', attachFile: 'Sélectionner des fichiers de contexte', modelSelectTitle: 'Changer de modèle et redémarrer automatiquement Chat CLI', modelSelectAria: 'Changer de modèle', modelLoading: 'Chargement des modèles…', permissionModeTitle: 'Changer le mode d’autorisation Claude CLI et redémarrer automatiquement Chat CLI', permissionModeAria: 'Changer le mode d’autorisation', sendMessage: 'Envoyer le message', stopResponse: 'Arrêter la réponse actuelle', noModelConfigured: 'Aucun modèle configuré', selectModel: 'Sélectionner un modèle', permissionAcceptEdits: 'Actuel : acceptEdits (accepter automatiquement les outils d’édition)', permissionBypass: 'Actuel : bypassPermissions (ignorer les contrôles d’autorisation, faire pleinement confiance à l’espace de travail actuel)', emptyState: 'LLS CLAUDE CHAT - Commencer une conversation', longTextOutput: 'Sortie texte longue', longCodeBlock: 'Bloc de code long', longDiffOutput: 'Sortie diff longue', copy: 'Copier', copyCode: 'Copier le code', usageModel: 'Modèle ', usageInput: 'Entrée ', usageOutput: 'Sortie ', usageCacheWrite: 'Écriture cache ', usageCacheRead: 'Lecture cache ', assistantNeedsConfirmation: 'L’assistant a besoin de votre confirmation', askManyQuestions: 'Il y a {count} questions. Vous devez répondre avant de continuer.', askOneQuestion: 'Choisissez une option ou saisissez une réponse personnalisée ci-dessous (obligatoire).', noQuestionText: '(Aucun texte de question)', multiSelect: 'Sélection multiple', customReplyLabel: 'Autre réponse (facultatif) : indiquez vos pensées ou pourquoi vous n’avez pas choisi une option', customReplyPlaceholder: 'Par exemple : je veux utiliser une autre implémentation…', sendReply: 'Envoyer la réponse', askUserReplyIntro: 'J’ai répondu à votre question comme suit :', askUserPicked: '   Sélection : {items}', askUserNoPick: '   Sélection : (aucune option sélectionnée)', askUserExtra: 'Note complémentaire :', vscodeDiagnostics: 'Diagnostics VS Code', toolRunning: 'En cours', toolSuccess: 'Succès', toolFailed: 'Échec', toolPermissionDenied: 'Autorisation requise', toolPending: 'En attente', collapsibleSummary: '{label} ({count} caractères, cliquez pour développer)', truncatedChars: '… {count} caractères tronqués', resendTitle: 'Renvoyer : supprimer ce message et le contexte suivant, puis renvoyer', resendAria: 'Renvoyer ce message', loading: 'Chargement', cliNotSelected: 'CLI non sélectionné', cliStatus: 'État CLI : {status}{detail}', unknownError: 'Erreur inconnue', copiedBodySource: 'Source body copiée', copyBodySourceFailed: 'Échec de la copie de la source body', removeAttachment: 'Supprimer {name}', genericFile: 'Fichier', expertPanelTitle: 'Exécution experte', expertPanelStatusRunning: 'en cours…', expertPanelStatusDone: 'terminé', expertPanelStatusError: 'échec', expertPanelStatusCancelled: 'annulé', expertPanelToggleAria: 'Basculer le panneau expert', expertEventStart: 'Début', expertEventAnalysis: 'Analyse', expertEventToolCall: 'Appel d’outil', expertEventToolResult: 'Résultat d’outil', expertEventFinal: 'Réponse finale', expertEventError: 'Erreur', expertEventCancelled: 'Annulé'
     };
     chatTranslations.de = {
-        statusInitializing: 'Initialisierung…', copySource: 'Quelle kopieren', copySourceTitle: 'Quelle des aktuellen Webview-Body kopieren', restart: 'Neu starten', restartTitle: 'CLI neu starten', clear: 'Leeren', clearTitle: 'Chatinhalt leeren', dropFilesHere: 'Dateien hierher ziehen, um sie als Kontext zu verwenden', contextPanelAria: 'Hinzugefügte Kontextdateien', defaultCurrentFile: 'Aktuelle Datei standardmäßig anzeigen', clearContext: 'Kontext leeren', contextMenu: 'Kontextmenü', composerPlaceholder: 'Fragen, bearbeiten oder Agent…', attachFile: 'Kontextdateien auswählen', modelSelectTitle: 'Modell wechseln und Chat CLI danach automatisch neu starten', modelSelectAria: 'Modell wechseln', modelLoading: 'Modelle werden geladen…', permissionModeTitle: 'Claude-CLI-Berechtigungsmodus wechseln und Chat CLI danach automatisch neu starten', permissionModeAria: 'Berechtigungsmodus wechseln', sendMessage: 'Nachricht senden', stopResponse: 'Aktuelle Antwort stoppen', noModelConfigured: 'Kein Modell konfiguriert', selectModel: 'Modell auswählen', permissionAcceptEdits: 'Aktuell: acceptEdits (Bearbeitungswerkzeuge automatisch akzeptieren)', permissionBypass: 'Aktuell: bypassPermissions (Berechtigungsprüfungen überspringen, aktuellen Arbeitsbereich vollständig vertrauen)', emptyState: 'LLS CLAUDE CHAT - Unterhaltung starten', longTextOutput: 'Lange Textausgabe', longCodeBlock: 'Langer Codeblock', longDiffOutput: 'Lange diff-Ausgabe', copy: 'Kopieren', copyCode: 'Code kopieren', usageModel: 'Modell ', usageInput: 'Eingabe ', usageOutput: 'Ausgabe ', usageCacheWrite: 'Cache schreiben ', usageCacheRead: 'Cache lesen ', assistantNeedsConfirmation: 'Der Assistent benötigt Ihre Bestätigung', askManyQuestions: 'Es gibt {count} Fragen. Sie müssen antworten, bevor es weitergeht.', askOneQuestion: 'Wählen Sie eine Option oder geben Sie unten eine eigene Antwort ein (erforderlich).', noQuestionText: '(Kein Fragetext)', multiSelect: 'Mehrfachauswahl', customReplyLabel: 'Andere Antwort (optional): Schreiben Sie Ihre Gedanken oder warum Sie eine Option nicht gewählt haben', customReplyPlaceholder: 'Zum Beispiel: Ich möchte eine andere Implementierung verwenden…', sendReply: 'Antwort senden', askUserReplyIntro: 'Ich habe auf Ihre Frage wie folgt geantwortet:', askUserPicked: '   Auswahl: {items}', askUserNoPick: '   Auswahl: (keine Option ausgewählt)', askUserExtra: 'Zusätzlicher Hinweis:', vscodeDiagnostics: 'VS Code-Diagnose', toolRunning: 'Wird ausgeführt', toolSuccess: 'Erfolgreich', toolFailed: 'Fehlgeschlagen', toolPermissionDenied: 'Berechtigung erforderlich', toolPending: 'Warten', collapsibleSummary: '{label} ({count} Zeichen, zum Erweitern klicken)', truncatedChars: '… {count} Zeichen abgeschnitten', resendTitle: 'Erneut senden: diese Nachricht und folgenden Kontext löschen und erneut senden', resendAria: 'Diese Nachricht erneut senden', loading: 'Wird geladen', cliNotSelected: 'CLI nicht ausgewählt', cliStatus: 'CLI-Status: {status}{detail}', unknownError: 'Unbekannter Fehler', copiedBodySource: 'Body-Quelle kopiert', copyBodySourceFailed: 'Kopieren der Body-Quelle fehlgeschlagen', removeAttachment: '{name} entfernen', genericFile: 'Datei'
+        statusInitializing: 'Initialisierung…', copySource: 'Quelle kopieren', copySourceTitle: 'Quelle des aktuellen Webview-Body kopieren', restart: 'Neu starten', restartTitle: 'CLI neu starten', clear: 'Leeren', clearTitle: 'Chatinhalt leeren', dropFilesHere: 'Dateien hierher ziehen, um sie als Kontext zu verwenden', contextPanelAria: 'Hinzugefügte Kontextdateien', defaultCurrentFile: 'Aktuelle Datei standardmäßig anzeigen', clearContext: 'Kontext leeren', contextMenu: 'Kontextmenü', composerPlaceholder: 'Fragen, bearbeiten oder Agent…', attachFile: 'Kontextdateien auswählen', modelSelectTitle: 'Modell wechseln und Chat CLI danach automatisch neu starten', modelSelectAria: 'Modell wechseln', modelLoading: 'Modelle werden geladen…', permissionModeTitle: 'Claude-CLI-Berechtigungsmodus wechseln und Chat CLI danach automatisch neu starten', permissionModeAria: 'Berechtigungsmodus wechseln', sendMessage: 'Nachricht senden', stopResponse: 'Aktuelle Antwort stoppen', noModelConfigured: 'Kein Modell konfiguriert', selectModel: 'Modell auswählen', permissionAcceptEdits: 'Aktuell: acceptEdits (Bearbeitungswerkzeuge automatisch akzeptieren)', permissionBypass: 'Aktuell: bypassPermissions (Berechtigungsprüfungen überspringen, aktuellen Arbeitsbereich vollständig vertrauen)', emptyState: 'LLS CLAUDE CHAT - Unterhaltung starten', longTextOutput: 'Lange Textausgabe', longCodeBlock: 'Langer Codeblock', longDiffOutput: 'Lange diff-Ausgabe', copy: 'Kopieren', copyCode: 'Code kopieren', usageModel: 'Modell ', usageInput: 'Eingabe ', usageOutput: 'Ausgabe ', usageCacheWrite: 'Cache schreiben ', usageCacheRead: 'Cache lesen ', assistantNeedsConfirmation: 'Der Assistent benötigt Ihre Bestätigung', askManyQuestions: 'Es gibt {count} Fragen. Sie müssen antworten, bevor es weitergeht.', askOneQuestion: 'Wählen Sie eine Option oder geben Sie unten eine eigene Antwort ein (erforderlich).', noQuestionText: '(Kein Fragetext)', multiSelect: 'Mehrfachauswahl', customReplyLabel: 'Andere Antwort (optional): Schreiben Sie Ihre Gedanken oder warum Sie eine Option nicht gewählt haben', customReplyPlaceholder: 'Zum Beispiel: Ich möchte eine andere Implementierung verwenden…', sendReply: 'Antwort senden', askUserReplyIntro: 'Ich habe auf Ihre Frage wie folgt geantwortet:', askUserPicked: '   Auswahl: {items}', askUserNoPick: '   Auswahl: (keine Option ausgewählt)', askUserExtra: 'Zusätzlicher Hinweis:', vscodeDiagnostics: 'VS Code-Diagnose', toolRunning: 'Wird ausgeführt', toolSuccess: 'Erfolgreich', toolFailed: 'Fehlgeschlagen', toolPermissionDenied: 'Berechtigung erforderlich', toolPending: 'Warten', collapsibleSummary: '{label} ({count} Zeichen, zum Erweitern klicken)', truncatedChars: '… {count} Zeichen abgeschnitten', resendTitle: 'Erneut senden: diese Nachricht und folgenden Kontext löschen und erneut senden', resendAria: 'Diese Nachricht erneut senden', loading: 'Wird geladen', cliNotSelected: 'CLI nicht ausgewählt', cliStatus: 'CLI-Status: {status}{detail}', unknownError: 'Unbekannter Fehler', copiedBodySource: 'Body-Quelle kopiert', copyBodySourceFailed: 'Kopieren der Body-Quelle fehlgeschlagen', removeAttachment: '{name} entfernen', genericFile: 'Datei', expertPanelTitle: 'Experten-Lauf', expertPanelStatusRunning: 'läuft…', expertPanelStatusDone: 'abgeschlossen', expertPanelStatusError: 'fehlgeschlagen', expertPanelStatusCancelled: 'abgebrochen', expertPanelToggleAria: 'Experten-Panel umschalten', expertEventStart: 'Start', expertEventAnalysis: 'Analyse', expertEventToolCall: 'Werkzeugaufruf', expertEventToolResult: 'Werkzeugergebnis', expertEventFinal: 'Endgültige Antwort', expertEventError: 'Fehler', expertEventCancelled: 'Abgebrochen'
     };
+
+    /** 补齐重发编辑态动态文案，避免静态翻译长行继续膨胀。 */
+    Object.assign(chatTranslations.en, {
+        resendConfirm: 'Send edited message',
+        resendCancel: 'Cancel resend editing',
+        resendEditorAria: 'Edit message before resending'
+    });
+    Object.assign(chatTranslations['zh-cn'], {
+        resendConfirm: '发送修改后的消息',
+        resendCancel: '取消重发编辑',
+        resendEditorAria: '编辑后重发消息'
+    });
+    /** 补齐任务流顶部 Todo 状态卡片文案，避免静态翻译长行继续膨胀。 */
+    Object.assign(chatTranslations.en, {
+        taskTodoTitle: 'Todos',
+        taskTodoToggleAria: 'Toggle CC task flow todos',
+        taskTodoOpen: 'Open CC task flow',
+        taskTodoStatusPending: 'Pending',
+        taskTodoStatusInProgress: 'In progress',
+        taskTodoStatusCompleted: 'Completed',
+        taskTodoStatusBlocked: 'Blocked'
+    });
+    Object.assign(chatTranslations['zh-cn'], {
+        taskTodoTitle: '待办事项',
+        taskTodoToggleAria: '展开/折叠 CC 任务流待办事项',
+        taskTodoOpen: '打开 CC 任务流',
+        taskTodoStatusPending: '待处理',
+        taskTodoStatusInProgress: '进行中',
+        taskTodoStatusCompleted: '已完成',
+        taskTodoStatusBlocked: '已阻塞'
+    });
+    Object.assign(chatTranslations['zh-tw'], {
+        taskTodoTitle: '待辦事項',
+        taskTodoToggleAria: '展開/收合 CC 任務流待辦事項',
+        taskTodoOpen: '開啟 CC 任務流',
+        taskTodoStatusPending: '待處理',
+        taskTodoStatusInProgress: '進行中',
+        taskTodoStatusCompleted: '已完成',
+        taskTodoStatusBlocked: '已阻塞'
+    });
+    Object.assign(chatTranslations.ko, {
+        taskTodoTitle: '할 일',
+        taskTodoToggleAria: 'CC 작업 흐름 할 일 접기/펼치기',
+        taskTodoOpen: 'CC 작업 흐름 열기',
+        taskTodoStatusPending: '대기 중',
+        taskTodoStatusInProgress: '진행 중',
+        taskTodoStatusCompleted: '완료됨',
+        taskTodoStatusBlocked: '차단됨'
+    });
+    Object.assign(chatTranslations.ja, {
+        taskTodoTitle: 'Todo',
+        taskTodoToggleAria: 'CC タスクフローの Todo を展開/折りたたみ',
+        taskTodoOpen: 'CC タスクフローを開く',
+        taskTodoStatusPending: '保留中',
+        taskTodoStatusInProgress: '進行中',
+        taskTodoStatusCompleted: '完了',
+        taskTodoStatusBlocked: 'ブロック中'
+    });
+    Object.assign(chatTranslations.fr, {
+        taskTodoTitle: 'Tâches',
+        taskTodoToggleAria: 'Déplier/replier les tâches du flux CC',
+        taskTodoOpen: 'Ouvrir le flux de tâches CC',
+        taskTodoStatusPending: 'En attente',
+        taskTodoStatusInProgress: 'En cours',
+        taskTodoStatusCompleted: 'Terminé',
+        taskTodoStatusBlocked: 'Bloqué'
+    });
+    Object.assign(chatTranslations.de, {
+        taskTodoTitle: 'Aufgaben',
+        taskTodoToggleAria: 'CC-Aufgabenfluss-Todos ein-/ausklappen',
+        taskTodoOpen: 'CC-Aufgabenfluss öffnen',
+        taskTodoStatusPending: 'Ausstehend',
+        taskTodoStatusInProgress: 'In Bearbeitung',
+        taskTodoStatusCompleted: 'Abgeschlossen',
+        taskTodoStatusBlocked: 'Blockiert'
+    });
     const vscode = acquireVsCodeApi();
     const messagesEl = document.querySelector('[data-role="messages"]');
     const composerShellEl = document.querySelector('[data-role="composer-shell"]');
@@ -57,11 +133,19 @@
         attachments: [],
         modelOptions: [],
         currentModelKey: '',
+        expertModelOptions: [],
+        expertModelId: '',
+        expertEnabled: false,
         permissionMode: 'acceptEdits',
         defaultAttachmentPaths: new Set(),
         dragDepth: 0,
         chatRunning: false
     };
+    const taskFlowTodoState = {
+        snapshot: null,
+        collapsed: false
+    };
+    let activeResendEditor = null;
     let toastTimer = 0;
     let currentLanguage = DEFAULT_CHAT_LANGUAGE;
     let currentCliPath = '';
@@ -104,8 +188,166 @@
         updateCliStatusText();
         renderModelOptions();
         renderPermissionModeSelect();
+        ensureComposerShortcutBar();
+        renderExpertModelOptions();
+        renderTaskFlowTodoPanel();
         setChatRunning(composerState.chatRunning);
         rerenderMessagesFromDom();
+    }
+
+    /**
+     * 把任务状态映射为本地化文案。
+     *
+     * @param {string} status 任务流状态。
+     * @returns {string} 状态展示文本。
+     */
+    function getTaskFlowStatusLabel(status) {
+        var map = {
+            pending: 'taskTodoStatusPending',
+            in_progress: 'taskTodoStatusInProgress',
+            completed: 'taskTodoStatusCompleted',
+            blocked: 'taskTodoStatusBlocked'
+        };
+        return t(map[status] || 'taskTodoStatusPending');
+    }
+
+    /**
+     * 获取任务流 Todo 卡片 DOM；不存在时自动创建。
+     *
+     * 卡片被挂载在底部 footer（composer-shell）内、context-panel 之上，
+     * 这样无论消息列表是否被清空、滚动到哪里，Todo 状态卡片都会固定
+     * 显示在输入框上方。
+     *
+     * @returns {HTMLElement | null} Todo 卡片根节点。
+     */
+    function ensureTaskFlowTodoPanel() {
+        if (!(composerShellEl instanceof HTMLElement)) return null;
+        var existing = composerShellEl.querySelector('[data-role="task-flow-todo-panel"]');
+        if (existing instanceof HTMLElement) return existing;
+        var panel = document.createElement('section');
+        panel.className = 'taskFlowTodoPanel_07S1Yg';
+        panel.dataset.role = 'task-flow-todo-panel';
+        // 优先插在 context-panel 之前；如果上下文面板已被移除，则插在 footer
+        // 的最前面，确保位置稳定。
+        var anchor = composerShellEl.querySelector('[data-role="context-panel"]');
+        if (anchor && anchor.parentNode === composerShellEl) {
+            composerShellEl.insertBefore(panel, anchor);
+        } else {
+            composerShellEl.insertBefore(panel, composerShellEl.firstChild);
+        }
+        return panel;
+    }
+
+    /**
+     * 判断任务流快照是否存在可展示的任务列表。
+     *
+     * @param {any} snapshot 扩展端推送的任务流快照。
+     * @returns {boolean} 是否有可展示的任务。
+     */
+    function hasRenderableTaskFlowTodos(snapshot) {
+        return !!snapshot && !!snapshot.workflow && Array.isArray(snapshot.workflow.tasks) && snapshot.workflow.tasks.length > 0;
+    }
+
+    /**
+     * 渲染或移除 Chat 输入框上方的任务流 Todo 状态卡片。
+     *
+     * 卡片挂载在 footer（composer-shell）中，不会随消息列表滚动；只在
+     * 任务流快照存在且至少包含一个任务时才显示，否则会从 DOM 中移除。
+     */
+    function renderTaskFlowTodoPanel() {
+        if (!(composerShellEl instanceof HTMLElement)) return;
+        var snapshot = taskFlowTodoState.snapshot;
+        if (!hasRenderableTaskFlowTodos(snapshot)) {
+            var old = composerShellEl.querySelector('[data-role="task-flow-todo-panel"]');
+            if (old) old.remove();
+            return;
+        }
+
+        var workflow = snapshot.workflow;
+        var tasks = workflow.tasks;
+        var completed = tasks.filter(function (task) { return task.status === 'completed'; }).length;
+        var panel = ensureTaskFlowTodoPanel();
+        if (!panel) return;
+        panel.textContent = '';
+        panel.dataset.collapsed = taskFlowTodoState.collapsed ? 'true' : 'false';
+
+        var header = document.createElement('button');
+        header.type = 'button';
+        header.className = 'taskFlowTodoHeader_07S1Yg';
+        header.setAttribute('aria-expanded', String(!taskFlowTodoState.collapsed));
+        header.setAttribute('aria-label', t('taskTodoToggleAria'));
+        header.addEventListener('click', function () {
+            taskFlowTodoState.collapsed = !taskFlowTodoState.collapsed;
+            renderTaskFlowTodoPanel();
+        });
+
+        var chevron = document.createElement('span');
+        chevron.className = 'taskFlowTodoChevron_07S1Yg';
+        chevron.textContent = '›';
+        var title = document.createElement('span');
+        title.className = 'taskFlowTodoTitle_07S1Yg';
+        title.textContent = t('taskTodoTitle') + '(' + completed + '/' + tasks.length + ')';
+        var spacer = document.createElement('span');
+        spacer.className = 'taskFlowTodoHeaderSpacer_07S1Yg';
+        var openIcon = document.createElement('span');
+        openIcon.className = 'taskFlowTodoOpenIcon_07S1Yg';
+        openIcon.title = t('taskTodoOpen');
+        openIcon.textContent = '☷';
+        header.append(chevron, title, spacer, openIcon);
+        panel.appendChild(header);
+
+        if (taskFlowTodoState.collapsed) return;
+
+        var list = document.createElement('div');
+        list.className = 'taskFlowTodoList_07S1Yg';
+        tasks.forEach(function (task) {
+            var item = document.createElement('div');
+            item.className = 'taskFlowTodoItem_07S1Yg taskFlowTodoItem_07S1Yg--' + (task.status || 'pending');
+            var dot = document.createElement('span');
+            dot.className = 'taskFlowTodoStatusDot_07S1Yg';
+            dot.setAttribute('aria-label', getTaskFlowStatusLabel(task.status));
+            // in_progress 用纯 CSS 旋转动画代替原来的"圆圈+实心点"占位，
+            // completed 显示对勾，其它（pending/blocked）保持空。
+            dot.textContent = task.status === 'completed' ? '✓' : '';
+            var textWrap = document.createElement('span');
+            textWrap.className = 'taskFlowTodoText_07S1Yg';
+            var text = document.createElement('span');
+            text.className = 'taskFlowTodoItemTitle_07S1Yg';
+            text.textContent = task.title || task.id || '';
+            textWrap.appendChild(text);
+            if (task.description) {
+                var desc = document.createElement('span');
+                desc.className = 'taskFlowTodoItemDesc_07S1Yg';
+                desc.textContent = task.description;
+                textWrap.appendChild(desc);
+            }
+            item.append(dot, textWrap);
+            list.appendChild(item);
+        });
+        panel.appendChild(list);
+    }
+
+    /**
+     * 保存扩展端推送的任务流快照并刷新顶部 Todo 状态卡片。
+     *
+     * @param {any} snapshot 任务流快照。
+     */
+    function updateTaskFlowTodoStatus(snapshot) {
+        try {
+            // eslint-disable-next-line no-console
+            console.log('[chat] taskFlow/status received', snapshot && snapshot.workflow ? {
+                title: snapshot.workflow.title,
+                tasks: snapshot.workflow.tasks ? snapshot.workflow.tasks.length : 0,
+                hasComposerShell: !!composerShellEl
+            } : 'no workflow');
+        } catch (_e) { /* noop */ }
+        taskFlowTodoState.snapshot = snapshot || null;
+        renderTaskFlowTodoPanel();
+        try {
+            var panel = composerShellEl && composerShellEl.querySelector('[data-role="task-flow-todo-panel"]');
+            // eslint-disable-next-line no-console
+            console.log('[chat] taskFlow/status rendered panel?', !!panel);
+        } catch (_e2) { /* noop */ }
     }
 
     /** 根据当前缓存的 CLI 状态刷新状态栏文案。 */
@@ -132,6 +374,68 @@
      */
     function post(message) {
         vscode.postMessage(message);
+    }
+
+    /**
+     * 创建一个输入框下方快捷操作按钮。
+     *
+     * @param {string} i18nKey 按钮文案与标题使用的翻译键。
+     * @param {() => void} onClick 点击后的处理函数。
+     * @returns {HTMLButtonElement} 已绑定事件的按钮元素。
+     */
+    function createComposerShortcutButton(i18nKey, onClick) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'composer-shortcut-button';
+        button.dataset.i18n = i18nKey;
+        button.dataset.i18nTitle = i18nKey;
+        button.textContent = t(i18nKey);
+        button.title = t(i18nKey);
+        button.addEventListener('click', onClick);
+        return button;
+    }
+
+    /**
+     * 创建输入框下方的专家模型下拉框。
+     *
+     * @returns {HTMLSelectElement} 已绑定保存事件的专家模型下拉框。
+     */
+    function createExpertModelSelect() {
+        const select = document.createElement('select');
+        select.className = 'composer-shortcut-select';
+        select.dataset.role = 'expert-model-select';
+        select.dataset.i18nTitle = 'expertModelSelectTitle';
+        select.setAttribute('aria-label', t('expertModelSelectAria'));
+        select.addEventListener('change', () => {
+            composerState.expertModelId = select.value;
+            composerState.expertEnabled = select.value.length > 0;
+            renderExpertModelOptions();
+            post({ type: 'expert/model/select', modelId: select.value });
+        });
+        return select;
+    }
+
+    /**
+     * 确保蓝色输入框下方存在专家设置与 CC 任务流快捷按钮。
+     *
+     * 该区域通过运行时脚本动态注入，避免直接修改静态 index.html 结构。
+     */
+    function ensureComposerShortcutBar() {
+        const composerBox = document.querySelector('.composer-box');
+        if (!composerBox || document.querySelector('[data-role="composer-shortcut-bar"]')) return;
+
+        const shortcutBar = document.createElement('div');
+        shortcutBar.className = 'composer-shortcut-bar';
+        shortcutBar.dataset.role = 'composer-shortcut-bar';
+
+        shortcutBar.append(
+            createExpertModelSelect(),
+            createComposerShortcutButton('ccTaskFlow', () => post({ type: 'taskFlow/open' }))
+        );
+
+        composerBox.insertAdjacentElement('afterend', shortcutBar);
+        renderExpertModelOptions();
+        applyI18n();
     }
 
     /**
@@ -517,6 +821,35 @@
     }
 
     /**
+     * 渲染输入框下方的专家模型下拉框。
+     *
+     * 第一项固定为「关闭专家」；其它项复用当前可选模型列表。
+     */
+    function renderExpertModelOptions() {
+        const select = document.querySelector('[data-role="expert-model-select"]');
+        if (!(select instanceof HTMLSelectElement)) return;
+        select.innerHTML = '';
+
+        const closeOption = document.createElement('option');
+        closeOption.value = '';
+        closeOption.textContent = t('closeExpert');
+        closeOption.selected = !composerState.expertEnabled || !composerState.expertModelId;
+        select.appendChild(closeOption);
+
+        for (const model of composerState.expertModelOptions || []) {
+            const option = document.createElement('option');
+            option.value = model.modelId;
+            option.textContent = model.providerName + ': ' + model.displayName;
+            option.title = model.modelId;
+            option.selected = composerState.expertEnabled && model.modelId === composerState.expertModelId;
+            select.appendChild(option);
+        }
+
+        select.title = t('expertModelSelectTitle');
+        select.setAttribute('aria-label', t('expertModelSelectAria'));
+    }
+
+    /**
      * 渲染输入框工具栏中的 Claude CLI 权限模式下拉框。
      *
      * 当前只暴露常用的 `acceptEdits` 与 `bypassPermissions` 两项，避免把 CLI 的
@@ -552,7 +885,10 @@
     /**
      * 切换输入框右下角动作按钮：生成中显示方块用于停止，空闲时显示向上箭头用于发送。
      *
-     * 同时驱动输入区上方的全局生成中指示器 (.chat-global-pending)：
+    * 同时驱动输入区上方的全局生成中指示器 (.chat-global-pending) 与输入框自身
+    * 的运行中动效：借鉴 VS Code/Copilot Chat 在请求执行期间让输入框边缘保持
+    * 轻量动态高亮的交互反馈，用户无需盯着消息区也能知道当前回合仍在运行。
+    *
      * 模型从开始响应到完成期间持续显示三点动画；模型输出过程中也不会消失，
      * 完全由 pending → !pending 状态切换控制。
      *
@@ -560,6 +896,15 @@
      */
     function setChatRunning(running) {
         composerState.chatRunning = !!running;
+        const composerBox = document.querySelector('.composer-box');
+        if (composerShellEl instanceof HTMLElement) {
+            composerShellEl.classList.toggle('chat-input--running', composerState.chatRunning);
+            composerShellEl.dataset.running = composerState.chatRunning ? 'true' : 'false';
+        }
+        if (composerBox instanceof HTMLElement) {
+            composerBox.classList.toggle('composer-box--running', composerState.chatRunning);
+            composerBox.dataset.running = composerState.chatRunning ? 'true' : 'false';
+        }
         if (globalPendingEl instanceof HTMLElement) {
             globalPendingEl.classList.toggle('chat-global-pending--visible', composerState.chatRunning);
             globalPendingEl.setAttribute('aria-hidden', composerState.chatRunning ? 'false' : 'true');
@@ -787,6 +1132,7 @@
         content.appendChild(text);
         empty.appendChild(content);
         messagesEl.appendChild(empty);
+        renderTaskFlowTodoPanel();
     }
 
     /**
@@ -840,6 +1186,40 @@
         }
         if (!wasAtBottom) return;
         messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    /**
+     * 判断任意可滚动元素当前是否处于"贴近自身底部"状态。
+     *
+     * 用于工具卡片内部的滚动容器（例如 .toolResultMarkdown_ZUQaOA、
+     * .toolResultPre_ZUQaOA、.expertToolStream_07S1Yg、ExpertPanel 事件列表），
+     * 它们各自有独立的 max-height + overflow:auto。在追加新内容前调用，
+     * 记录用户当前是否在跟随；追加后再据此决定是否把 scrollTop 写到 scrollHeight。
+     *
+     * 若元素未启用滚动（scrollHeight 不超出 clientHeight），同样视为"在底部"，
+     * 这样后续追加超出范围时自然进入跟随模式。
+     *
+     * @param {HTMLElement | null | undefined} el 目标可滚动容器。
+     * @param {number} [threshold] 距离底部的像素阈值，默认 32px。
+     * @returns {boolean} 是否处于贴近底部状态；元素为空时返回 true（默认跟随）。
+     */
+    function isElementScrolledNearBottom(el, threshold) {
+        if (!(el instanceof HTMLElement)) return true;
+        var th = typeof threshold === 'number' ? threshold : 32;
+        return (el.scrollHeight - el.scrollTop - el.clientHeight) <= th;
+    }
+
+    /**
+     * 仅在用户原本就贴近底部时，将容器的 scrollTop 拉到 scrollHeight，
+     * 实现"跟随尾部"的滚动体验，避免向上回看时被新内容打断。
+     *
+     * @param {HTMLElement | null | undefined} el 目标可滚动容器。
+     * @param {boolean} wasAtBottom 追加内容**之前**该容器是否贴近底部。
+     */
+    function scrollElementToBottomIfNeeded(el, wasAtBottom) {
+        if (!(el instanceof HTMLElement)) return;
+        if (!wasAtBottom) return;
+        el.scrollTop = el.scrollHeight;
     }
 
     /**
@@ -2408,11 +2788,67 @@
         label.className = 'toolResultLabel_ZUQaOA';
         label.textContent = isError ? 'Error' : 'Output';
         wrap.appendChild(label);
+        appendToolResultContent(wrap, resultText, isError);
+        body.appendChild(wrap);
+    }
+
+    /**
+     * 追加工具输出内容。
+     *
+     * 普通输出优先按 Markdown 渲染，让专家工具返回的标题、列表、表格、代码块等
+     * 能和助手正文保持一致；错误输出仍保留纯文本 `pre`，避免错误栈或 XML 风格
+     * 错误消息被 Markdown 规则误解析。
+     *
+     * 滚动行为：`.toolResultMarkdown_ZUQaOA` 自身有 `max-height + overflow:auto`，
+     * 在流式 patch 阶段每次都会被整段 replaceChild 重建（新节点 scrollTop 默认 0，
+     * 即"停在最顶"）。这里在挂载后将其 scrollTop 直接拉到 scrollHeight，让用户
+     * 始终先看到最新输出，与终端 / 控制台跟随尾部的体验一致。
+     *
+     * @param {HTMLElement} wrap 工具输出外层容器。
+     * @param {string} resultText 工具输出文本。
+     * @param {boolean} isError 是否错误输出。
+     */
+    function appendToolResultContent(wrap, resultText, isError) {
+        var text = String(resultText || '');
+        if (isError) {
+            appendToolResultPre(wrap, text);
+            return;
+        }
+        var content = document.createElement('div');
+        content.className = 'toolResultMarkdown_ZUQaOA';
+        renderMarkdown(content, truncateLongText(text));
+        wrap.appendChild(content);
+        // 新节点默认 scrollTop=0；这里同步 + 下一帧再各拉一次到底，覆盖
+        // Markdown 内异步内容（高亮、图片等）撑高布局后的二次跟随。
+        content.scrollTop = content.scrollHeight;
+        if (typeof window.requestAnimationFrame === 'function') {
+            window.requestAnimationFrame(function () {
+                content.scrollTop = content.scrollHeight;
+            });
+        }
+    }
+
+    /**
+     * 以纯文本 `pre` 追加工具输出，主要用于错误结果。
+     *
+     * 滚动行为：与 {@link appendToolResultContent} 相同——`.toolResultPre_ZUQaOA`
+     * 有独立 `max-height + overflow:auto`，新建后跟随尾部更贴合用户期望
+     * （错误日志最关键的一般是最后几行）。
+     *
+     * @param {HTMLElement} wrap 工具输出外层容器。
+     * @param {string} text 待展示文本。
+     */
+    function appendToolResultPre(wrap, text) {
         var pre = document.createElement('pre');
         pre.className = 'toolResultPre_ZUQaOA';
-        pre.textContent = truncateLongText(resultText);
+        pre.textContent = truncateLongText(text);
         wrap.appendChild(pre);
-        body.appendChild(wrap);
+        pre.scrollTop = pre.scrollHeight;
+        if (typeof window.requestAnimationFrame === 'function') {
+            window.requestAnimationFrame(function () {
+                pre.scrollTop = pre.scrollHeight;
+            });
+        }
     }
 
     /**
@@ -2586,15 +3022,148 @@
     }
 
     /**
+     * 从 user 消息对象中提取可编辑的原始文本。
+     *
+     * 重发编辑框应尽量使用 `message.text` 中保存的完整 prompt；如果历史数据缺少
+     * 该字段，则回退到 segments 内的文本内容，保证旧会话也能进入编辑态。
+     *
+     * @param {any} message 对应的 ChatMessage 对象。
+     * @returns {string} 可放入 textarea 的原始文本。
+     */
+    function getUserMessageEditableText(message) {
+        if (!message) return '';
+        if (typeof message.text === 'string') return message.text;
+        if (!Array.isArray(message.segments)) return '';
+        var parts = [];
+        for (var i = 0; i < message.segments.length; i++) {
+            var segment = message.segments[i];
+            var text = segment && (typeof segment.text === 'string' ? segment.text : segment.sourceText);
+            if (typeof text === 'string' && text) parts.push(text);
+        }
+        return parts.join('\n');
+    }
+
+    /**
+     * 调整重发编辑 textarea 高度，使多行文本直接展开显示。
+     *
+     * @param {HTMLTextAreaElement} textarea 重发编辑框。
+     */
+    function autoResizeResendEditor(textarea) {
+        textarea.style.height = 'auto';
+        textarea.style.height = Math.min(Math.max(textarea.scrollHeight, 88), 320) + 'px';
+    }
+
+    /**
+     * 退出当前重发编辑态并恢复原消息气泡。
+     */
+    function closeActiveResendEditor() {
+        if (!activeResendEditor) return;
+        activeResendEditor.item.classList.remove('userMessageContainer_07S1Yg--editing');
+        activeResendEditor.editor.remove();
+        activeResendEditor.messageBubble.hidden = false;
+        activeResendEditor.actions.hidden = false;
+        activeResendEditor = null;
+    }
+
+    /**
+     * 提交重发编辑框内容。
+     *
+     * 扩展端会按 id 截断该 user 消息及其后的上下文，再用这里提交的编辑文本开启
+     * 新一轮发送；空白内容不提交，避免误删上下文。
+     *
+     * @param {any} message 待重发的 user 消息。
+     * @param {HTMLTextAreaElement} textarea 重发编辑框。
+     */
+    function submitResendEditor(message, textarea) {
+        var text = textarea.value.trim();
+        if (!message || !message.id || !text) return;
+        scrollAfterNextPendingAssistant = true;
+        setChatRunning(true);
+        closeActiveResendEditor();
+        post({ type: 'user/resend', id: message.id, text: text });
+    }
+
+    /**
+     * 打开 user 消息的就地重发编辑框。
+     *
+     * 点击原「重发」图标后，不再立即发送，而是把原气泡替换成多行 textarea；
+     * 用户可修改文本，下方通过「发送」或「取消」图标完成操作。快捷键规则：
+     * Enter 或 Ctrl+Enter / Cmd+Enter 提交，Shift+Enter 保留换行。
+     *
+     * @param {any} message 待重发的 user 消息。
+     * @param {HTMLElement} item 当前消息外层容器。
+     * @param {HTMLElement} messageBubble 原 user 气泡。
+     * @param {HTMLElement} actions 原操作按钮栏。
+     */
+    function openResendEditor(message, item, messageBubble, actions) {
+        if (!message || !message.id || !(item instanceof HTMLElement)) return;
+        closeActiveResendEditor();
+
+        var editor = document.createElement('div');
+        editor.className = 'userMessageResendEditor_07S1Yg';
+
+        var textarea = document.createElement('textarea');
+        textarea.className = 'userMessageResendTextarea_07S1Yg';
+        textarea.value = getUserMessageEditableText(message);
+        textarea.setAttribute('aria-label', t('resendEditorAria'));
+        textarea.spellcheck = false;
+
+        var toolbar = document.createElement('div');
+        toolbar.className = 'userMessageResendToolbar_07S1Yg';
+
+        var sendBtn = document.createElement('button');
+        sendBtn.type = 'button';
+        sendBtn.className = 'userMessageActionBtn_07S1Yg userMessageResendIcon_07S1Yg userMessageResendIcon_07S1Yg--send';
+        sendBtn.title = t('resendConfirm');
+        sendBtn.setAttribute('aria-label', t('resendConfirm'));
+        sendBtn.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M6.4 10.8 3.2 7.6 2.1 8.7l4.3 4.3 7.5-7.5-1.1-1.1z"/></svg>';
+
+        var cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'userMessageActionBtn_07S1Yg userMessageResendIcon_07S1Yg';
+        cancelBtn.title = t('resendCancel');
+        cancelBtn.setAttribute('aria-label', t('resendCancel'));
+        cancelBtn.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M4.3 3.3 8 7l3.7-3.7 1 1L9 8l3.7 3.7-1 1L8 9l-3.7 3.7-1-1L7 8 3.3 4.3z"/></svg>';
+
+        sendBtn.addEventListener('click', function () { submitResendEditor(message, textarea); });
+        cancelBtn.addEventListener('click', closeActiveResendEditor);
+        textarea.addEventListener('input', function () { autoResizeResendEditor(textarea); });
+        textarea.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                closeActiveResendEditor();
+                return;
+            }
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                submitResendEditor(message, textarea);
+            }
+        });
+
+        toolbar.append(sendBtn, cancelBtn);
+        editor.append(textarea, toolbar);
+        messageBubble.hidden = true;
+        actions.hidden = true;
+        item.classList.add('userMessageContainer_07S1Yg--editing');
+        item.insertBefore(editor, actions);
+        activeResendEditor = { item: item, editor: editor, messageBubble: messageBubble, actions: actions };
+        autoResizeResendEditor(textarea);
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    }
+
+    /**
      * 构建 user 消息下方的操作按钮栏。
      *
-     * 目前只包含一个"重发"按钮：点击时通过 post 向扩展端发送 `user/resend`
-     * 消息，由扩展端负责截断该消息及其之后的所有上下文，并用原文重新发送。
+    * 目前只包含一个"重发"按钮：点击时进入就地编辑态，由用户确认后再通过
+    * `user/resend` 协议提交编辑后的文本。
      *
      * @param {any} message 对应的 ChatMessage 对象（需要其 id）。
+    * @param {HTMLElement} item 当前消息外层容器。
+    * @param {HTMLElement} messageBubble 当前 user 消息气泡。
      * @returns {HTMLElement} 操作按钮栏 DOM。
      */
-    function buildUserActionsBar(message) {
+    function buildUserActionsBar(message, item, messageBubble) {
         var actions = document.createElement('div');
         actions.className = 'userMessageActions_07S1Yg';
 
@@ -2613,9 +3182,7 @@
             ev.preventDefault();
             ev.stopPropagation();
             if (!message || !message.id) return;
-            if (resendBtn.disabled) return;
-            resendBtn.disabled = true;
-            post({ type: 'user/resend', id: message.id });
+            openResendEditor(message, item, messageBubble, actions);
         });
         actions.appendChild(resendBtn);
 
@@ -2670,7 +3237,7 @@
             item.appendChild(userMsg);
             // 在 user 消息下方追加"重发"操作按钮：点击后扩展端会截断该消息
             // 及其之后所有上下文，再以同样文本作为新一轮 user 消息重新发送。
-            item.appendChild(buildUserActionsBar(message));
+            item.appendChild(buildUserActionsBar(message, item, userMsg));
             messagesEl.appendChild(item);
             // 若当前发送动作正在等待 pending assistant 占位，则不要在 user 消息阶段
             // 抢先滚动；最终滚动交给 pending 动画渲染后的 assistant 分支处理。
@@ -2850,7 +3417,11 @@
     }
 
     /**
-     * 从输入框读取文本并发送 user/send 消息。
+    * 从输入框读取文本并发送 user/send 消息。
+    *
+    * 点击发送后会立即把输入框切到运行中状态，这样蓝色边框动画不必等到
+    * 扩展宿主回传第一条 assistant pending 消息才出现；如果发送后宿主返回
+    * error 或完成消息，后续 message/patch、message/error 会再关闭该状态。
      *
      * 仅发送用户已点击激活（source !== 'default'）的附件；
      * 默认显示的当前文件附件以虚线 pill 形式预览，不会真正进入 prompt，
@@ -2863,6 +3434,7 @@
         const attachments = activeItems.map((item) => ({ path: item.path, name: item.name }));
         if (!text && attachments.length === 0) return;
         scrollAfterNextPendingAssistant = true;
+        setChatRunning(true);
         post({ type: 'user/send', text, attachments });
         composerEl.value = '';
         composerState.attachments = [];
@@ -2998,9 +3570,22 @@
                 composerState.currentModelKey = message.current ? message.current.providerId + '/' + message.current.modelId : '';
                 renderModelOptions();
                 break;
+            case 'expert/model/options':
+                composerState.expertModelOptions = message.models || [];
+                composerState.expertEnabled = !!message.current?.enabled;
+                composerState.expertModelId = message.current?.modelId || '';
+                ensureComposerShortcutBar();
+                renderExpertModelOptions();
+                break;
             case 'permissionMode/current':
                 composerState.permissionMode = message.mode === 'bypassPermissions' ? 'bypassPermissions' : 'acceptEdits';
                 renderPermissionModeSelect();
+                break;
+            case 'taskFlow/status':
+                updateTaskFlowTodoStatus(message.snapshot);
+                break;
+            case 'expert/event':
+                handleExpertEvent(message.event);
                 break;
             case 'message/error':
                 setChatRunning(false);
@@ -3011,6 +3596,7 @@
         }
     }
 
+    ensureComposerShortcutBar();
     applyI18n();
     setChatRunning(false);
 
@@ -3089,10 +3675,560 @@
         }
     });
     composerEl?.addEventListener('input', autoResizeComposer);
-            renderPermissionModeSelect();
     document.addEventListener('paste', (event) => {
         void handlePaste(event);
     }, true);
+
+    // ---------------------------------------------------------------------
+    // Expert mode 折叠面板（ExpertPanel）
+    // ---------------------------------------------------------------------
+    //
+    // 每次主模型调用 ask_expert，扩展端会推送一系列 `expert/event` 消息：
+    //   start → analysis* / tool_call+ / tool_result* → final | error | cancelled
+    //
+    // Webview 用 `runId` 作为面板键，把同一 run 的所有事件聚合到一个折叠面板里，
+    // 并把面板**插入到** `parentMessageId` 对应的 assistant 消息节点之后。
+    // 运行中默认展开，进入终结态自动折叠（用户仍可手动展开查看完整 trace）。
+    //
+    // 面板**不进入** chatMessages 数组，也不会被 sessionStore 持久化——这是
+    // 「专家上下文与主对话隔离」设计目标的一部分，详见 EXPERT_MODE_DESIGN.md §7。
+
+    /**
+     * 已渲染的 ExpertPanel 缓存：runId → 关键 DOM 节点。
+     *
+     * 复用同一引用便于增量更新（避免每次重渲染整个 panel），并在面板被移除时
+     * 同步清理本表，防止内存泄漏。
+     *
+     * @type {Map<string, { wrapper: HTMLElement; header: HTMLElement; body: HTMLElement; status: HTMLElement; toggleBtn: HTMLElement; eventsContainer: HTMLElement }>}
+     */
+    const expertPanels = new Map();
+
+    /**
+     * 处理一条专家事件：找到 / 创建面板，追加事件项，按需触发自动折叠。
+     *
+     * 滚动行为：在追加任何专家事件 DOM 之前，先记录外层主消息容器是否已在底部；
+     * 内部各滚动容器（工具卡片实时 Output、ExpertPanel 事件列表）由各自的
+     * append 函数内部独立维护"尾部跟随"，互不干扰。所有 DOM 操作完成后再
+     * 调用 {@link scrollToBottomIfNeeded} 让主区域跟随到底部，避免专家事件
+     * 流到来时主对话不自动下移。
+     *
+     * @param {any} event {@link ExpertEventPayload}
+     */
+    function handleExpertEvent(event) {
+        if (!event || !event.runId || !event.parentMessageId) return;
+        // 外层主消息容器在所有专家 DOM 变更前的"贴近底部"状态。
+        var outerWasAtBottom = isScrolledNearBottom();
+        appendExpertEventToToolOutput(event);
+        const panel = ensureExpertPanel(event);
+        if (panel) {
+            appendExpertEventItem(panel, event);
+            updateExpertPanelStatus(panel, event);
+        }
+        // 等下一帧，让面板高度/折叠动画影响后的 scrollHeight 稳定后再决定跟随。
+        scrollToBottomIfNeeded(outerWasAtBottom);
+        if (outerWasAtBottom && typeof window.requestAnimationFrame === 'function') {
+            window.requestAnimationFrame(function () {
+                scrollToBottomIfNeeded(true);
+            });
+        }
+    }
+
+    /**
+     * 找到或创建一个 ExpertPanel。
+     *
+     * - 若已存在：直接返回缓存；
+     * - 若不存在：在对应 assistant 消息节点之后插入一个新面板节点。
+     *   找不到 parentMessageId 时则追加到 messagesEl 末尾兜底显示。
+     *
+     * @param {any} event 触发面板创建的首个事件（通常是 `start`）。
+     * @returns {{ wrapper: HTMLElement; header: HTMLElement; body: HTMLElement; status: HTMLElement; toggleBtn: HTMLElement; eventsContainer: HTMLElement } | null}
+     */
+    function ensureExpertPanel(event) {
+        const existing = expertPanels.get(event.runId);
+        if (existing) return existing;
+        if (!messagesEl) return null;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'expertPanel_07S1Yg expertPanelRunning_07S1Yg';
+        wrapper.dataset.runId = event.runId;
+        wrapper.dataset.parentMessageId = event.parentMessageId;
+
+        // ----- 头部（点击折叠）-----
+        const header = document.createElement('div');
+        header.className = 'expertPanelHeader_07S1Yg';
+
+        const titleEl = document.createElement('span');
+        titleEl.className = 'expertPanelTitle_07S1Yg';
+        titleEl.textContent = '🧑\u200d🏫 ' + t('expertPanelTitle');
+        header.appendChild(titleEl);
+
+        const modelEl = document.createElement('span');
+        modelEl.className = 'expertPanelModel_07S1Yg';
+        if (event.kind === 'start' && event.expertModel) {
+            modelEl.textContent = String(event.expertModel);
+        }
+        header.appendChild(modelEl);
+
+        const status = document.createElement('span');
+        status.className = 'expertPanelStatus_07S1Yg';
+        status.textContent = t('expertPanelStatusRunning');
+        header.appendChild(status);
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.type = 'button';
+        toggleBtn.className = 'expertPanelToggle_07S1Yg';
+        toggleBtn.setAttribute('aria-label', t('expertPanelToggleAria'));
+        toggleBtn.textContent = '▾';
+        header.appendChild(toggleBtn);
+
+        wrapper.appendChild(header);
+
+        // ----- 内容 body -----
+        const body = document.createElement('div');
+        body.className = 'expertPanelBody_07S1Yg';
+
+        // 顶部 question 展示（来自 start 事件）
+        if (event.kind === 'start' && event.question) {
+            const q = document.createElement('div');
+            q.className = 'expertPanelQuestion_07S1Yg';
+            q.textContent = String(event.question);
+            body.appendChild(q);
+        }
+
+        // 事件列表容器
+        const eventsContainer = document.createElement('div');
+        eventsContainer.className = 'expertPanelEvents_07S1Yg';
+        body.appendChild(eventsContainer);
+
+        wrapper.appendChild(body);
+
+        // 点击 header 切换折叠（按钮单独点击也走同一逻辑）
+        header.addEventListener('click', function () {
+            wrapper.classList.toggle('expertPanelCollapsed_07S1Yg');
+            toggleBtn.textContent = wrapper.classList.contains('expertPanelCollapsed_07S1Yg') ? '▸' : '▾';
+        });
+
+        // 找到挂载锚点：parentMessageId 对应的 assistant 消息节点
+        const parentItem = messagesEl.querySelector('.message_07S1Yg[data-id="' + cssEscape(event.parentMessageId) + '"]');
+        if (parentItem && parentItem.parentNode === messagesEl) {
+            messagesEl.insertBefore(wrapper, parentItem.nextSibling);
+        } else {
+            messagesEl.appendChild(wrapper);
+        }
+
+        const entry = { wrapper, header, body, status, toggleBtn, eventsContainer };
+        expertPanels.set(event.runId, entry);
+        return entry;
+    }
+
+    /**
+     * 把一条事件渲染为面板内的一项。
+     *
+     * `start` 事件已在 ensureExpertPanel 中渲染过 question，这里不再重复；
+     * `final` / `error` / `cancelled` 事件除了渲染条目外，还会触发面板自动折叠
+     * （由 updateExpertPanelStatus 完成）。
+     *
+     * 滚动行为：ExpertPanel 的 `panel.body` 自身设置了 `max-height: 480px;
+     * overflow-y: auto`，事件多了会出现独立滚动条。这里在追加事件项前记录
+     * body 是否贴近底部，追加后据此跟随到底部，避免新事件出现在视口外。
+     *
+     * @param {{ eventsContainer: HTMLElement; body: HTMLElement }} panel ensureExpertPanel 返回的句柄。
+     * @param {any} event 待渲染事件。
+     */
+    function appendExpertEventItem(panel, event) {
+        if (event.kind === 'tool_result' && !event.toolIsError) return;
+
+        const item = document.createElement('div');
+        item.className = 'expertEvent_07S1Yg expertEvent_' + String(event.kind) + '_07S1Yg';
+        if (event.kind === 'tool_call' || event.kind === 'tool_result') {
+            item.classList.add('expertEventCompact_07S1Yg');
+        }
+
+        const label = document.createElement('span');
+        label.className = 'expertEventLabel_07S1Yg';
+        label.textContent = expertEventOneLineText(event) || expertEventLabel(event);
+        item.appendChild(label);
+
+        const detail = event.kind === 'tool_call' || event.kind === 'tool_result' ? '' : expertEventDetailText(event);
+        if (detail) {
+            const detailEl = document.createElement('div');
+            detailEl.className = 'expertEventDetail_07S1Yg';
+            detailEl.textContent = detail;
+            item.appendChild(detailEl);
+        }
+
+        // start 事件在 ensureExpertPanel 里已经把 question 放在 body 顶部，这里不再追加
+        if (event.kind !== 'start') {
+            const bodyEl = panel.body instanceof HTMLElement ? panel.body : null;
+            const bodyWasAtBottom = bodyEl ? isElementScrolledNearBottom(bodyEl) : true;
+            panel.eventsContainer.appendChild(item);
+            if (bodyEl) {
+                scrollElementToBottomIfNeeded(bodyEl, bodyWasAtBottom);
+                if (bodyWasAtBottom && typeof window.requestAnimationFrame === 'function') {
+                    window.requestAnimationFrame(function () {
+                        bodyEl.scrollTop = bodyEl.scrollHeight;
+                    });
+                }
+            }
+        }
+    }
+
+    /**
+     * 根据事件 kind 返回 i18n 标签文本。
+     *
+     * @param {any} event 事件对象。
+     * @returns {string} 标签字符串。
+     */
+    function expertEventLabel(event) {
+        switch (event.kind) {
+            case 'start': return t('expertEventStart');
+            case 'analysis': return t('expertEventAnalysis');
+            case 'tool_call': return t('expertEventToolCall') + (event.toolName ? ' · ' + event.toolName : '');
+            case 'tool_result': return t('expertEventToolResult') + (event.toolName ? ' · ' + event.toolName : '');
+            case 'final': return t('expertEventFinal');
+            case 'error': return t('expertEventError');
+            case 'cancelled': return t('expertEventCancelled');
+            default: return String(event.kind || '');
+        }
+    }
+
+    /**
+     * 提取事件的可读详情：assistant 文本 / 工具参数 / 工具结果摘要。
+     *
+     * @param {any} event 事件对象。
+     * @returns {string} 详情字符串（可能为空字符串）。
+     */
+    function expertEventDetailText(event) {
+        if (event.kind === 'analysis' || event.kind === 'final' || event.kind === 'error' || event.kind === 'cancelled') {
+            return String(event.text || '');
+        }
+        if (event.kind === 'tool_call') {
+            try {
+                return event.toolArgs !== undefined ? JSON.stringify(event.toolArgs, null, 2) : '';
+            } catch (_e) {
+                return String(event.toolArgs || '');
+            }
+        }
+        if (event.kind === 'tool_result') {
+            return String(event.toolResultSummary || '');
+        }
+        return '';
+    }
+
+    /**
+     * 为专家工具事件生成单行摘要。
+     *
+     * 目标展示形态：
+     * - Read / Edit / MultiEdit：`读取 xxx` / `编辑 xxx`；
+     * - 其它工具：`工具名 内容`；
+     * - 错误 tool_result：`工具名 失败：摘要`。
+     *
+     * @param {any} event 专家事件对象。
+     * @returns {string} 单行摘要；非工具事件返回空字符串。
+     */
+    function expertEventOneLineText(event) {
+        if (!event || event.kind === 'tool_call') {
+            return formatExpertToolCallLine(event);
+        }
+        if (event && event.kind === 'tool_result' && event.toolIsError) {
+            return formatExpertToolResultLine(event);
+        }
+        return '';
+    }
+
+    /**
+     * 格式化专家工具调用的一行摘要。
+     *
+     * @param {any} event `kind='tool_call'` 的专家事件。
+     * @returns {string} 一行工具调用摘要。
+     */
+    function formatExpertToolCallLine(event) {
+        if (!event || event.kind !== 'tool_call') return '';
+        const name = String(event.toolName || 'Tool');
+        const args = event.toolArgs;
+        const target = extractExpertToolTarget(name, args);
+        if (name === 'Read') return '读取 ' + (target || summarizeExpertToolArgs(name, args));
+        if (name === 'Edit' || name === 'MultiEdit') return '编辑 ' + (target || summarizeExpertToolArgs(name, args));
+        if (name === 'Write') return '写入 ' + (target || summarizeExpertToolArgs(name, args));
+        const summary = summarizeExpertToolArgs(name, args);
+        return summary ? name + ' ' + summary : name;
+    }
+
+    /**
+     * 格式化专家工具错误结果的一行摘要。
+     *
+     * @param {any} event `kind='tool_result'` 的专家事件。
+     * @returns {string} 一行错误摘要。
+     */
+    function formatExpertToolResultLine(event) {
+        const name = String(event && event.toolName || 'Tool');
+        const detail = compactOneLine(String(event && event.toolResultSummary || ''));
+        return detail ? name + ' 失败：' + detail : name + ' 失败';
+    }
+
+    /**
+     * 从工具入参中提取最像“目标文件/目标资源”的字段。
+     *
+     * @param {string} _name 工具名，保留参数便于后续按工具名扩展。
+     * @param {unknown} args 工具入参。
+     * @returns {string} 目标路径或资源摘要。
+     */
+    function extractExpertToolTarget(_name, args) {
+        if (!args || typeof args !== 'object') return '';
+        const record = args;
+        const candidates = ['file_path', 'notebook_path', 'path', 'file', 'filename', 'url'];
+        for (let i = 0; i < candidates.length; i++) {
+            const value = record[candidates[i]];
+            if (typeof value === 'string' && value.trim()) return shortenPath(value.trim());
+        }
+        return '';
+    }
+
+    /**
+     * 将任意工具入参压缩成一行内容摘要。
+     *
+     * 优先选择 Bash.command、搜索 query/pattern、Task.description/prompt 等最能表达
+     * “这个工具在做什么”的字段；找不到时退化为紧凑 JSON。
+     *
+     * @param {string} name 工具名。
+     * @param {unknown} args 工具入参。
+     * @returns {string} 一行内容摘要。
+     */
+    function summarizeExpertToolArgs(name, args) {
+        if (!args || typeof args !== 'object') return compactOneLine(String(args || ''));
+        const record = args;
+        const preferredFieldsByTool = {
+            Bash: ['command', 'description'],
+            Grep: ['pattern', 'path', 'glob'],
+            Glob: ['pattern', 'path'],
+            WebSearch: ['query'],
+            WebFetch: ['url', 'prompt'],
+            Task: ['description', 'prompt'],
+            TodoWrite: ['todos'],
+            AskUserQuestion: ['questions']
+        };
+        const fields = preferredFieldsByTool[name] || ['command', 'query', 'pattern', 'description', 'prompt', 'content', 'text'];
+        const parts = [];
+        for (let i = 0; i < fields.length; i++) {
+            const value = record[fields[i]];
+            const text = summarizeExpertValue(value);
+            if (text) parts.push(text);
+        }
+        if (parts.length > 0) return compactOneLine(parts.join(' '));
+        try {
+            return compactOneLine(JSON.stringify(record));
+        } catch (_e) {
+            return compactOneLine(String(record));
+        }
+    }
+
+    /**
+     * 将工具入参字段值转换为短文本。
+     *
+     * @param {unknown} value 字段值。
+     * @returns {string} 字段摘要。
+     */
+    function summarizeExpertValue(value) {
+        if (typeof value === 'string') return value;
+        if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+        if (Array.isArray(value)) return value.length + ' 项';
+        if (value && typeof value === 'object') {
+            try { return JSON.stringify(value); } catch (_e) { return String(value); }
+        }
+        return '';
+    }
+
+    /**
+     * 把多行或过长文本压缩为适合专家工具列表展示的一行。
+     *
+     * @param {string} text 原始文本。
+     * @returns {string} 最多 160 字符的一行文本。
+     */
+    function compactOneLine(text) {
+        const oneLine = String(text || '').replace(/\s+/g, ' ').trim();
+        return oneLine.length > 160 ? oneLine.slice(0, 157) + '…' : oneLine;
+    }
+
+    /**
+     * 把专家事件实时追加到主聊天 ask_expert 工具卡片 Output 中。
+     *
+     * 这条链路独立于 MCP 最终 tool_result：专家一边输出 analysis / tool_call /
+     * tool_result，Webview 就一边更新对应工具卡片，避免用户只能在专家结束后
+     * 才看到一次性结果。
+     *
+     * 滚动行为：stream 容器自身设置了 `max-height + overflow:auto`，长内容会出现
+     * 独立滚动条。这里在 append 前记录 stream 是否贴近自身底部，append 后按需
+     * 把 scrollTop 拉到 scrollHeight，做"跟随尾部"，保证用户首次或一直查看时
+     * 始终能看到最新一行，而向上回看时不会被打断。
+     *
+     * @param {any} event 专家事件对象。
+     */
+    function appendExpertEventToToolOutput(event) {
+        const toolCard = findExpertToolCard(event);
+        if (!toolCard) return;
+        const stream = ensureExpertToolStream(toolCard);
+        const line = buildExpertToolStreamLine(event);
+        if (!line) return;
+        const lineEl = document.createElement('div');
+        lineEl.className = 'expertToolStreamLine_07S1Yg expertToolStreamLine_' + String(event.kind) + '_07S1Yg';
+        renderMarkdown(lineEl, line);
+        // 追加前记录当前是否处于尾部，决定追加后是否跟随。
+        const innerWasAtBottom = isElementScrolledNearBottom(stream);
+        stream.appendChild(lineEl);
+        scrollElementToBottomIfNeeded(stream, innerWasAtBottom);
+        // 下一帧再做一次：renderMarkdown 内异步代码块高亮 / 图片懒加载 等可能在
+        // 同步追加之后再撑高高度，单纯同步一次写 scrollTop 可能落在"前一次"高度。
+        if (innerWasAtBottom && typeof window.requestAnimationFrame === 'function') {
+            window.requestAnimationFrame(function () {
+                stream.scrollTop = stream.scrollHeight;
+            });
+        }
+    }
+
+    /**
+     * 定位承载本次专家 run 的 ask_expert 工具卡片。
+     *
+     * 优先使用后端传来的 `toolSegmentId`；若缺失，则按 `callId` 推导 `tool:<id>`；
+     * 再兜底寻找当前消息下最后一个 ask_expert 工具卡片。
+     *
+     * @param {any} event 专家事件对象。
+     * @returns {HTMLElement | null} 工具卡片 DOM。
+     */
+    function findExpertToolCard(event) {
+        if (!messagesEl) return null;
+        const parentItem = messagesEl.querySelector('.message_07S1Yg[data-id="' + cssEscape(event.parentMessageId) + '"]');
+        if (!(parentItem instanceof HTMLElement)) return null;
+        const content = parentItem.querySelector('.assistantMessage_07S1Yg') || parentItem;
+        const ids = [];
+        if (event.toolSegmentId) ids.push(String(event.toolSegmentId));
+        if (event.callId) ids.push('tool:' + String(event.callId));
+        for (let i = 0; i < ids.length; i++) {
+            const found = content.querySelector('[data-segment-id="' + cssEscape(ids[i]) + '"]');
+            if (found instanceof HTMLElement) return found;
+        }
+        const cards = Array.from(content.querySelectorAll('.root_ZUQaOA[data-tool-name="mcp__llsExpert__ask_expert"], .root_ZUQaOA[data-tool-name="ask_expert"]'));
+        const last = cards[cards.length - 1];
+        return last instanceof HTMLElement ? last : null;
+    }
+
+    /**
+     * 获取或创建 ask_expert 工具卡片内的实时专家 Output 容器。
+     *
+     * @param {HTMLElement} toolCard ask_expert 工具卡片根节点。
+     * @returns {HTMLElement} 可追加流式行的容器。
+     */
+    function ensureExpertToolStream(toolCard) {
+        let stream = toolCard.querySelector('.expertToolStream_07S1Yg');
+        if (stream instanceof HTMLElement) return stream;
+        const body = toolCard.querySelector('.toolBody_ZUQaOA') || toolCard;
+        const wrap = document.createElement('div');
+        wrap.className = 'toolResultWrap_ZUQaOA expertToolStreamWrap_07S1Yg';
+        const label = document.createElement('div');
+        label.className = 'toolResultLabel_ZUQaOA';
+        label.textContent = 'Output · streaming';
+        wrap.appendChild(label);
+        stream = document.createElement('div');
+        stream.className = 'toolResultMarkdown_ZUQaOA expertToolStream_07S1Yg';
+        wrap.appendChild(stream);
+        body.appendChild(wrap);
+        return stream;
+    }
+
+    /**
+     * 把专家事件转换成可渲染到工具 Output 的 Markdown 行。
+     *
+     * @param {any} event 专家事件对象。
+     * @returns {string} Markdown 文本；无需展示时返回空字符串。
+     */
+    function buildExpertToolStreamLine(event) {
+        switch (event.kind) {
+            case 'start':
+                return '**专家开始**' + (event.expertModel ? ' · `' + String(event.expertModel) + '`' : '');
+            case 'analysis':
+                return String(event.text || '').trim();
+            case 'tool_call':
+                return '- 🔧 ' + (formatExpertToolCallLine(event) || expertEventLabel(event));
+            case 'tool_result':
+                if (event.toolIsError) return '- ⚠️ ' + formatExpertToolResultLine(event);
+                return '- ✅ ' + String(event.toolName || 'Tool') + ' 完成';
+            case 'final':
+                return String(event.text || '').trim();
+            case 'error':
+                return '**专家错误：** ' + String(event.text || '').trim();
+            case 'cancelled':
+                return '**专家已取消：** ' + String(event.text || '').trim();
+            default:
+                return '';
+        }
+    }
+
+    /**
+     * 根据事件 kind 更新面板状态（运行中 / 完成 / 错误 / 取消）。
+     *
+     * 进入终结态时：
+     *   - 切换 status 文案；
+     *   - 移除 `running` className；
+     *   - 自动折叠面板，便于阅读主对话（用户仍可手动展开查看详情）。
+     *
+     * @param {{ wrapper: HTMLElement; status: HTMLElement; toggleBtn: HTMLElement }} panel ensureExpertPanel 返回的句柄。
+     * @param {any} event 当前事件。
+     */
+    function updateExpertPanelStatus(panel, event) {
+        if (event.kind === 'final') {
+            panel.status.textContent = t('expertPanelStatusDone') + formatExpertDuration(event.durationMs);
+            panel.wrapper.classList.remove('expertPanelRunning_07S1Yg');
+            panel.wrapper.classList.add('expertPanelDone_07S1Yg');
+            collapseExpertPanel(panel);
+        } else if (event.kind === 'error') {
+            panel.status.textContent = t('expertPanelStatusError') + formatExpertDuration(event.durationMs);
+            panel.wrapper.classList.remove('expertPanelRunning_07S1Yg');
+            panel.wrapper.classList.add('expertPanelError_07S1Yg');
+            collapseExpertPanel(panel);
+        } else if (event.kind === 'cancelled') {
+            panel.status.textContent = t('expertPanelStatusCancelled') + formatExpertDuration(event.durationMs);
+            panel.wrapper.classList.remove('expertPanelRunning_07S1Yg');
+            panel.wrapper.classList.add('expertPanelCancelled_07S1Yg');
+            collapseExpertPanel(panel);
+        }
+    }
+
+    /**
+     * 把面板设为折叠态并把切换按钮指向 "▸"。
+     *
+     * @param {{ wrapper: HTMLElement; toggleBtn: HTMLElement }} panel ensureExpertPanel 返回的句柄。
+     */
+    function collapseExpertPanel(panel) {
+        panel.wrapper.classList.add('expertPanelCollapsed_07S1Yg');
+        panel.toggleBtn.textContent = '▸';
+    }
+
+    /**
+     * 把毫秒级耗时格式化为人类可读后缀（` · 12.3s`），无值时返回空串。
+     *
+     * @param {number | undefined} ms 耗时毫秒数。
+     * @returns {string} 已加分隔符的后缀串。
+     */
+    function formatExpertDuration(ms) {
+        if (typeof ms !== 'number' || !isFinite(ms) || ms < 0) return '';
+        if (ms < 1000) return ' · ' + ms + 'ms';
+        return ' · ' + (ms / 1000).toFixed(1) + 's';
+    }
+
+    /**
+     * CSS.escape polyfill：用于把 messageId 安全插入 querySelector 字符串。
+     *
+     * 现代 webview runtime 都已实现 CSS.escape，这里仅在缺失时退化到简单的
+     * 双重转义实现，避免恶意构造的 messageId 破坏选择器语法。
+     *
+     * @param {string} value 任意字符串。
+     * @returns {string} 安全的 CSS 标识字符串。
+     */
+    function cssEscape(value) {
+        if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+            return CSS.escape(value);
+        }
+        return String(value).replace(/(["\\\[\]\.#:>\+~\*\^\$\|=\(\)\s])/g, '\\$1');
+    }
 
     // 拖放监听挂在 document.body 上：在整个 webview 区域里都能接收文件拖入，
     // 同时整片区域都给出"可投放"的视觉提示，避免目标元素过小造成事件丢失。
@@ -3153,6 +4289,7 @@
     window.addEventListener('message', handleExtensionMessage);
     renderAttachments();
     renderModelOptions();
+    renderExpertModelOptions();
     autoResizeComposer();
     renderEmptyState();
     post({ type: 'webview/ready' });

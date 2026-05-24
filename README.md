@@ -1,11 +1,14 @@
 # Claude Code Config Helper
 
-**Version:** 0.1.4
+**Version:** 2.0.0
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
 
 ## Highlights
 
+- Chat footer Todo card for LLS CCAI task workflows, with live status refresh and animated in-progress indicators.
+- Improved LLS CCAI task menu behavior: completed workflows are cleared silently, while running workflows still require confirmation before replacement.
+- Windows Claude CLI setup hints in the configuration panel, including the npm mirror install command and `%APPDATA%`-based executable path with copy buttons.
 - Built-in Chat Webview backed by a long-running local Claude CLI process.
 - Bidirectional stdio `stream-json` transport using `--output-format stream-json --verbose --input-format stream-json`.
 - Markdown, code block, diff, tool card, error, permission fallback, and workspace file-reference rendering.
@@ -93,8 +96,24 @@ Command titles may be localized according to your configured UI language.
 npm install
 npm run compile
 npx @vscode/vsce package
-code --install-extension claude-code-config-helper-0.1.4.vsix
+code --install-extension claude-code-config-helper-2.0.0.vsix
 ```
+
+### Windows Claude CLI install hint
+
+On Windows, the configuration panel can show and copy a Claude CLI npm install command:
+
+```powershell
+npm install -g @anthropic-ai/claude-code --registry=https://registry.npmmirror.com/
+```
+
+When the extension host is running on Windows, the panel also builds the common Claude CLI executable path from the host `%APPDATA%` environment variable, for example:
+
+```text
+C:\Users\lls\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe
+```
+
+Use the copy button next to the path if you need to paste it into the built-in Chat CLI path setting.
 
 ### Option 2: Run in development mode
 

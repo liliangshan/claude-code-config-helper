@@ -134,6 +134,10 @@ export interface ConfigViewState {
     currentModel: CurrentModelSelection | null;
     /** 内置 Chat 当前配置的 Claude CLI 可执行文件路径。 */
     chatCliPath: string;
+    /** 当前宿主系统平台，用于 Webview 按系统展示安装提示。 */
+    hostPlatform: NodeJS.Platform;
+    /** Windows APPDATA 环境变量路径，非 Windows 或读取不到时为空。 */
+    windowsAppDataPath: string;
     /** 用户配置的 UI 语言，可能为 auto。 */
     configuredLanguage: AppLanguage;
     /** 解析后实际生效的 UI 语言。 */

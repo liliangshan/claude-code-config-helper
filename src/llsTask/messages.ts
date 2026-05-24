@@ -32,6 +32,10 @@ export interface LlsCcaiTaskTexts {
     startTooltip: string;
     /** 点击清空已完成任务流提示。 */
     completedTooltip: string;
+    /** 任务流仍在运行时点击 CC 任务流按钮的确认提示。 */
+    runningTooltip: string;
+    /** 运行中任务流的「继续推进」按钮文案。 */
+    continueAction: string;
     /** 清空并新建按钮文案。 */
     clearAndNew: string;
     /** 取消按钮文案。 */
@@ -54,6 +58,8 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         openMarkdownOrEditPrompt: 'Please open a Markdown planning document in the IDE, or modify the prompt after @llsccai-task and try again.',
         startTooltip: 'Click to send @llsccai-task to Claude Code and start a workflow',
         completedTooltip: 'Click to clear the completed workflow and start a new one',
+        runningTooltip: 'A workflow is still running. Continue it, or clear and start a new one?',
+        continueAction: 'Continue',
         clearAndNew: 'Clear and Start New',
         cancel: 'Cancel',
         outputLanguageName: 'English'
@@ -70,6 +76,8 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         openMarkdownOrEditPrompt: '请先在 IDE 中打开 Markdown 方案规划文档，或者修改 @llsccai-task 后面的提示词再试。',
         startTooltip: '点击向 Claude Code 发送 @llsccai-task 启动任务流',
         completedTooltip: '点击清空已完成任务流并发起新的 @llsccai-task',
+        runningTooltip: '当前任务流仍在运行，是否继续推进，或清空并发起新的任务流？',
+        continueAction: '继续推进',
         clearAndNew: '清空并新建',
         cancel: '取消',
         outputLanguageName: '简体中文'
@@ -86,6 +94,8 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         openMarkdownOrEditPrompt: '請先在 IDE 中開啟 Markdown 方案規劃文件，或修改 @llsccai-task 後面的提示詞再試。',
         startTooltip: '點擊向 Claude Code 發送 @llsccai-task 以啟動任務流',
         completedTooltip: '點擊清空已完成任務流並發起新的 @llsccai-task',
+        runningTooltip: '目前任務流仍在執行中，是否繼續推進，或清空並發起新的任務流？',
+        continueAction: '繼續推進',
         clearAndNew: '清空並新建',
         cancel: '取消',
         outputLanguageName: '繁體中文'
@@ -102,6 +112,8 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         openMarkdownOrEditPrompt: 'IDE에서 Markdown 계획 문서를 열거나 @llsccai-task 뒤의 프롬프트를 수정한 뒤 다시 시도하세요.',
         startTooltip: 'Claude Code에 @llsccai-task를 보내 작업 흐름 시작',
         completedTooltip: '완료된 작업 흐름을 지우고 새 작업 흐름 시작',
+        runningTooltip: '작업 흐름이 아직 실행 중입니다. 계속 진행하시겠습니까, 아니면 지우고 새 작업 흐름을 시작하시겠습니까?',
+        continueAction: '계속 진행',
         clearAndNew: '지우고 새로 시작',
         cancel: '취소',
         outputLanguageName: 'Korean'
@@ -118,6 +130,8 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         openMarkdownOrEditPrompt: 'IDE で Markdown 計画ドキュメントを開くか、@llsccai-task の後ろのプロンプトを変更してから再試行してください。',
         startTooltip: 'Claude Code に @llsccai-task を送信してタスクフローを開始',
         completedTooltip: '完了したタスクフローをクリアして新規作成',
+        runningTooltip: 'タスクフローはまだ実行中です。続行しますか、それともクリアして新規作成しますか？',
+        continueAction: '続行',
         clearAndNew: 'クリアして新規作成',
         cancel: 'キャンセル',
         outputLanguageName: 'Japanese'
@@ -134,6 +148,8 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         openMarkdownOrEditPrompt: 'Ouvrez un document de planification Markdown dans l’IDE, ou modifiez le prompt après @llsccai-task puis réessayez.',
         startTooltip: 'Cliquer pour envoyer @llsccai-task à Claude Code et démarrer un flux de tâches',
         completedTooltip: 'Cliquer pour effacer le flux terminé et en démarrer un nouveau',
+        runningTooltip: 'Un flux de tâches est encore en cours. Continuer, ou effacer et en démarrer un nouveau ?',
+        continueAction: 'Continuer',
         clearAndNew: 'Effacer et recommencer',
         cancel: 'Annuler',
         outputLanguageName: 'French'
@@ -150,6 +166,8 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         openMarkdownOrEditPrompt: 'Öffnen Sie ein Markdown-Planungsdokument in der IDE, oder ändern Sie den Prompt nach @llsccai-task und versuchen Sie es erneut.',
         startTooltip: 'Klicken, um @llsccai-task an Claude Code zu senden und einen Task-Flow zu starten',
         completedTooltip: 'Klicken, um den abgeschlossenen Task-Flow zu löschen und neu zu starten',
+        runningTooltip: 'Ein Task-Flow läuft noch. Fortsetzen oder löschen und neu starten?',
+        continueAction: 'Fortsetzen',
         clearAndNew: 'Löschen und neu starten',
         cancel: 'Abbrechen',
         outputLanguageName: 'German'
