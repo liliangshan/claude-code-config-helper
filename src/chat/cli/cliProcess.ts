@@ -323,7 +323,9 @@ export class CliProcess implements vscode.Disposable {
         if (permissionMode && !this.hasPermissionModeArgument(args)) {
             args.push('--permission-mode', permissionMode);
         }
-        this.appendPermissionPromptToolArgs(args);
+        if (permissionMode !== 'bypassPermissions') {
+            this.appendPermissionPromptToolArgs(args);
+        }
         this.appendMcpArgs(args);
         this.appendSkillArgs(args);
         if (resumeSessionId) args.push('--resume', resumeSessionId);
@@ -332,6 +334,10 @@ export class CliProcess implements vscode.Disposable {
 
     /**
      * 注入 Claude CLI stdio 权限提示工具参数。
+     *
+     * 仅非 `bypassPermissions` 模式使用该交互通道；`bypassPermissions` 已表示完全
+     * 放行工具权限，如果继续传 `--permission-prompt-tool stdio`，部分 CLI / provider
+     * 组合仍可能弹出权限交互，反而破坏 bypass 的非交互体验。
      *
      * 官方 Claude Code 扩展在提供 `canUseTool` 回调时会自动追加
      * `--permission-prompt-tool stdio`。当前扩展没有直接使用官方 SDK，因此需要在

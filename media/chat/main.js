@@ -110,6 +110,36 @@
         taskTodoStatusCompleted: 'Abgeschlossen',
         taskTodoStatusBlocked: 'Blockiert'
     });
+
+    /** 补齐 Claude 原生 TodoWrite footer 面板文案。 */
+    Object.assign(chatTranslations.en, {
+        claudeTodoTitle: 'Claude Todos',
+        claudeTodoToggleAria: 'Toggle Claude TodoWrite todos'
+    });
+    Object.assign(chatTranslations['zh-cn'], {
+        claudeTodoTitle: 'Claude 待办',
+        claudeTodoToggleAria: '展开/折叠 Claude TodoWrite 待办'
+    });
+    Object.assign(chatTranslations['zh-tw'], {
+        claudeTodoTitle: 'Claude 待辦',
+        claudeTodoToggleAria: '展開/收合 Claude TodoWrite 待辦'
+    });
+    Object.assign(chatTranslations.ko, {
+        claudeTodoTitle: 'Claude 할 일',
+        claudeTodoToggleAria: 'Claude TodoWrite 할 일 접기/펼치기'
+    });
+    Object.assign(chatTranslations.ja, {
+        claudeTodoTitle: 'Claude Todo',
+        claudeTodoToggleAria: 'Claude TodoWrite の Todo を展開/折りたたみ'
+    });
+    Object.assign(chatTranslations.fr, {
+        claudeTodoTitle: 'Tâches Claude',
+        claudeTodoToggleAria: 'Déplier/replier les tâches TodoWrite de Claude'
+    });
+    Object.assign(chatTranslations.de, {
+        claudeTodoTitle: 'Claude-Aufgaben',
+        claudeTodoToggleAria: 'Claude TodoWrite-Todos ein-/ausklappen'
+    });
     const vscode = acquireVsCodeApi();
     const messagesEl = document.querySelector('[data-role="messages"]');
     const composerShellEl = document.querySelector('[data-role="composer-shell"]');
@@ -143,6 +173,10 @@
     };
     const taskFlowTodoState = {
         snapshot: null,
+        collapsed: false
+    };
+    const claudeTodoState = {
+        todos: [],
         collapsed: false
     };
     let activeResendEditor = null;
@@ -191,6 +225,7 @@
         ensureComposerShortcutBar();
         renderExpertModelOptions();
         renderTaskFlowTodoPanel();
+        renderClaudeTodoPanel();
         setChatRunning(composerState.chatRunning);
         rerenderMessagesFromDom();
     }
@@ -348,6 +383,141 @@
             // eslint-disable-next-line no-console
             console.log('[chat] taskFlow/status rendered panel?', !!panel);
         } catch (_e2) { /* noop */ }
+    }
+
+    /**
+     * 获取 Claude TodoWrite footer 面板 DOM；不存在时自动创建。
+     *
+     * 面板独立于 CC 任务流 Todo 面板，允许两者同时展示。存在 CC 面板时插在其后，
+     * 否则插在 context-panel 之前。
+     *
+     * @returns {HTMLElement | null} Claude Todo 面板根节点。
+     */
+    function ensureClaudeTodoPanel() {
+        if (!(composerShellEl instanceof HTMLElement)) return null;
+        var existing = composerShellEl.querySelector('[data-role="claude-todo-panel"]');
+        if (existing instanceof HTMLElement) return existing;
+        var panel = document.createElement('section');
+        panel.className = 'claudeTodoPanel_07S1Yg';
+        panel.dataset.role = 'claude-todo-panel';
+        var taskFlowPanel = composerShellEl.querySelector('[data-role="task-flow-todo-panel"]');
+        if (taskFlowPanel && taskFlowPanel.parentNode === composerShellEl) {
+            taskFlowPanel.insertAdjacentElement('afterend', panel);
+            return panel;
+        }
+        var anchor = composerShellEl.querySelector('[data-role="context-panel"]');
+        if (anchor && anchor.parentNode === composerShellEl) {
+            composerShellEl.insertBefore(panel, anchor);
+        } else {
+            composerShellEl.insertBefore(panel, composerShellEl.firstChild);
+        }
+        return panel;
+    }
+
+    /**
+     * 判断 Claude TodoWrite 列表是否有可展示项。
+     *
+     * @param {any[]} todos TodoWrite 输入中的 todos 数组。
+     * @returns {boolean} 是否可展示。
+     */
+    function hasRenderableClaudeTodos(todos) {
+        return Array.isArray(todos) && todos.length > 0;
+    }
+
+    /**
+     * 渲染或移除 Claude TodoWrite footer 面板。
+     */
+    function renderClaudeTodoPanel() {
+        if (!(composerShellEl instanceof HTMLElement)) return;
+        var todos = claudeTodoState.todos || [];
+        if (!hasRenderableClaudeTodos(todos)) {
+            var old = composerShellEl.querySelector('[data-role="claude-todo-panel"]');
+            if (old) old.remove();
+            return;
+        }
+        var completed = todos.filter(function (todo) { return todo && todo.status === 'completed'; }).length;
+        var panel = ensureClaudeTodoPanel();
+        if (!panel) return;
+        panel.textContent = '';
+        panel.dataset.collapsed = claudeTodoState.collapsed ? 'true' : 'false';
+
+        var header = document.createElement('button');
+        header.type = 'button';
+        header.className = 'claudeTodoHeader_07S1Yg';
+        header.setAttribute('aria-expanded', String(!claudeTodoState.collapsed));
+        header.setAttribute('aria-label', t('claudeTodoToggleAria'));
+        header.addEventListener('click', function () {
+            claudeTodoState.collapsed = !claudeTodoState.collapsed;
+            renderClaudeTodoPanel();
+        });
+
+        var chevron = document.createElement('span');
+        chevron.className = 'claudeTodoChevron_07S1Yg';
+        chevron.textContent = '›';
+        var title = document.createElement('span');
+        title.className = 'claudeTodoTitle_07S1Yg';
+        title.textContent = t('claudeTodoTitle') + '(' + completed + '/' + todos.length + ')';
+        var spacer = document.createElement('span');
+        spacer.className = 'claudeTodoHeaderSpacer_07S1Yg';
+        var icon = document.createElement('span');
+        icon.className = 'claudeTodoOpenIcon_07S1Yg';
+        icon.textContent = '☑';
+        header.append(chevron, title, spacer, icon);
+        panel.appendChild(header);
+
+        if (claudeTodoState.collapsed) return;
+
+        var list = document.createElement('div');
+        list.className = 'claudeTodoList_07S1Yg';
+        todos.forEach(function (todo) {
+            var item = document.createElement('div');
+            var status = (todo && todo.status) || 'pending';
+            item.className = 'claudeTodoItem_07S1Yg claudeTodoItem_07S1Yg--' + status;
+            var dot = document.createElement('span');
+            dot.className = 'claudeTodoStatusDot_07S1Yg';
+            dot.setAttribute('aria-label', getTaskFlowStatusLabel(status));
+            dot.textContent = status === 'completed' ? '✓' : '';
+            var textWrap = document.createElement('span');
+            textWrap.className = 'claudeTodoText_07S1Yg';
+            var text = document.createElement('span');
+            text.className = 'claudeTodoItemTitle_07S1Yg';
+            text.textContent = status === 'in_progress'
+                ? ((todo && (todo.activeForm || todo.content)) || '')
+                : ((todo && (todo.content || todo.activeForm)) || '');
+            textWrap.appendChild(text);
+            item.append(dot, textWrap);
+            list.appendChild(item);
+        });
+        panel.appendChild(list);
+    }
+
+    /**
+     * 保存最新 TodoWrite todos 并刷新 Claude TodoWrite footer 面板。
+     *
+     * @param {any[]} todos TodoWrite 工具输入中的 todos 数组。
+     */
+    function updateClaudeTodoStatus(todos) {
+        claudeTodoState.todos = Array.isArray(todos) ? todos.map(function (todo) { return Object.assign({}, todo); }) : [];
+        renderClaudeTodoPanel();
+    }
+
+    /**
+     * 从消息列表中提取最后一次 TodoWrite 工具输入并同步到 Claude TodoWrite footer。
+     *
+     * @param {any[]} messages 当前可见/缓存消息。
+     */
+    function syncClaudeTodoFromMessages(messages) {
+        var latest = [];
+        function visitSegment(segment) {
+            if (segment && segment.kind === 'tool' && segment.tool && segment.tool.name === 'TodoWrite') {
+                var input = segment.tool.input || tryParseJSON(segment.tool.detail);
+                if (input && Array.isArray(input.todos)) latest = input.todos;
+            }
+        }
+        (messages || []).forEach(function (message) {
+            (message.segments || []).forEach(visitSegment);
+        });
+        updateClaudeTodoStatus(latest);
     }
 
     /** 根据当前缓存的 CLI 状态刷新状态栏文案。 */
@@ -1650,8 +1820,90 @@
             appendUsageFooter(container, segment);
             return;
         }
+        if (segment.kind === 'task') {
+            appendTaskCard(container, segment);
+            return;
+        }
         // 文本内容走 Markdown 渲染（参考项目方式）
         appendText(container, segment.text || segment.sourceText || '');
+    }
+
+    /**
+     * 渲染上游 CLI 任务事件（taskstarted / tasknotification）为一行紧凑卡片。
+     *
+     * 通过 segment.id（task:<taskid>）在 patchMessage 中合并同任务的两条事件，
+     * 状态在 started → completed/failed/cancelled 间切换。
+     *
+     * @param {HTMLElement} container 消息内容容器。
+     * @param {any} segment kind === 'task' 的 ChatSegment。
+     */
+    function appendTaskCard(container, segment) {
+        var task = (segment && segment.task) || {};
+        var status = task.status || 'unknown';
+        var description = task.description || '';
+        var taskType = task.taskType || '';
+
+        var root = document.createElement('div');
+        root.className = 'taskCard_07S1Yg taskCard-status-' + status;
+        if (segment.id) root.dataset.segmentId = segment.id;
+        root.dataset.taskStatus = status;
+
+        var icon = document.createElement('span');
+        icon.className = 'taskCardIcon_07S1Yg';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = pickTaskStatusIcon(status);
+
+        var text = document.createElement('span');
+        text.className = 'taskCardText_07S1Yg';
+        text.textContent = description;
+
+        var badge = document.createElement('span');
+        badge.className = 'taskCardBadge_07S1Yg taskCardBadge-' + status;
+        badge.textContent = pickTaskStatusLabel(status);
+
+        root.appendChild(icon);
+        root.appendChild(text);
+        if (taskType) {
+            var typeTag = document.createElement('span');
+            typeTag.className = 'taskCardType_07S1Yg';
+            typeTag.textContent = taskType;
+            root.appendChild(typeTag);
+        }
+        root.appendChild(badge);
+
+        container.appendChild(root);
+    }
+
+    /**
+     * 选择任务状态对应的视觉图标。
+     *
+     * @param {string} status 任务状态。
+     * @returns {string} 单字符图标。
+     */
+    function pickTaskStatusIcon(status) {
+        switch (status) {
+            case 'started': return '⏳';
+            case 'completed': return '✓';
+            case 'failed': return '✗';
+            case 'cancelled': return '⊘';
+            default: return '•';
+        }
+    }
+
+    /**
+     * 选择任务状态对应的可读标签。
+     *
+     * @param {string} status 任务状态。
+     * @returns {string} 显示文本。
+     */
+    function pickTaskStatusLabel(status) {
+        switch (status) {
+            case 'started': return t('toolRunning');
+            case 'completed': return t('toolSuccess');
+            case 'failed': return t('toolFailed');
+            case 'cancelled': return t('expertPanelStatusCancelled') || 'cancelled';
+            default: return status;
+        }
     }
 
     /**
@@ -2307,6 +2559,9 @@
         var body = document.createElement('div');
         body.className = 'toolBody_ZUQaOA';
         renderToolBody(body, name, input, resultText, isError, tool, segment);
+        if (name === 'TodoWrite' && input && Array.isArray(input.todos)) {
+            updateClaudeTodoStatus(input.todos);
+        }
         root.appendChild(body);
 
         // 点击摘要行切换展开/折叠
@@ -3557,6 +3812,7 @@
                 }
                 lastSessionInitSignature = initSignature;
                 renderEmptyState();
+                syncClaudeTodoFromMessages(initMessages);
                 // 批量渲染历史消息——进入历史回放模式，期间 AskUserQuestion
                 // 不立即弹窗，留到回放结束后再判断是否仍未应答
                 historyReplayMode = true;
@@ -3590,6 +3846,7 @@
                 // 那一段，scrollHeight 也对应缩小），并设置一次性 flag 让紧随
                 // 而来的 message/append（重发的新 user 消息）保持在底部。
                 cacheTruncatedMessages(message.fromIndex);
+                syncClaudeTodoFromMessages(renderedMessagesCache);
                 truncateMessagesFromIndex(message.fromIndex);
                 if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
                 forceScrollToBottomOnce = true;

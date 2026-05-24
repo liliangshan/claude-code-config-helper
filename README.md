@@ -1,11 +1,15 @@
 # Claude Code Config Helper
 
-**Version:** 2.0.0
+**Version:** 2.0.8
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
 
 ## Highlights
 
+- Native Claude `TodoWrite` todos now appear in a separate footer panel, independent from the CC task-flow Todo panel, so both can be shown and collapsed independently.
+- Tool call cards are collapsed by default: only the summary row (icon + name + status badge + chevron) is shown; clicking the row toggles the body. Collapse state is preserved across tool status updates.
+- Running state lockdown: while the chat is responding, the bottom composer controls (model select, permission mode, expert model select, CC task flow button) are disabled, and the comet-beam border animation stays visible even when the textarea is focused.
+- Upstream CLI `system/taskstarted` and `system/tasknotification` JSON events are rendered as a compact task card (status icon + description + task type + status badge) instead of leaking raw JSON into the chat.
 - Chat footer Todo card for LLS CCAI task workflows, with live status refresh and animated in-progress indicators.
 - Improved LLS CCAI task menu behavior: completed workflows are cleared silently, while running workflows still require confirmation before replacement.
 - Windows Claude CLI setup hints in the configuration panel, including the npm mirror install command and `%APPDATA%`-based executable path with copy buttons.

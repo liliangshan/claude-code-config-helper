@@ -191,6 +191,9 @@ export function buildCreateLlsCcaiTaskSystemRule(language: ResolvedAppLanguage):
         '- Create the workflow from the actual document content, even if the document is informal, partial, non-standard, or written as notes. Infer clear executable tasks when possible.',
         '- If neither a useful prompt nor any usable opened/provided document content is available, ask the user to open a document or edit the prompt; do not create an unrelated workflow.',
         '- The workflow must contain clear, executable tasks.',
+        '- Only include tasks that the model can complete autonomously through edit / write / run / search style tool calls (for example: editing files, running build / test / lint commands, searching the codebase, generating code).',
+        '- Do NOT include tasks that require the user to verify, confirm, approve, sign off, manually test, deploy, configure, click, run interactive commands, take screenshots, or otherwise perform actions outside the model. Skip any such step instead of adding it as a task.',
+        '- Do NOT add planning, discussion, "wait for user feedback", "ask user to verify", or "user acceptance" tasks. The model executes; the user only reviews the diff at the end.',
         '- Task ids must be stable strings, usually "1", "2", "3".',
         '- Initial statuses should usually be pending unless a task has already been completed in the current turn.'
     ].join('\n');

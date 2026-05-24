@@ -621,7 +621,23 @@ async function startChatCliFromCurrentConfig(options: { forceRestart?: boolean }
     const relayPort = await ensureRelayServerStarted();
     const config = await chatCliConfigService.getConfigWithRelayEnv(relayPort);
     await syncClaudeCliModelSettingsSafely();
-    const persistedSessionId = await chatCliSessionStore?.readSessionId(config.cwd);
+    let persistedSessionId = await chatCliSessionStore?.readSessionId(config.cwd);
+    // 重启 / 重载场景下，CLI 端 session 仍可恢复（保留历史上下文），但扩展端
+    // LlsTaskService.snapshot 是纯内存态，已随上一进程退出而清空。若直接 --resume
+    // 旧 session，模型会以为 workflow 还在跑而不再调用 create_llsccai_task_workflow
+    // 工具，导致任务流卡死（症状：模型只回 "Workflow created" 文本，
+    // taskFlow/status tasks=0 始终不变）。
+    // 这里在每次启动 CLI 前对齐：如果扩展内存里没有 active workflow，主动丢掉旧 session
+    // 文件，让本次以全新 session 开始。
+    if (persistedSessionId && llsTaskService && !llsTaskService.hasActiveWorkflow()) {
+        try {
+            await chatCliSessionStore?.clearSessionId(config.cwd);
+            Logger.info('Chat CLI 旧 session 与扩展内存不一致（workflow 已丢失），已清理：sessionId=' + persistedSessionId);
+        } catch (err: unknown) {
+            Logger.warn('Chat CLI 旧 session 清理失败：' + (err instanceof Error ? err.message : String(err)));
+        }
+        persistedSessionId = undefined;
+    }
     const launchConfig = { ...config, resumeSessionId: persistedSessionId };
     Logger.info('准备启动 Chat CLI 配置：' + JSON.stringify({
         cwd: launchConfig.cwd,

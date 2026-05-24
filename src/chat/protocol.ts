@@ -12,7 +12,7 @@ export interface ChatSegment {
      */
     id?: string;
     /** 片段类型。 */
-    kind: 'text' | 'markdown' | 'code' | 'fileRef' | 'diff' | 'tool' | 'permission' | 'error' | 'image' | 'usage';
+    kind: 'text' | 'markdown' | 'code' | 'fileRef' | 'diff' | 'tool' | 'permission' | 'error' | 'image' | 'usage' | 'task';
     /** 片段文本内容。 */
     text?: string;
     /** 图片 data URL 或 Webview 可访问 URI。 */
@@ -108,6 +108,26 @@ export interface ChatSegment {
         cacheCreationInputTokens?: number;
         /** 缓存读取 token（Anthropic prompt caching）。 */
         cacheReadInputTokens?: number;
+    };
+    /**
+     * CLI / 代理上游附带的任务事件展示数据。
+     *
+     * 仅在 `kind === 'task'` 时使用：来自上游 stdout 的
+     * `{"type":"system","subtype":"taskstarted"|"tasknotification", ...}` JSON
+     * 事件。同一个 `id`（即 taskid）会在 webview 端按 started → notification
+     * 合并为同一张卡片，避免原始 JSON 直显。
+     */
+    task?: {
+        /** 任务展示标题（来自 description 字段）。 */
+        description: string;
+        /** 任务状态。 */
+        status: 'started' | 'completed' | 'failed' | 'cancelled' | 'unknown';
+        /** 可选：任务类型（localbash 等）。 */
+        taskType?: string;
+        /** 可选：扩展端用于读取输出的文件路径。 */
+        outputFile?: string;
+        /** 可选：上游附带的概要文本。 */
+        summary?: string;
     };
 }
 

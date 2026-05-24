@@ -394,6 +394,132 @@ select:focus-visible {
     white-space: nowrap;
 }
 
+/* Claude 原生 TodoWrite footer 面板：独立于 CC 任务流 Todo 面板，可同时显示 */
+.claudeTodoPanel_07S1Yg {
+    width: 100%;
+    margin-bottom: var(--lls-space-2);
+    border: 1px solid var(--lls-border);
+    border-radius: var(--lls-radius-md);
+    background: var(--lls-bg-elevated);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.claudeTodoHeader_07S1Yg {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: var(--lls-space-2);
+    padding: 8px 10px;
+    border: 0;
+    background: transparent;
+    color: var(--lls-fg);
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+}
+
+.claudeTodoHeader_07S1Yg:hover {
+    background: var(--lls-bg-hover);
+}
+
+.claudeTodoChevron_07S1Yg {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: var(--lls-fg-muted);
+    transform: rotate(90deg);
+    transition: transform var(--lls-transition-fast);
+}
+
+.claudeTodoPanel_07S1Yg[data-collapsed='true'] .claudeTodoChevron_07S1Yg {
+    transform: rotate(0deg);
+}
+
+.claudeTodoTitle_07S1Yg {
+    font-size: var(--lls-font-sm);
+    font-weight: 600;
+}
+
+.claudeTodoHeaderSpacer_07S1Yg {
+    flex: 1 1 auto;
+}
+
+.claudeTodoOpenIcon_07S1Yg {
+    color: var(--lls-fg-muted);
+    font-size: 13px;
+    line-height: 1;
+}
+
+.claudeTodoList_07S1Yg {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0 10px 8px 32px;
+}
+
+.claudeTodoItem_07S1Yg {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    min-height: 24px;
+    color: var(--lls-fg);
+    font-size: var(--lls-font-sm);
+    line-height: 1.45;
+}
+
+.claudeTodoStatusDot_07S1Yg {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    margin-top: 3px;
+    border: 1.5px solid var(--lls-fg-muted);
+    border-radius: 999px;
+    color: var(--lls-bg);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.claudeTodoItem_07S1Yg--in_progress .claudeTodoStatusDot_07S1Yg {
+    border: 1.5px solid transparent;
+    border-top-color: var(--vscode-progressBar-background, var(--lls-accent));
+    border-right-color: var(--vscode-progressBar-background, var(--lls-accent));
+    background: transparent;
+    color: transparent;
+    animation: taskFlowTodoSpinner_07S1Yg 0.9s linear infinite;
+}
+
+.claudeTodoItem_07S1Yg--completed .claudeTodoStatusDot_07S1Yg {
+    border-color: var(--vscode-testing-iconPassed, #73c991);
+    background: var(--vscode-testing-iconPassed, #73c991);
+    color: var(--vscode-editor-background, #1e1e1e);
+}
+
+.claudeTodoText_07S1Yg {
+    display: inline-flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.claudeTodoItemTitle_07S1Yg {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.claudeTodoItem_07S1Yg--completed .claudeTodoItemTitle_07S1Yg {
+    color: var(--lls-fg-muted);
+    text-decoration: line-through;
+}
+
+
 /* ---------------------------------------------------------------------------
  * 5. 单条消息容器
  * --------------------------------------------------------------------------- */
@@ -985,6 +1111,94 @@ select:focus-visible {
 /* 折叠时隐藏主体并去掉与摘要行的间距 */
 .root_ZUQaOA.is-collapsed > .toolBody_ZUQaOA {
     display: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * 7.1 CLI 任务事件卡片（system/taskstarted / tasknotification 转 segment 后渲染）
+ * --------------------------------------------------------------------------- */
+.taskCard_07S1Yg {
+    display: flex;
+    align-items: center;
+    gap: var(--lls-space-2);
+    margin: var(--lls-space-1) 0;
+    padding: 4px 10px;
+    background: var(--lls-bg-elevated);
+    border: 1px solid var(--lls-border);
+    border-left-width: 3px;
+    border-radius: var(--lls-radius-md);
+    font-size: var(--lls-font-sm);
+    color: var(--lls-fg);
+}
+
+.taskCard-status-started { border-left-color: var(--lls-info); }
+.taskCard-status-completed { border-left-color: var(--lls-success); }
+.taskCard-status-failed { border-left-color: var(--lls-error); }
+.taskCard-status-cancelled { border-left-color: var(--lls-warning); }
+.taskCard-status-unknown { border-left-color: var(--lls-fg-subtle); }
+
+.taskCardIcon_07S1Yg {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.taskCard-status-started .taskCardIcon_07S1Yg {
+    animation: lls-spin 1.4s linear infinite;
+}
+
+.taskCardText_07S1Yg {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.taskCardType_07S1Yg {
+    flex-shrink: 0;
+    padding: 0 6px;
+    font-family: var(--lls-mono);
+    font-size: var(--lls-font-xs);
+    color: var(--lls-fg-muted);
+    background: var(--lls-bg);
+    border: 1px solid var(--lls-border);
+    border-radius: var(--lls-radius-sm, 4px);
+}
+
+.taskCardBadge_07S1Yg {
+    flex-shrink: 0;
+    padding: 0 8px;
+    font-size: var(--lls-font-xs);
+    font-weight: 500;
+    color: var(--lls-fg-muted);
+    background: var(--lls-bg);
+    border: 1px solid var(--lls-border);
+    border-radius: var(--lls-radius-pill);
+}
+
+.taskCardBadge-started {
+    color: var(--lls-info);
+    border-color: color-mix(in srgb, var(--lls-info) 40%, transparent);
+    background: color-mix(in srgb, var(--lls-info) 10%, transparent);
+}
+.taskCardBadge-completed {
+    color: var(--lls-success);
+    border-color: color-mix(in srgb, var(--lls-success) 40%, transparent);
+    background: color-mix(in srgb, var(--lls-success) 10%, transparent);
+}
+.taskCardBadge-failed {
+    color: var(--lls-error);
+    border-color: color-mix(in srgb, var(--lls-error) 40%, transparent);
+    background: color-mix(in srgb, var(--lls-error) 10%, transparent);
+}
+.taskCardBadge-cancelled {
+    color: var(--lls-warning);
+    border-color: color-mix(in srgb, var(--lls-warning) 40%, transparent);
+    background: color-mix(in srgb, var(--lls-warning) 10%, transparent);
 }
 
 .toolBodyGrid_ZUQaOA {

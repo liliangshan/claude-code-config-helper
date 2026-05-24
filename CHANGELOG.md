@@ -2,6 +2,55 @@
 
 All notable changes to this extension are documented in this file.
 
+## [2.0.8] - 2026-05-25
+
+### Changed
+
+- In Chat CLI startup, `--permission-prompt-tool stdio` is now only passed for non-`bypassPermissions` modes. `bypassPermissions` launches without the interactive permission-prompt channel so it remains fully non-interactive.
+
+## [2.0.7] - 2026-05-25
+
+### Added
+
+- Added a separate footer panel for native Claude `TodoWrite` todos. It is independent from the CC task-flow Todo panel, so both panels can be shown at the same time and collapsed independently.
+
+## [2.0.6] - 2026-05-25
+
+### Fixed
+
+- Also strip upstream `system/taskstarted` and `system/tasknotification` JSON events when they are embedded inside assistant visible text, not only when they arrive as top-level stream-json events.
+
+## [2.0.5] - 2026-05-25
+
+### Changed
+
+- Silently discard upstream `system/taskstarted` and `system/tasknotification` JSON events instead of rendering them as a chat card. These are internal task scheduler events from the upstream CLI/proxy and are not useful to the chat user.
+
+## [2.0.4] - 2026-05-25
+
+### Fixed
+
+- Fixed a stuck-task-flow case after VS Code restart / extension reload: the Claude CLI session would resume the prior context via `--resume`, but the in-memory `LlsTaskService` workflow was already gone, so the model only replied "Workflow created" in text without actually calling `create_llsccai_task_workflow`. Now the saved `.LLSOAI/chat-session.json` is dropped on the next CLI launch when no active workflow is held in memory, forcing a clean session.
+
+## [2.0.3] - 2026-05-25
+
+### Changed
+
+- Restricted the `@llsccai-task` workflow creation prompt so generated workflows contain only tasks the model can execute autonomously (edit / write / run / search / generate). Tasks that require user verification, approval, manual testing, deployment, configuration, clicks, interactive commands, screenshots, or "wait for user feedback" / "user acceptance" steps are now explicitly skipped instead of being added.
+
+## [2.0.2] - 2026-05-25
+
+### Added
+
+- Added a friendly task event card in the Chat area that renders upstream CLI `system/taskstarted` and `system/tasknotification` JSON events as a compact card with status icon, description, task type, and status badge; the started and notification events for the same `taskid` are merged into one card so the raw JSON is no longer shown in the chat.
+
+### Changed
+
+- Made tool call cards collapsible by default: only the summary row (icon + name + status badge + chevron) is shown; clicking the row toggles the body. Collapse state is preserved when the tool status updates (running → success/failed).
+- Enlarged the expand/collapse chevron on tool cards (28×28, 20px glyph) so it is easier to see and click.
+- Disabled the bottom composer controls (model select, permission mode, expert model select, CC task flow button) while the chat is responding, so they cannot trigger CLI restarts or panels mid-response.
+- Kept the running-state composer border-beam animation visible even when the textarea is focused; the previous blue focus outline that covered the animation is suppressed during running state.
+
 ## [2.0.0] - 2026-05-25
 
 ### Added

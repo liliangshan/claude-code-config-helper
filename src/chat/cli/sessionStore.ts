@@ -67,6 +67,27 @@ export class ChatCliSessionStore {
     }
 
     /**
+     * 删除指定工作目录保存的 session_id 文件。
+     *
+     * 用于扩展启动 / 重载时主动放弃旧 CLI session：避免出现 CLI 端用
+     * `--resume` 拉回旧上下文、扩展端 LlsTaskService 内存却已经清空 workflow
+     * 的脱节状态（症状是模型只回 "Workflow created" 文本但不再调用 create
+     * 工具，导致任务流卡住、工具不被实际调用）。
+     *
+     * 文件不存在时静默忽略。
+     *
+     * @param cwd CLI 子进程工作目录。
+     */
+    public async clearSessionId(cwd: string): Promise<void> {
+        try {
+            await fs.unlink(this.resolveSessionFile(cwd));
+        } catch (err: unknown) {
+            if (err && typeof err === 'object' && (err as { code?: string }).code === 'ENOENT') return;
+            throw err;
+        }
+    }
+
+    /**
      * 解析项目级 LLS OAI 状态目录路径。
      *
      * @param cwd CLI 子进程工作目录。

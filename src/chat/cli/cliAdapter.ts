@@ -596,6 +596,10 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         const initEvent = this.parseSystemInitEvent(record);
         if (initEvent) return initEvent;
 
+        // 1.1. system / taskstarted / tasknotification → 任务卡片 segment
+        const taskEvent = this.parseSystemTaskEvent(record);
+        if (taskEvent) return taskEvent;
+
         // 1.5. Claude CLI stdio 控制请求（官方 canUseTool 权限回调通道）
         const permissionRequest = this.parseToolPermissionRequest(record);
         if (permissionRequest) return permissionRequest;
@@ -716,6 +720,27 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         const cwd = typeof record.cwd === 'string' ? record.cwd.trim() : this.process.getCwd();
         if (!sessionId) return { type: 'done' };
         return { type: 'session/init', sessionId, cwd };
+    }
+
+    /**
+     * 识别上游 stdout 中穿插的系统任务事件并静默丢弃。
+     *
+     * 命中以下两类事件：
+     * - `{"type":"system","subtype":"taskstarted", ...}`
+     * - `{"type":"system","subtype":"tasknotification", ...}`
+     *
+     * 这些事件由上游内部任务调度器发出，与终端用户的对话内容无关，曾经被当成
+     * 未知 JSON 直接以原文降级显示在聊天区造成视觉噪声。现在直接返回空 segments
+     * 让宿主静默忽略（{@link appendAssistantSegments} 已对 length===0 做了短路）。
+     *
+     * @param record CLI JSON 事件对象。
+     * @returns 命中时返回空 segments 事件以丢弃，否则返回 undefined。
+     */
+    private parseSystemTaskEvent(record: Record<string, unknown>): ParsedCliEvent | undefined {
+        if (record.type !== 'system') return undefined;
+        const subtype = typeof record.subtype === 'string' ? record.subtype : '';
+        if (subtype !== 'taskstarted' && subtype !== 'tasknotification') return undefined;
+        return { type: 'segments', segments: [], done: false };
     }
 
     // -------------------------------------------------------------------------
@@ -1812,6 +1837,8 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      * @returns segments 事件。
      */
     private parseDisplayTextInternal(text: string, forceFlushTail: boolean): ParsedCliEvent {
+        text = this.stripEmbeddedSystemTaskEvents(text);
+        if (!text) return { type: 'segments', segments: [] };
         this.rememberAssistantText(text);
         if (!text.includes('\n')) {
             return { type: 'segments', segments: [{ kind: 'markdown', text }] };
@@ -1824,6 +1851,38 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
             if (tailSegments.length > 0) segments.push(...tailSegments);
         }
         return { type: 'segments', segments };
+    }
+
+    /**
+     * 从可见 assistant 文本中移除嵌入的上游系统任务事件 JSON 行。
+     *
+     * 有些上游代理不会把 `system/taskstarted`、`system/tasknotification` 作为顶层
+     * stream-json 事件发送，而是把它们混入 assistant text 中。顶层解析路径无法命中
+     * 这种形态，因此在 markdown 解析前再做一层行级过滤，避免原始 JSON 显示到聊天区。
+     *
+     * @param text 待过滤的可见文本。
+     * @returns 移除内部任务事件后的文本。
+     */
+    private stripEmbeddedSystemTaskEvents(text: string): string {
+        if (!text || !text.includes('"subtype":"task')) return text;
+        const kept: string[] = [];
+        for (const line of text.split(/(?<=\n)/)) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+                kept.push(line);
+                continue;
+            }
+            try {
+                const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+                if (parsed.type === 'system' && (parsed.subtype === 'taskstarted' || parsed.subtype === 'tasknotification')) {
+                    continue;
+                }
+            } catch {
+                // 非 JSON 行保持原样。
+            }
+            kept.push(line);
+        }
+        return kept.join('');
     }
 
     /**
