@@ -2601,3 +2601,270 @@ body.vscode-high-contrast .ask-modal__custom-input {
     font-size: 0.88em;
     line-height: 1.45;
 }
+
+/* ===========================================================================
+ * 2.0.11 视觉刷新：聊天显示区美化（不影响 footer / 输入区）
+ *
+ * 布局：每一条助手消息 = 左侧伪元素时间线轴（100%高） + 右侧内容
+ *   - 竖线左侧：2px 主轴贯穿，文本段/工具调用各自挂点
+ *   - 竖线右侧：模型回复文本、工具调用卡片等
+ * =========================================================================== */
+
+/* 视觉刷新令牌 */
+:root {
+    --lls-refresh-rail: color-mix(in srgb, var(--lls-accent) 38%, transparent);
+    --lls-refresh-user-bubble: color-mix(in srgb, var(--lls-accent) 14%, var(--lls-bg-elevated));
+    --lls-refresh-user-bubble-border: color-mix(in srgb, var(--lls-accent) 32%, var(--lls-border));
+    --lls-refresh-card-bg: color-mix(in srgb, var(--lls-bg-elevated) 92%, transparent);
+    --lls-refresh-code-toolbar-bg: color-mix(in srgb, var(--lls-bg-elevated) 80%, transparent);
+}
+
+/* ---------- 消息列表节奏 ---------- */
+.chat-list { gap: var(--lls-space-6); padding-top: var(--lls-space-6); }
+
+/* ========== 时间线核心 ==========
+ * .message_07S1Yg[data-role='assistant']
+ *   padding-left: 36px  → 左侧 36px 固定时间线栏
+ *   ::before            → 2px 竖线，在 36px 栏内居中（left:17px → 中心=18px）
+ *   子元素节点 ::before/::after → 在竖线中心 18px 处挂点
+ *
+ * 坐标：竖线中心 18px，子元素从 36px 开始
+ *   子元素内：点中心 = 18 - 36 = -18px
+ *   10px 点 left = -18 - 5 = -23px
+ *   工具横线：点右缘(-13px) 到 卡片(0) → left:-13px, width:13px
+ */
+.message_07S1Yg[data-role='assistant'] {
+    position: relative;
+    padding-left: 36px;
+}
+
+/* 主轴：2px 竖线，36px 栏内居中，上下各缩 10px */
+.message_07S1Yg[data-role='assistant']::before {
+    content: '';
+    position: absolute;
+    left: 18px; top: 10px; bottom: 10px;
+    width: 2px; border-radius: 2px;
+    background: var(--lls-refresh-rail);
+}
+
+/* ---- 时间线上的节点 ---- */
+
+.assistantMessage_07S1Yg {
+    padding-left: 0; padding-right: var(--lls-space-2);
+    position: relative;
+}
+
+/* 模型文本段 & usage footer：实心圆，与工具点同位同尺寸，只是颜色不同 */
+.assistantMessage_07S1Yg > .markdownRoot_07S1Yg,
+.assistantMessage_07S1Yg > .assistantUsageFooter_07S1Yg { position: relative; }
+
+.assistantMessage_07S1Yg > .markdownRoot_07S1Yg::before,
+.assistantMessage_07S1Yg > .assistantUsageFooter_07S1Yg::before {
+    content: '';
+    position: absolute;
+    left: -23px; top: 0.64em;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--lls-accent);
+    z-index: 3;
+}
+
+/* 工具调用：实心点 + 横线 */
+.assistantMessage_07S1Yg > .root_ZUQaOA { position: relative; }
+
+/* 工具横线：点右缘 → 卡片左缘 */
+.assistantMessage_07S1Yg > .root_ZUQaOA::before {
+    content: '';
+    position: absolute;
+    left: -13px; top: 18px;
+    width: 13px; height: 1px;
+    background: var(--lls-refresh-rail);
+    border-radius: 0;
+    animation: none;
+}
+
+/* 工具实心点：中心 = -18px，10px 圆 → left = -23px */
+.assistantMessage_07S1Yg > .root_ZUQaOA::after {
+    content: '';
+    position: absolute;
+    left: -23px; top: 14px;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--lls-fg-muted);
+    z-index: 2;
+}
+
+/* 工具状态色 */
+.assistantMessage_07S1Yg > .root_ZUQaOA.tool-status-running::after {
+    background: var(--lls-info);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--lls-info) 24%, transparent);
+    animation: lls-timeline-pulse 1.6s ease-in-out infinite;
+}
+.assistantMessage_07S1Yg > .root_ZUQaOA.tool-status-running::before {
+    background: color-mix(in srgb, var(--lls-info) 50%, transparent);
+}
+
+/* success → 绿色点；failed → 红色点；permission_denied → 黄色点 */
+.assistantMessage_07S1Yg > .root_ZUQaOA.tool-status-success::after {
+    background: var(--lls-success);
+}
+.assistantMessage_07S1Yg > .root_ZUQaOA.tool-status-failed::after {
+    background: var(--lls-error);
+}
+.assistantMessage_07S1Yg > .root_ZUQaOA.tool-status-permission_denied::after {
+    background: var(--lls-warning);
+}
+
+@keyframes lls-timeline-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.3); }
+}
+
+/* ---------- 用户消息：精致气泡 ---------- */
+.userMessage_07S1Yg {
+    background: var(--lls-refresh-user-bubble);
+    border-color: var(--lls-refresh-user-bubble-border);
+    border-radius: 16px 16px 4px 16px;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.12), 0 2px 8px -2px color-mix(in srgb, var(--lls-accent) 18%, transparent);
+    transition: transform var(--lls-transition-fast), box-shadow var(--lls-transition-fast), border-color var(--lls-transition-fast);
+}
+.userMessageContainer_07S1Yg:hover .userMessage_07S1Yg {
+    border-color: color-mix(in srgb, var(--lls-accent) 50%, var(--lls-border));
+    box-shadow: 0 2px 3px rgba(0,0,0,0.14), 0 4px 14px -2px color-mix(in srgb, var(--lls-accent) 24%, transparent);
+}
+.userMessageResendEditor_07S1Yg {
+    background: var(--lls-refresh-user-bubble);
+    border-radius: 16px 16px 4px 16px;
+}
+
+/* ---------- 代码块：顶部工具条 + hover 浮起 ---------- */
+.root_-a7MRw {
+    transition: box-shadow var(--lls-transition-base), border-color var(--lls-transition-base);
+}
+.root_-a7MRw:hover {
+    border-color: color-mix(in srgb, var(--lls-accent) 35%, var(--lls-border));
+    box-shadow: var(--lls-shadow-md);
+}
+.root_-a7MRw .code-lang-label {
+    position: static; display: inline-flex; align-items: center;
+    margin: 0; padding: 4px 10px;
+    background: transparent; color: var(--lls-fg-muted);
+    font-size: var(--lls-font-xs); font-weight: 600;
+    letter-spacing: 0.4px; text-transform: uppercase;
+}
+.root_-a7MRw:has(.code-lang-label)::before,
+.root_-a7MRw:has(.copyButton_-a7MRw)::before,
+.root_-a7MRw:has(.copyButton_CEmTFw)::before {
+    content: ''; display: block; height: 28px;
+    background: var(--lls-refresh-code-toolbar-bg);
+    border-bottom: 1px solid var(--lls-border);
+}
+.root_-a7MRw:has(.code-lang-label) .code-lang-label {
+    position: absolute; top: 0; left: 0; height: 28px; line-height: 28px; padding: 0 12px;
+}
+.root_-a7MRw .copyButton_-a7MRw,
+.root_-a7MRw .copyButton_CEmTFw {
+    top: 4px; right: 6px; opacity: 0.55; background: transparent; border-color: transparent;
+}
+.root_-a7MRw:hover .copyButton_-a7MRw,
+.root_-a7MRw:hover .copyButton_CEmTFw {
+    opacity: 1; background: var(--lls-bg-hover); border-color: var(--lls-border);
+}
+.root_-a7MRw:has(.code-lang-label) .codeBlockWrapper_-a7MRw,
+.root_-a7MRw:has(.copyButton_-a7MRw) .codeBlockWrapper_-a7MRw,
+.root_-a7MRw:has(.copyButton_CEmTFw) .codeBlockWrapper_-a7MRw {
+    padding-top: var(--lls-space-2);
+}
+.message_07S1Yg :not(pre) > code {
+    background: color-mix(in srgb, var(--lls-accent) 8%, var(--lls-bg-elevated));
+    border-color: color-mix(in srgb, var(--lls-accent) 18%, var(--lls-border));
+    color: var(--vscode-textPreformat-foreground, var(--lls-fg));
+}
+
+/* ---------- 工具卡片 ---------- */
+.root_ZUQaOA {
+    padding: 0; overflow: visible;
+    background: var(--lls-refresh-card-bg);
+    border-left-width: 1px;
+}
+.root_ZUQaOA > .toolSummary_ZUQaOA {
+    border-top-left-radius: var(--lls-radius-md);
+    border-top-right-radius: var(--lls-radius-md);
+    padding: var(--lls-space-3) var(--lls-space-4);
+}
+.root_ZUQaOA.is-collapsed > .toolSummary_ZUQaOA {
+    border-radius: var(--lls-radius-md);
+}
+.root_ZUQaOA > .toolBody_ZUQaOA {
+    margin-top: 0; padding: var(--lls-space-3) var(--lls-space-4);
+    border-top: 1px solid var(--lls-border);
+    border-bottom-left-radius: var(--lls-radius-md);
+    border-bottom-right-radius: var(--lls-radius-md);
+}
+.root_ZUQaOA:hover > .toolSummary_ZUQaOA { background: var(--lls-bg-hover); }
+.root_ZUQaOA.is-collapsed:hover { border-color: color-mix(in srgb, var(--lls-accent) 30%, var(--lls-border)); }
+.toolStatusBadge_ZUQaOA {
+    padding: 0 8px; height: 18px; line-height: 17px;
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.6px;
+}
+.toolChevron_ZUQaOA { font-size: 22px; width: 28px; height: 28px; color: var(--lls-fg-subtle); }
+
+/* ---------- 运行中工具状态图标：环形 spinner（替换原 ⏳ emoji） ----------
+ * 设计：14px 圆环，accent 色描边 + transparent 缺口，匀速旋转。
+ * 触发条件：.tool-status-running 状态下、toolStatusIcon_ZUQaOA 不再包含 emoji，
+ * 由这里画的伪元素圆环代替。
+ */
+.tool-status-running .toolStatusIcon_ZUQaOA {
+    animation: none; /* 取消原 emoji 整体旋转 */
+    position: relative;
+}
+
+.tool-status-running .toolStatusIcon_ZUQaOA::before {
+    content: '';
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--lls-info) 25%, transparent);
+    border-top-color: var(--lls-info);
+    animation: lls-spin 0.9s linear infinite;
+    box-sizing: border-box;
+}
+
+/* 工具卡顶部状态条（非时间线场景的回退；在助手消息内被 .assistantMessage_07S1Yg > .root_ZUQaOA::before 覆盖） */
+.root_ZUQaOA::before {
+    content: ''; display: block; height: 2px; width: 100%;
+    background: transparent; transition: background var(--lls-transition-base);
+}
+.root_ZUQaOA.tool-status-running::before {
+    background: linear-gradient(90deg, transparent 0%, var(--lls-info) 50%, transparent 100%);
+    background-size: 200% 100%; animation: lls-tool-rail 1.6s linear infinite;
+}
+.root_ZUQaOA.tool-status-success::before,
+.root_ZUQaOA.tool-status-failed::before { background: transparent; }
+.root_ZUQaOA.tool-status-permission_denied::before { background: var(--lls-warning); }
+
+.root_ZUQaOA.tool-status-success,
+.root_ZUQaOA.tool-status-failed { border-left-color: var(--lls-tool-border); }
+
+@keyframes lls-tool-rail {
+    0% { background-position: 200% 0; } 100% { background-position: -100% 0; }
+}
+
+/* ---------- 任务卡片 ---------- */
+.taskCard_07S1Yg {
+    border-left-width: 1px; border-radius: var(--lls-radius-md);
+    position: relative; overflow: hidden;
+}
+.taskCard_07S1Yg::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+.taskCard-status-started::before  { background: var(--lls-info); }
+.taskCard-status-completed::before { background: var(--lls-success); }
+.taskCard-status-failed::before    { background: var(--lls-error); }
+.taskCard-status-cancelled::before { background: var(--lls-warning); }
+.taskCard-status-unknown::before   { background: var(--lls-fg-subtle); }
+
+/* ---------- chat-header ---------- */
+.chat-header {
+    padding-block: var(--lls-space-4);
+    border-bottom-color: color-mix(in srgb, var(--lls-border) 70%, transparent);
+}
+.chat-header h1 { font-weight: 500; letter-spacing: 0.4px; opacity: 0.9; }

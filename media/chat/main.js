@@ -3235,7 +3235,9 @@
      */
     function pickToolStatusIcon(status) {
         switch (status) {
-            case 'running': return '⏳';
+            // running 用空字符串：实际的旋转 spinner 由 CSS 在
+            // .tool-status-running .toolStatusIcon_ZUQaOA::before 上画
+            case 'running': return '';
             case 'success': return '✓';
             case 'failed': return '✗';
             case 'permission_denied': return '🔒';
@@ -3513,6 +3515,11 @@
         item.className = 'message_07S1Yg' + (message.role === 'user' ? ' userMessageContainer_07S1Yg' : '');
         item.dataset.id = message.id;
         item.dataset.role = message.role;
+        // 把 pending 状态同步到 DOM，便于 CSS 在助手"消息流式完成"时为最后一段
+        // 加上时间线结束点（见 style.css 末尾 [data-pending] 选择器）。
+        if (message.role === 'assistant') {
+            item.dataset.pending = message.pending ? 'true' : 'false';
+        }
         // 每条消息节点写入位置坐标 dataset.index：
         // 取追加之前的 .message_07S1Yg 兄弟数量（emptyState 已在前面被移除）作为
         // 当前消息的下标。该索引与扩展端 chatMessages 数组的下标一一对应，是
@@ -3615,7 +3622,10 @@
         // 记录渲染前的滚动状态：只有用户已经在底部附近时才跟随。
         var wasAtBottom = isScrolledNearBottom();
         // 更新 pending 状态
-        if (item.dataset.role === 'assistant') setChatRunning(!!pending);
+        if (item.dataset.role === 'assistant') {
+            setChatRunning(!!pending);
+            item.dataset.pending = pending ? 'true' : 'false';
+        }
         // 获取内容容器（如果是用户消息，不更新）
         if (item.dataset.role === 'user') return;
         var content = ensureAssistantMessageContainer(item);
