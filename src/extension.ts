@@ -101,6 +101,38 @@ const CHAT_SESSION_PRIVACY_NOTICE_KEY = 'claudeRouter.chat.sessionPrivacyNotice.
 /** 最多持久化的 Chat 消息数量，避免 workspaceState 过大。 */
 const MAX_PERSISTED_CHAT_MESSAGES = 80;
 
+/**
+ * 内存中保留的 Chat 消息上限。
+ *
+ * 之前只对持久化做 80 条截断，但内存里的 `chatMessages` 数组从未裁剪——长会话
+ * 中 segments 越累越多，导致 {@link appendAssistantSegments} 中按 id 查找 segment
+ * 的 O(n) 扫描逐渐变慢。这里设置一个略大于持久化窗口的内存窗口（160 条），
+ * 保留比持久化更长的最近上下文以兼顾"用户向上翻看"的体验，同时确保内存有界。
+ *
+ * 注：裁剪只发生在新增消息之后，且必须同步处理 {@link activeAssistantMessageId}
+ * 是否被裁掉的情况，避免后续 segment patch 找不到目标消息。
+ */
+const MAX_IN_MEMORY_CHAT_MESSAGES = 160;
+
+/**
+ * 按窗口大小裁剪内存 `chatMessages` 数组。
+ *
+ * 仅在数组长度超出 {@link MAX_IN_MEMORY_CHAT_MESSAGES} 时生效；裁掉的是数组
+ * 前段（最早的消息），并同步检查 {@link activeAssistantMessageId} 是否落在被裁
+ * 区间——若是则一并清空，避免后续 {@link getActiveAssistantMessageForPatch}
+ * 在内存里找不到对应消息时无谓地兜底创建新区域。
+ */
+function trimInMemoryChatMessages(): void {
+    if (chatMessages.length <= MAX_IN_MEMORY_CHAT_MESSAGES) return;
+    const dropCount = chatMessages.length - MAX_IN_MEMORY_CHAT_MESSAGES;
+    const dropped = chatMessages.splice(0, dropCount);
+    if (activeAssistantMessageId && dropped.some((item) => item.id === activeAssistantMessageId)) {
+        Logger.info(`内存 chatMessages 裁剪丢弃了当前活动 assistant 消息：id=${activeAssistantMessageId}`);
+        activeAssistantMessageId = undefined;
+    }
+    Logger.info(`内存 chatMessages 已裁剪：dropped=${dropCount}, remaining=${chatMessages.length}`);
+}
+
 /** Webview 粘贴/拖放二进制文件写入的临时目录名。 */
 const CHAT_UPLOAD_TEMP_DIR = 'lls-ccai-chat-uploads';
 
@@ -118,9 +150,6 @@ let pendingExpertToolContext: { parentMessageId: string; callId: string; toolSeg
 
 /** 最近一次 Chat CLI 是否由用户主动取消，用于避免误报异常退出。 */
 let chatCliCancelRequested = false;
-
-/** 由扩展主动重启/替换进程产生的预期退出次数，用于避免误报异常退出。 */
-let expectedChatCliExitCount = 0;
 
 /** 最近一次有效的 Chat 当前编辑器上下文，焦点进入 Webview 时用于保留默认文件。 */
 let lastChatEditorAttachment: ChatComposerAttachment | undefined;
@@ -168,13 +197,20 @@ interface PersistedChatSession {
 let settingsWriter: SettingsWriter | undefined;
 
 /**
- * 启动时把 Claude Code 初始权限模式设置为 acceptEdits
+ * 启动时把 Claude Code 初始权限模式设置为 `bypassPermissions`。
+ *
+ * - 将 `claudeCode.initialPermissionMode` 写入 Workspace 配置，使新启动的 CLI
+ *   直接跳过工具调用的人工确认环节，避免每次新会话都要再次授权。
+ * - 失败时只记录日志，不抛出，避免阻断扩展激活流程。
+ *
+ * 注意：函数名与日志输出保持与实际写入值（`bypassPermissions`）一致，
+ * 避免历史上"名为 acceptEdits 实写 bypassPermissions"的误导。
  */
 async function applyClaudeCodeInitialPermissionMode(): Promise<void> {
     try {
         await vscode.workspace.getConfiguration('claudeCode')
             .update('initialPermissionMode', 'bypassPermissions', vscode.ConfigurationTarget.Workspace);
-        Logger.info('Claude Code initialPermissionMode 已设置为 acceptEdits');
+        Logger.info('Claude Code initialPermissionMode 已设置为 bypassPermissions');
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         Logger.error(`设置 Claude Code initialPermissionMode 失败：${message}`);
@@ -343,6 +379,7 @@ async function openLlsCcaiTaskMenu(): Promise<void> {
     // 2) 已完成任务流：静默清空 + 填入启动提示词，不再弹确认。
     if (llsTaskService.isWorkflowCompleted()) {
         autoContinueScheduler?.cancel('点击 CC 任务流：自动清空已完成任务流');
+        autoContinueScheduler?.resetMissingToolCounter('清空已完成任务流');
         llsTaskService.clear();
         await fillBuiltInChatComposer(texts.startPrompt, true);
         return;
@@ -362,6 +399,7 @@ async function openLlsCcaiTaskMenu(): Promise<void> {
         await fillBuiltInChatComposer(llsTaskService.buildContinuePrompt(), true);
     } else if (choice === clearLabel) {
         autoContinueScheduler?.cancel('用户从任务流菜单清空运行中任务流');
+        autoContinueScheduler?.resetMissingToolCounter('用户清空运行中任务流');
         llsTaskService.clear();
         await fillBuiltInChatComposer(texts.startPrompt, true);
     }
@@ -621,23 +659,7 @@ async function startChatCliFromCurrentConfig(options: { forceRestart?: boolean }
     const relayPort = await ensureRelayServerStarted();
     const config = await chatCliConfigService.getConfigWithRelayEnv(relayPort);
     await syncClaudeCliModelSettingsSafely();
-    let persistedSessionId = await chatCliSessionStore?.readSessionId(config.cwd);
-    // 重启 / 重载场景下，CLI 端 session 仍可恢复（保留历史上下文），但扩展端
-    // LlsTaskService.snapshot 是纯内存态，已随上一进程退出而清空。若直接 --resume
-    // 旧 session，模型会以为 workflow 还在跑而不再调用 create_llsccai_task_workflow
-    // 工具，导致任务流卡死（症状：模型只回 "Workflow created" 文本，
-    // taskFlow/status tasks=0 始终不变）。
-    // 这里在每次启动 CLI 前对齐：如果扩展内存里没有 active workflow，主动丢掉旧 session
-    // 文件，让本次以全新 session 开始。
-    if (persistedSessionId && llsTaskService && !llsTaskService.hasActiveWorkflow()) {
-        try {
-            await chatCliSessionStore?.clearSessionId(config.cwd);
-            Logger.info('Chat CLI 旧 session 与扩展内存不一致（workflow 已丢失），已清理：sessionId=' + persistedSessionId);
-        } catch (err: unknown) {
-            Logger.warn('Chat CLI 旧 session 清理失败：' + (err instanceof Error ? err.message : String(err)));
-        }
-        persistedSessionId = undefined;
-    }
+    const persistedSessionId = await chatCliSessionStore?.readSessionId(config.cwd);
     const launchConfig = { ...config, resumeSessionId: persistedSessionId };
     Logger.info('准备启动 Chat CLI 配置：' + JSON.stringify({
         cwd: launchConfig.cwd,
@@ -658,7 +680,6 @@ async function startChatCliFromCurrentConfig(options: { forceRestart?: boolean }
         return;
     }
     chatCliCancelRequested = false;
-    if (cliProcess.isRunning()) expectedChatCliExitCount += 1;
     logMcpToolsBeforeCliStart();
     await cliProcess.start(launchConfig);
     ensureStreamJsonCliAdapter();
@@ -1493,9 +1514,19 @@ function isPathInside(target: string, root: string): boolean {
  * /v1/messages` 请求（命中后会清除该计时器），则视为 HTTP 卡死，进入自愈流程
  * （{@link healRelayAndCli}）。后续提交或自愈再次启动时会先清除上一次计时器。
  *
+ * 重入保护：若当前正处于自愈流程（`isHealingRelayAndCli === true`），说明
+ * 之前还存在一个由 {@link scheduleHealResend} 排队的 60s 静默重发计时器。
+ * 此时用户重新发送消息已经覆盖了旧 prompt 的意图，先调用
+ * {@link cancelPendingResend} 取消旧重发并释放互斥锁，避免到点后旧 prompt
+ * 被静默重新发送一次造成双重提交。
+ *
  * @param prompt 本次提交的完整 prompt 文本，超时后用于自动重发。
  */
 function armHttpExpectation(prompt: string): void {
+    if (isHealingRelayAndCli) {
+        Logger.info('armHttpExpectation 检测到自愈进行中，取消旧的待重发任务避免重复发送');
+        cancelPendingResend('user-resend-supersedes');
+    }
     clearHttpExpectation('rearm');
     pendingHttpExpectationPrompt = prompt;
     pendingHttpExpectationStartedAt = Date.now();
@@ -1759,15 +1790,14 @@ function mapCliStatusForWebview(status: ReturnType<CliProcess['getStatus']>): 'i
 /**
  * 处理 Chat CLI 退出：主动取消只更新状态，异常退出则提示并提供一键重启。
  *
+ * 注：扩展不再维护宿主侧的「预期退出计数」，预期退出由
+ * {@link CliProcess.expectedExitPids} 单源簿记，命中预期退出时 `CliProcess`
+ * 已经在 `bindChildEvents` 内部 return，根本不会进到本 handler。
+ *
  * @param event CLI 退出事件。
  */
 async function handleChatCliExit(event: { code: number | null; signal: NodeJS.Signals | null }): Promise<void> {
     const detail = `code=${event.code ?? 'null'}, signal=${event.signal ?? 'null'}`;
-    if (expectedChatCliExitCount > 0) {
-        expectedChatCliExitCount -= 1;
-        Logger.info(`忽略主动重启触发的 Chat CLI 退出：${detail}`);
-        return;
-    }
     clearHttpExpectation('cli_exit');
     cancelPendingResend('cli_exit');
     await chatViewHost?.postMessage({ type: 'cli/status', status: event.code === 0 ? 'exited' : 'error', detail });
@@ -1800,6 +1830,7 @@ async function appendLocalChatMessage(role: ChatMessage['role'], text: string, s
         createdAt: Date.now()
     };
     chatMessages.push(message);
+    trimInMemoryChatMessages();
     schedulePersistChatSession();
     await chatViewHost?.postMessage({ type: 'message/append', message });
 }
@@ -1935,6 +1966,9 @@ async function appendAssistantSegments(segments: ChatSegment[], done: boolean): 
     Logger.info(
         `appendAssistantSegments → postMessage：id=${message.id}, segments=${segments.length}, pending=${message.pending}`
     );
+    // 这里只发送本次 incoming segments（append: true），交由 ChatViewHost 微批合并：
+    // 同一 message id 的多次 patch 会在 ~4ms 窗口内 concat 成单条 message/patch
+    // 投递给 webview，避免流式高峰期对 postMessage 通道造成抖动。
     await chatViewHost?.postMessage({
         type: 'message/patch',
         id: message.id,

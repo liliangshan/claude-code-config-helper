@@ -330,6 +330,10 @@ export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
             && !llsTaskService.hasActiveWorkflow()
             && isLlsCcaiTaskTriggered(messages);
         if (llsTaskCreateTriggered) {
+            // planningDocumentPath / originalUserPrompt 由模型在调用 create
+            // 工具时随参数回传（见 buildCreateLlsCcaiTaskWorkflowTool 的 schema），
+            // 这里只负责打开「等待创建」标志位，让中间多轮 read 请求继续注入
+            // create 工具与系统规则。
             llsTaskService.markWorkflowCreationPending();
         }
 

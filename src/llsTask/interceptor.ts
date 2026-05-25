@@ -290,10 +290,15 @@ function interceptSseResponse(body: string, deps: LlsTaskInterceptorDeps): Inter
  * @returns 可展示给客户端的执行结果文本。
  */
 export function executeWorkflowTool(input: unknown, deps: LlsTaskInterceptorDeps, name?: string): string {
-    const result = name === LLS_CCAI_TASK_CREATE_TOOL_NAME
-        ? deps.service.createWorkflow(normalizeWorkflowInput(input))
-        : deps.service.updateTaskStatuses(normalizeUpdates(input));
-    return result.message;
+    if (name === LLS_CCAI_TASK_CREATE_TOOL_NAME) {
+        const normalized = normalizeWorkflowInput(input);
+        return deps.service.createWorkflow(
+            normalized.workflow,
+            normalized.planningDocumentPath,
+            normalized.originalUserPrompt
+        ).message;
+    }
+    return deps.service.updateTaskStatuses(normalizeUpdates(input)).message;
 }
 
 /**
@@ -352,14 +357,29 @@ export function executeLocalToolByKind(
 }
 
 /**
- * 规范化创建工具输入中的 workflow 对象。
+ * 规范化创建工具输入。
+ *
+ * 除了把 `workflow` 子对象解出来，还会回传模型同时填写的
+ * `planningDocumentPath` / `originalUserPrompt`，供 service 写入 snapshot
+ * 作为"原始用户上下文"锚点，让后续续推始终能拼回这两段附加内容。
  *
  * @param input 工具输入。
- * @returns workflow 对象或空对象。
+ * @returns 包含 workflow 与可选 path/prompt 的规范化对象。
  */
-function normalizeWorkflowInput(input: unknown): unknown {
-    if (!input || typeof input !== 'object') return {};
-    return (input as { workflow?: unknown }).workflow ?? {};
+function normalizeWorkflowInput(input: unknown): {
+    workflow: unknown;
+    planningDocumentPath: string;
+    originalUserPrompt: string;
+} {
+    if (!input || typeof input !== 'object') {
+        return { workflow: {}, planningDocumentPath: '', originalUserPrompt: '' };
+    }
+    const obj = input as { workflow?: unknown; planningDocumentPath?: unknown; originalUserPrompt?: unknown };
+    return {
+        workflow: obj.workflow ?? {},
+        planningDocumentPath: typeof obj.planningDocumentPath === 'string' ? obj.planningDocumentPath : '',
+        originalUserPrompt: typeof obj.originalUserPrompt === 'string' ? obj.originalUserPrompt : ''
+    };
 }
 
 /**

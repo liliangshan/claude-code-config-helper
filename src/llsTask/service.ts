@@ -75,10 +75,35 @@ export class LlsTaskService implements vscode.Disposable {
      *
      * Claude Code 可能会先让主模型调用 read 等工具读取方案文档，随后再发起 tool_result 请求；
      * 该状态用于在这些后续请求中继续注入 create_llsccai_task_workflow 工具和创建提示。
+     *
+     * 同时把触发时 IDE 中打开的方案规划文档路径与用户手输入的原始提示词
+     * 记录到 snapshot，让后续续推提示词和系统规则可以反复展示给模型，避免
+     * 多轮续推后丢失"原始用户上下文"。
+     *
+     * @param planningDocumentPath 触发任务流时 IDE 打开的方案文档相对路径；
+     *                             用户未打开任何文档或路径为空时传入空串。
+     * @param originalUserPrompt 用户在 `@llsccai-task` 后面手输入的原始提示词；
+     *                           已剥离 IDE 注入标签与默认占位文案；为空时不更新。
      */
-    public markWorkflowCreationPending(): void {
-        if (this.snapshot.workflow || this.workflowCreationPending) return;
+    public markWorkflowCreationPending(
+        planningDocumentPath = '',
+        originalUserPrompt = ''
+    ): void {
+        const normalizedPath = planningDocumentPath.trim();
+        const normalizedPrompt = originalUserPrompt.trim();
+        const justStarted = !this.snapshot.workflow && !this.workflowCreationPending;
+        const pathChanged = !!normalizedPath && normalizedPath !== this.snapshot.planningDocumentPath;
+        const promptChanged = !!normalizedPrompt && normalizedPrompt !== this.snapshot.originalUserPrompt;
+        if (!justStarted && !pathChanged && !promptChanged) return;
         this.workflowCreationPending = true;
+        if (pathChanged || promptChanged) {
+            this.snapshot = {
+                ...this.snapshot,
+                ...(pathChanged ? { planningDocumentPath: normalizedPath } : {}),
+                ...(promptChanged ? { originalUserPrompt: normalizedPrompt } : {}),
+                updatedAt: Date.now()
+            };
+        }
         this.emitChange();
     }
 
@@ -137,10 +162,28 @@ export class LlsTaskService implements vscode.Disposable {
         if (!workflow) {
             return texts.startPrompt;
         }
-        if (this.workflowUpdateMissing) {
-            return `${texts.continuePrompt}\n\n${texts.continuePromptWhenToolMissing}`;
-        }
-        return texts.continuePrompt;
+        const base = this.workflowUpdateMissing
+            ? `${texts.continuePrompt}\n\n${texts.continuePromptWhenToolMissing}`
+            : texts.continuePrompt;
+        const pathSuffix = snapshot.planningDocumentPath
+            ? `\n\n${texts.planningPathLabel}: ${snapshot.planningDocumentPath}`
+            : '';
+        const promptSuffix = snapshot.originalUserPrompt
+            ? `\n\nOriginal request: ${snapshot.originalUserPrompt}`
+            : '';
+        return `${base}${pathSuffix}${promptSuffix}`;
+    }
+
+    /**
+     * 获取当前 UI 语言下的任务流文案。
+     *
+     * 供 {@link AutoContinueScheduler} 等不持有 configManager 的协作者读取
+     * 多语言文案（例如熔断警告），避免重复传递 configManager。
+     *
+     * @returns 当前 UI 语言对应的任务流文案集合。
+     */
+    public getTexts() {
+        return getLlsCcaiTaskTexts(this.configManager.getResolvedUiLanguage());
     }
 
     /**
@@ -167,7 +210,11 @@ export class LlsTaskService implements vscode.Disposable {
             changed += 1;
         }
         if (changed > 0) {
-            this.snapshot = { workflow: { ...workflow, tasks: workflow.tasks.map((task) => ({ ...task })) }, updatedAt: Date.now() };
+            this.snapshot = {
+                ...this.snapshot,
+                workflow: { ...workflow, tasks: workflow.tasks.map((task) => ({ ...task })) },
+                updatedAt: Date.now()
+            };
             this.emitChange();
         }
         const progress = this.buildProgressText(this.snapshot.workflow ?? workflow);
@@ -183,13 +230,26 @@ export class LlsTaskService implements vscode.Disposable {
      * 通过主模型工具调用创建并保存新的任务流。
      *
      * @param workflow 主模型通过 create_llsccai_task_workflow 传入的 workflow。
+     * @param planningDocumentPath 模型在 create 工具中回传的方案文档路径；为空表示纯提示词驱动。
+     * @param originalUserPrompt 模型在 create 工具中回传的用户原始需求文本，用于后续续推锚定原始意图。
      * @returns 创建执行结果。
      */
-    public createWorkflow(workflow: unknown): LlsTaskUpdateResult {
+    public createWorkflow(
+        workflow: unknown,
+        planningDocumentPath = '',
+        originalUserPrompt = ''
+    ): LlsTaskUpdateResult {
         this.workflowCreationPending = false;
         try {
             const normalized = this.normalizeWorkflow(workflow as Partial<LlsTaskWorkflow>);
-            this.snapshot = { workflow: normalized, updatedAt: Date.now() };
+            const trimmedPath = planningDocumentPath.trim();
+            const trimmedPrompt = originalUserPrompt.trim();
+            this.snapshot = {
+                workflow: normalized,
+                planningDocumentPath: trimmedPath || undefined,
+                originalUserPrompt: trimmedPrompt || undefined,
+                updatedAt: Date.now()
+            };
             this.emitChange();
             return {
                 ok: true,

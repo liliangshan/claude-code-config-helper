@@ -74,7 +74,7 @@ export function buildUpdateLlsCcaiTaskWorkflowTool(): AnthropicToolDefinition {
 export function buildCreateLlsCcaiTaskWorkflowTool(): AnthropicToolDefinition {
     return {
         name: LLS_CCAI_TASK_CREATE_TOOL_NAME,
-        description: 'Create an LLS CCAI task workflow from the user prompt, opened planning document, or gathered context.',
+        description: 'Create an LLS CCAI task workflow from the user prompt, opened planning document, or gathered context. You must also echo back the planning document path you used (if any) and the user\'s original request text, so later turns can keep the original context anchored.',
         input_schema: {
             type: 'object',
             additionalProperties: false,
@@ -105,9 +105,17 @@ export function buildCreateLlsCcaiTaskWorkflowTool(): AnthropicToolDefinition {
                         }
                     },
                     required: ['title', 'summary', 'tasks']
+                },
+                planningDocumentPath: {
+                    type: 'string',
+                    description: 'Workspace-relative path of the planning document you read to build this workflow. Empty string if no document was used (pure prompt-driven workflow).'
+                },
+                originalUserPrompt: {
+                    type: 'string',
+                    description: 'The user\'s original request text after the @llsccai-task trigger (or the full document content when the request was document-driven). This text will be reused verbatim in later continue-prompts so the model never forgets the original intent.'
                 }
             },
-            required: ['workflow']
+            required: ['workflow', 'planningDocumentPath', 'originalUserPrompt']
         }
     };
 }
@@ -137,14 +145,30 @@ export function mergeAnthropicTools(
  * 构造注入给主模型的任务流系统规则。
  *
  * @param language 当前 UI 语言。
+ * @param workflow 当前任务流；存在时会被序列化进 system 让模型每轮都能看到。
+ * @param planningDocumentPath 触发任务流时 IDE 打开的方案文档路径；
+ *                             非空时追加为 `Planning document path: <path>`，
+ *                             作为"原始用户上下文"锚点，避免多轮续推后丢失意图。
+ * @param originalUserPrompt 用户在 `@llsccai-task` 后面手输入的原始提示词；
+ *                           非空时追加为 `Original user request: <text>`，
+ *                           让模型在没有文档的场景下也能记住最初的需求。
  * @returns system 规则文本。
  */
-export function buildLlsCcaiTaskSystemRule(language: ResolvedAppLanguage, workflow?: LlsTaskWorkflow): string {
+export function buildLlsCcaiTaskSystemRule(
+    language: ResolvedAppLanguage,
+    workflow?: LlsTaskWorkflow,
+    planningDocumentPath?: string,
+    originalUserPrompt?: string
+): string {
     const texts = getLlsCcaiTaskTexts(language);
+    const trimmedPath = (planningDocumentPath || '').trim();
+    const trimmedPrompt = (originalUserPrompt || '').trim();
     const lines = [
         'Active llsccai-task workflow is available for the current workspace.',
         '',
         ...(workflow ? ['Workflow JSON:', JSON.stringify(workflow, null, 2), ''] : []),
+        ...(trimmedPath ? [`Planning document path: ${trimmedPath}`, ''] : []),
+        ...(trimmedPrompt ? [`Original user request: ${trimmedPrompt}`, ''] : []),
         'Workflow tool usage rules:',
         `- Output user-facing task-flow explanations in ${texts.outputLanguageName}.`,
         '- When actual task progress changes, update the workflow status.',
@@ -190,6 +214,10 @@ export function buildCreateLlsCcaiTaskSystemRule(language: ResolvedAppLanguage):
         '- If an opened or provided document is available, read and use that document directly as the planning source. Do not require it to be a software engineering planning document, and do not reject it only because it lacks sections such as requirements, technical solution, implementation steps, or acceptance criteria.',
         '- Create the workflow from the actual document content, even if the document is informal, partial, non-standard, or written as notes. Infer clear executable tasks when possible.',
         '- If neither a useful prompt nor any usable opened/provided document content is available, ask the user to open a document or edit the prompt; do not create an unrelated workflow.',
+        '- When you invoke create_llsccai_task_workflow, you MUST also fill the planningDocumentPath and originalUserPrompt arguments:',
+        '  * planningDocumentPath: workspace-relative path of the document you actually read (from <ide_opened_file> or otherwise). Use an empty string if no document was used.',
+        '  * originalUserPrompt: the user request text after @llsccai-task verbatim. When the request is document-driven and the user wrote no meaningful prompt, paste the full document content here so later turns still see the original source.',
+        '  These two fields are reused in every later turn to keep the original user intent / document anchored. Do not omit them and do not paraphrase.',
         '- The workflow must contain clear, executable tasks.',
         '- Only include tasks that the model can complete autonomously through edit / write / run / search style tool calls (for example: editing files, running build / test / lint commands, searching the codebase, generating code).',
         '- Do NOT include tasks that require the user to verify, confirm, approve, sign off, manually test, deploy, configure, click, run interactive commands, take screenshots, or otherwise perform actions outside the model. Skip any such step instead of adding it as a task.',
