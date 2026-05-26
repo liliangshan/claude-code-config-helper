@@ -723,11 +723,25 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     }
 
     /**
+     * 上游可能出现的系统任务事件 subtype 白名单。
+     *
+     * 上游 SDK 在不同小版本里同时出现过紧凑写法（`taskstarted` / `tasknotification`）
+     * 与带下划线写法（`task_started` / `task_notification`），此处一并接收，避免
+     * 上游切换写法后任务事件原文漏到聊天区造成视觉噪声。
+     */
+    private static readonly SYSTEM_TASK_EVENT_SUBTYPES: ReadonlySet<string> = new Set([
+        'taskstarted',
+        'task_started',
+        'tasknotification',
+        'task_notification',
+    ]);
+
+    /**
      * 识别上游 stdout 中穿插的系统任务事件并静默丢弃。
      *
-     * 命中以下两类事件：
-     * - `{"type":"system","subtype":"taskstarted", ...}`
-     * - `{"type":"system","subtype":"tasknotification", ...}`
+     * 命中以下两类事件（兼容紧凑写法与下划线写法）：
+     * - `{"type":"system","subtype":"taskstarted" | "task_started", ...}`
+     * - `{"type":"system","subtype":"tasknotification" | "task_notification", ...}`
      *
      * 这些事件由上游内部任务调度器发出，与终端用户的对话内容无关，曾经被当成
      * 未知 JSON 直接以原文降级显示在聊天区造成视觉噪声。现在直接返回空 segments
@@ -739,7 +753,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     private parseSystemTaskEvent(record: Record<string, unknown>): ParsedCliEvent | undefined {
         if (record.type !== 'system') return undefined;
         const subtype = typeof record.subtype === 'string' ? record.subtype : '';
-        if (subtype !== 'taskstarted' && subtype !== 'tasknotification') return undefined;
+        if (!StreamJsonCliAdapter.SYSTEM_TASK_EVENT_SUBTYPES.has(subtype)) return undefined;
         return { type: 'segments', segments: [], done: false };
     }
 
@@ -1414,6 +1428,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
             usageRaw?.cache_read_input_tokens,
             modelUsageVal?.cacheReadInputTokens
         );
+        const contextWindow = pickNumber(modelUsageVal?.contextWindow);
 
         if (
             inputTokens === undefined &&
@@ -1434,7 +1449,8 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
                 inputTokens,
                 outputTokens,
                 cacheCreationInputTokens,
-                cacheReadInputTokens
+                cacheReadInputTokens,
+                contextWindow
             }
         };
     }
@@ -1854,48 +1870,93 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     }
 
     /**
-     * 从可见 assistant 文本中移除嵌入的上游系统任务事件 JSON 行。
+     * 从可见 assistant 文本中移除嵌入的上游系统任务事件 JSON。
      *
      * 有些上游代理不会把 `system/taskstarted`、`system/tasknotification` 作为顶层
      * stream-json 事件发送，而是把它们混入 assistant text 中。顶层解析路径无法命中
-     * 这种形态，因此在 markdown 解析前再做一层行级过滤，避免原始 JSON 显示到聊天区。
+     * 这种形态，因此在 markdown 解析前再做一层过滤，避免原始 JSON 显示到聊天区。
+     *
+     * 实现细节：上游事件 JSON 可能与前后文本/其它 JSON 紧贴一起（中间没有换行），
+     * 因此不能只做行级分割。这里通过正则定位 `{"type":"system","subtype":"task...`
+     * 起始位置，然后用括号配对扫描到匹配的右花括号，整段连同紧随的一个换行符一起
+     * 切除。对没有命中字段名（含驼峰/下划线两种风格）的文本则原样返回。
      *
      * @param text 待过滤的可见文本。
      * @returns 移除内部任务事件后的文本。
      */
     private stripEmbeddedSystemTaskEvents(text: string): string {
-        if (!text || !text.includes('"subtype":"task')) return text;
-        const kept: string[] = [];
-        for (const line of text.split(/(?<=\n)/)) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
-                kept.push(line);
+        if (!text) return text;
+        const marker = /\{[^{}]*?"type"\s*:\s*"system"[^{}]*?"subtype"\s*:\s*"(?:taskstarted|task_started|tasknotification|task_notification)"/g;
+        if (!marker.test(text)) return text;
+        marker.lastIndex = 0;
+        let out = '';
+        let cursor = 0;
+        let match: RegExpExecArray | null;
+        while ((match = marker.exec(text)) !== null) {
+            const start = match.index;
+            const end = this.findJsonObjectEnd(text, start);
+            if (end < 0) break;
+            out += text.slice(cursor, start);
+            cursor = end + 1;
+            if (text[cursor] === '\n') cursor += 1;
+            marker.lastIndex = cursor;
+        }
+        out += text.slice(cursor);
+        return out;
+    }
+
+    /**
+     * 从 `start` 位置开始按括号配对扫描，返回与之配对的右花括号下标。
+     *
+     * 支持字符串字面量与转义，跳过字符串内部的花括号。仅在外层 JSON 对象未闭合时
+     * 返回 -1。
+     *
+     * @param text 原始文本。
+     * @param start 左花括号下标，调用前应保证 `text[start] === '{'`。
+     * @returns 匹配的右花括号下标，未闭合返回 -1。
+     */
+    private findJsonObjectEnd(text: string, start: number): number {
+        let depth = 0;
+        let inString = false;
+        let escaped = false;
+        for (let i = start; i < text.length; i++) {
+            const ch = text[i];
+            if (inString) {
+                if (escaped) escaped = false;
+                else if (ch === '\\') escaped = true;
+                else if (ch === '"') inString = false;
                 continue;
             }
-            try {
-                const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-                if (parsed.type === 'system' && (parsed.subtype === 'taskstarted' || parsed.subtype === 'tasknotification')) {
-                    continue;
-                }
-            } catch {
-                // 非 JSON 行保持原样。
+            if (ch === '"') { inString = true; continue; }
+            if (ch === '{') depth += 1;
+            else if (ch === '}') {
+                depth -= 1;
+                if (depth === 0) return i;
             }
-            kept.push(line);
         }
-        return kept.join('');
+        return -1;
     }
 
     /**
      * 记录最近一轮 assistant 可见文本，供最终 result 事件判断是否重复。
      *
-     * 只保留尾部一小段，避免长会话或大段输出占用额外内存；去重只需要判断
-     * `record.result` 是否已经出现在最近尾部即可。
+     * 只保留尾部一小段（按 Unicode code point 计 8000 个），避免长会话或大段输出
+     * 占用额外内存；去重只需要判断 `record.result` 是否已经出现在最近尾部即可。
+     *
+     * 注意：使用扩展运算符 `[...str]` 按 code point 切分而不是 `String.prototype.slice`，
+     * 后者按 UTF-16 code unit 切分，对中日韩 + emoji 等代理对字符可能在中间截断，
+     * 导致拼接出非法 UTF-16 序列并让后续 result 去重哈希出现奇怪的 mismatch。
      *
      * @param text 本次即将显示到聊天区的文本片段。
      */
     private rememberAssistantText(text: string): void {
         if (!text) return;
-        this.recentAssistantText = (this.recentAssistantText + text).slice(-8000);
+        const combined = this.recentAssistantText + text;
+        const limit = 8000;
+        const codePoints = Array.from(combined);
+        this.recentAssistantText = codePoints.length > limit
+            ? codePoints.slice(-limit).join('')
+            : combined;
     }
 
     /**

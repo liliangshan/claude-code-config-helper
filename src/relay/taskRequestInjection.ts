@@ -33,6 +33,9 @@ const ASK_USER_QUESTION_TOOL_NAME = 'AskUserQuestion';
 /** Claude Code 用于切换/退出 Plan Mode 的工具名，任务流创建阶段会过滤掉以保持 Edit 模式。 */
 const EXIT_PLAN_MODE_TOOL_NAME = 'ExitPlanMode';
 
+/** Claude Code 用于进入 Plan Mode 的工具名，转发上游时统一过滤掉。 */
+const ENTER_PLAN_MODE_TOOL_NAME = 'EnterPlanMode';
+
 /**
  * Claude Code CLI 内部"会话标题生成"侧轨请求的 system 关键标识。
  *
@@ -158,13 +161,22 @@ export function injectLlsTaskRequestBody(
         //   无论本扩展专家模式是否开启，都强制走我们的 `ask_expert` 工具；
         //   即使专家模式关闭，移除 `Agent` 也只是把 sub-agent 能力收回，主对话本身
         //   仍能完成所有任务，不影响功能。
-        const blockedToolNames = new Set<string>([EXPERT_NATIVE_AGENT_TOOL_NAME]);
+        // - `EnterPlanMode` / `ExitPlanMode` 是宿主规划态控制工具，不应暴露给上游模型，
+        //   否则会让模型在普通转发对话里误触发规划模式。
+        const blockedToolNames = new Set<string>([
+            EXPERT_NATIVE_AGENT_TOOL_NAME,
+            ENTER_PLAN_MODE_TOOL_NAME,
+            EXIT_PLAN_MODE_TOOL_NAME
+        ]);
         if (shouldInjectWorkflowExecution && deps && language) {
             builtIns.push(buildUpdateLlsCcaiTaskWorkflowTool());
             blockedToolNames.add(ASK_USER_QUESTION_TOOL_NAME);
+            const snapshot = deps.llsTaskService.getSnapshot();
             userControlRules.push(buildLlsCcaiTaskSystemRule(
                 language,
-                deps.llsTaskService.getSnapshot().workflow ?? undefined
+                snapshot.workflow ?? undefined,
+                snapshot.planningDocumentPath,
+                snapshot.originalUserPrompt
             ));
         } else if (shouldInjectWorkflowCreation && deps && language) {
             builtIns.push(buildCreateLlsCcaiTaskWorkflowTool());

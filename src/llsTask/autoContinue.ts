@@ -1,5 +1,6 @@
 /** @file LLS CCAI 任务流自动续推调度器。 */
 
+import * as vscode from 'vscode';
 import { Logger } from '../logger';
 import { GET_DIAGNOSTICS_TRIGGER_TOKEN } from './diagnostics';
 import { pasteToClaudeCode } from './paster';
@@ -47,6 +48,17 @@ const TOOL_CONTINUE_DELAY_MS = 4_000;
 const DIAGNOSTICS_CONTINUE_DELAY_MS = 4_000;
 
 /**
+ * 连续多少次"模型只回文字、未调用任何工具"后熔断自动续推。
+ *
+ * 上游模型偶尔会陷入"反复用文字声称已完成、却始终不发 tool_use"的死循环；
+ * 此时无论再发多少轮续推都拿不到状态推进，反而让用户看到大量重复的
+ * "请继续执行"提示。达到该阈值后调度器会停止自动续推，并通过 VS Code
+ * 通知告知用户介入。计数会在任何"实际调用了任务流 / 诊断本地工具"的
+ * 健康路径被重置为 0。
+ */
+const MAX_CONSECUTIVE_MISSING_TOOL_COUNT = 3;
+
+/**
  * 诊断工具命中后写回 Claude Code 的续推提示词。
  *
  * 提示词以 {@link GET_DIAGNOSTICS_TRIGGER_TOKEN} 作为首行，让下一轮请求经过
@@ -88,6 +100,16 @@ export class AutoContinueScheduler {
     private static pendingDiagnosticsPrompt = '';
 
     /**
+     * 连续"模型未调用任何工具"的次数。
+     *
+     * 仅由缺失工具路径 {@link schedule} 累加；任何健康路径
+     * （{@link scheduleAfterWorkflowTool} / {@link scheduleAfterDiagnosticsTool} /
+     * {@link resetMissingToolCounter}）都会清零。达到
+     * {@link MAX_CONSECUTIVE_MISSING_TOOL_COUNT} 时熔断后续自动续推。
+     */
+    private static consecutiveMissingCount = 0;
+
+    /**
      * 外部注入的"提交一条用户消息"回调；存在时优先于
      * {@link pasteToClaudeCode}。
      *
@@ -121,8 +143,20 @@ export class AutoContinueScheduler {
      * 调度一次 4 秒后的自动续推。
      *
      * 调用前会先取消旧定时器，保证全局同时只有一个定时器。
+     *
+     * 此方法是"缺失工具路径"的入口：仅当模型本轮未调用任何工具但 workflow
+     * 仍活跃时由拦截器调用。每次进入都会把 {@link consecutiveMissingCount}
+     * 累加 1；若达到 {@link MAX_CONSECUTIVE_MISSING_TOOL_COUNT} 则触发熔断，
+     * 停止本次以及后续的自动续推，并通过 VS Code 通知告知用户介入。
      */
     public schedule(): void {
+        AutoContinueScheduler.consecutiveMissingCount += 1;
+        const count = AutoContinueScheduler.consecutiveMissingCount;
+        Logger.info(`[LlsTask][AutoContinue] 缺失工具续推累计第 ${count}/${MAX_CONSECUTIVE_MISSING_TOOL_COUNT} 次`);
+        if (count > MAX_CONSECUTIVE_MISSING_TOOL_COUNT) {
+            this.tripCircuitBreaker(count);
+            return;
+        }
         this.scheduleAfter(AUTO_CONTINUE_DELAY_MS, '4 秒', 'workflow');
     }
 
@@ -130,6 +164,7 @@ export class AutoContinueScheduler {
      * 调度一次本地任务流工具返回后的自动续推。
      */
     public scheduleAfterWorkflowTool(): void {
+        this.resetMissingToolCounter('workflow 工具命中');
         this.scheduleAfter(TOOL_CONTINUE_DELAY_MS, '4 秒', 'workflow');
     }
 
@@ -147,8 +182,41 @@ export class AutoContinueScheduler {
      * @param prompt 续推提示词；缺省时使用 {@link DIAGNOSTICS_CONTINUE_PROMPT}。
      */
     public scheduleAfterDiagnosticsTool(prompt?: string): void {
+        this.resetMissingToolCounter('诊断工具命中');
         AutoContinueScheduler.pendingDiagnosticsPrompt = prompt ?? DIAGNOSTICS_CONTINUE_PROMPT;
         this.scheduleAfter(DIAGNOSTICS_CONTINUE_DELAY_MS, '4 秒', 'diagnostics');
+    }
+
+    /**
+     * 重置"连续缺失工具调用"计数器。
+     *
+     * 任何确认模型重新进入工具调用循环的健康路径都应调用本方法，避免之前
+     * 累计的几次缺失把后续续推过早熔断。也可在外部（如 service.clear()
+     * 启动新任务流时）显式调用以确保从干净状态开始计数。
+     *
+     * @param reason 重置原因，便于日志追踪。
+     */
+    public resetMissingToolCounter(reason: string): void {
+        if (AutoContinueScheduler.consecutiveMissingCount === 0) return;
+        Logger.info(`[LlsTask][AutoContinue] 重置缺失工具续推计数（原因：${reason}）`);
+        AutoContinueScheduler.consecutiveMissingCount = 0;
+    }
+
+    /**
+     * 触发"连续缺失工具调用"熔断。
+     *
+     * 取消已登记的续推定时器，弹出 VS Code 警告通知，让用户决定下一步动作。
+     * 一旦熔断生效，需要由健康路径（模型重新调用工具）或外部主动调用
+     * {@link resetMissingToolCounter} 才会恢复自动续推。
+     *
+     * @param count 触发熔断时的累计缺失次数，用于日志记录。
+     */
+    private tripCircuitBreaker(count: number): void {
+        this.cancel(`连续 ${count} 次缺失工具调用，熔断自动续推`);
+        const texts = this.service.getTexts();
+        const message = texts.missingToolCircuitBreaker;
+        Logger.warn(`[LlsTask][AutoContinue] 熔断生效：${message}`);
+        void vscode.window.showWarningMessage(message);
     }
 
     /**

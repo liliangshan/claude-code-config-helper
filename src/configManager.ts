@@ -378,18 +378,27 @@ export class ConfigManager implements vscode.Disposable {
         providers: ProviderConfigWithoutSecrets[],
         providerApiKeys?: Record<string, string>
     ): Promise<void> {
+        const previousProviderIds = new Set(this.listProviders().map((provider) => provider.id));
         const normalizedProviders = providers.map((provider) => this.normalizeProvider(provider));
+        const nextProviderIds = new Set(normalizedProviders.map((provider) => provider.id));
+        for (const providerId of previousProviderIds) {
+            if (!nextProviderIds.has(providerId)) {
+                await this.context.secrets.delete(this.secretKey(providerId));
+            }
+        }
         if (providerApiKeys) {
             for (const provider of normalizedProviders) {
                 if (!Object.prototype.hasOwnProperty.call(providerApiKeys, provider.id)) {
                     continue;
                 }
                 const apiKey = providerApiKeys[provider.id];
-                if (apiKey && apiKey.trim()) {
-                    await this.saveProviderApiKey(provider.id, apiKey);
-                    provider.hasApiKey = true;
-                }
+                await this.saveProviderApiKey(provider.id, apiKey ?? '');
+                provider.hasApiKey = !!apiKey?.trim();
             }
+        }
+        const currentModel = this.getCurrentModel();
+        if (currentModel && !nextProviderIds.has(currentModel.providerId)) {
+            await this.setCurrentModel(null);
         }
         await this.updateProviders(normalizedProviders);
     }
@@ -483,6 +492,21 @@ export class ConfigManager implements vscode.Disposable {
             transformThink: !!model.transformThink,
             preserveReasoningContent: !!model.preserveReasoningContent
         };
+    }
+
+    /**
+     * 取指定 provider 下的指定 model 配置（不含密钥）。
+     *
+     * 供 TokenBudgetService 等需要按 provider+model 读取 contextWindow 的子系统使用。
+     *
+     * @param providerId 提供商 id。
+     * @param modelId    模型 id。
+     * @returns 命中的 ModelConfig，未命中返回 undefined。
+     */
+    public getProviderModel(providerId: string, modelId: string): ModelConfig | undefined {
+        const provider = this.getProvider(providerId);
+        if (!provider) return undefined;
+        return provider.models.find((model) => model.modelId === modelId);
     }
 
 }

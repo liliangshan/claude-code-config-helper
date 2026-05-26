@@ -108,6 +108,8 @@ export interface ChatSegment {
         cacheCreationInputTokens?: number;
         /** 缓存读取 token（Anthropic prompt caching）。 */
         cacheReadInputTokens?: number;
+        /** 模型上下文上限（CLI result.modelUsage.contextWindow）。 */
+        contextWindow?: number;
     };
     /**
      * CLI / 代理上游附带的任务事件展示数据。
@@ -264,6 +266,70 @@ export type ExtensionToWebview =
           type: 'expert/event';
           /** 事件 payload（详见 `src/expertMode/expertEvents.ts`）。 */
           event: ExpertEventPayload;
+      }
+    | {
+          /**
+           * 推送当前会话的 token 用量与上下文上限，用于 bypass 下拉右侧的
+           * token meter 实时显示「used / limit · pct%」。
+           *
+           * 由 TokenBudgetService 的 onDidChangeUsage 事件触发，扩展宿主聚合后
+           * 同步给 webview。webview 端只负责渲染，不做任何统计。
+           */
+          type: 'tokenBudget/usage';
+          /** 当前 CLI session_id。 */
+          sessionId: string;
+          /** 用于阈值判定的 input token 数（含 cache_creation）。 */
+          used: number;
+          /** 模型上下文上限（来自 ModelConfig.contextLength 或静态表）。 */
+          limit: number;
+          /** 压缩触发阈值 = limit - 60000。 */
+          threshold: number;
+          /** 数据来源：上游 usage 权威值（api）或本地 estimator 估算（estimated）。 */
+          source: 'api' | 'estimated';
+      }
+    | {
+          /**
+           * 自动压缩开始：通知 Webview 禁用输入框并显示「正在压缩上下文…」提示。
+           *
+           * 由 TokenBudgetService 在 `afterRecv` 检测到累计 input ≥ threshold
+           * 后发出，触发时机紧跟在用户看完本轮流式响应之后。
+           */
+          type: 'compaction/started';
+          /** 触发压缩时的 CLI session_id（即旧 session）。 */
+          sessionId: string;
+          /** 压缩前 totalInputForBudget，用于卡片显示节省比例。 */
+          beforeTokens: number;
+      }
+    | {
+          /**
+           * 自动压缩完成：通知 Webview 启用输入框、渲染「上下文已压缩」卡片。
+           *
+           * 卡片视觉对齐"任务完成"卡片，显示压缩前/后 token 数与摘要预览。
+           */
+          type: 'compaction/finished';
+          /** 旧 session_id（已被归档）。 */
+          oldSessionId: string;
+          /** 新 session_id（CLI 重启后落盘）。 */
+          newSessionId: string;
+          /** 压缩前 totalInputForBudget。 */
+          beforeTokens: number;
+          /** 压缩后（新 session 首轮）的 totalInputForBudget。 */
+          afterTokens: number;
+          /** 模型产出的纯 Markdown 摘要文本（已包 <summ> 之外的内容）。 */
+          summary: string;
+      }
+    | {
+          /**
+           * 自动压缩失败：通知 Webview 启用输入框并展示错误提示条。
+           *
+           * 失败时旧 session 不切换，用户仍可继续在旧 session 里发送消息
+           * （但可能很快撞上下文上限）。
+           */
+          type: 'compaction/failed';
+          /** 触发压缩时的 session_id（保持不变）。 */
+          sessionId: string;
+          /** 失败原因描述（已脱敏可直接展示）。 */
+          error: string;
       };
 
 /** Chat Webview 可渲染的任务流任务状态。 */
@@ -383,4 +449,5 @@ export type WebviewToExtension =
     | { type: 'file/open'; path: string; line?: number; endLine?: number }
     | { type: 'cli/restart' }
     | { type: 'cli/selectPath' }
+    | { type: 'tokenBudget/compactNow' }
     | { type: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; message: string };

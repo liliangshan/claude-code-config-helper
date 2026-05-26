@@ -1244,7 +1244,6 @@
 
     /** 删除提供商。 */
     function deleteProvider(providerId) {
-        if (!confirm(t('confirmDeleteProvider'))) return;
         post('saveProviders', state.providers.filter((item) => item.id !== providerId));
     }
 

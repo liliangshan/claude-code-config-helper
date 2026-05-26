@@ -126,10 +126,21 @@ export class CliProcess implements vscode.Disposable {
     /**
      * 取消当前请求，当前阶段优先向子进程发送 SIGINT。
      *
+     * 取消语义上属于"预期退出"——若 CLI 在收到 SIGINT 后直接退出（典型 Node CLI
+     * 行为），宿主端不应再弹「Chat CLI 异常退出」提示。因此这里把当前 pid 加入
+     * {@link expectedExitPids}，由 `bindChildEvents` 直接静默吸收退出事件，
+     * 不再依赖宿主侧 `chatCliCancelRequested` 与 EXIT 事件之间的时序。
+     * 同样保留 30s 自动清理，防止 CLI 实际不退出时永久占位。
+     *
      * 后续接入 `CliAdapter` 后，可在适配器中优先发送协议级取消消息。
      */
     public cancel(): void {
         if (!this.child || this.child.killed) return;
+        const pid = typeof this.child.pid === 'number' ? this.child.pid : undefined;
+        if (pid !== undefined) {
+            this.expectedExitPids.add(pid);
+            setTimeout(() => this.expectedExitPids.delete(pid), 30_000).unref?.();
+        }
         this.child.kill('SIGINT');
     }
 
@@ -511,20 +522,47 @@ export class CliProcess implements vscode.Disposable {
     /**
      * 清理当前正在运行的子进程。
      *
+     * 退出流程分两段保证子进程一定收到强制终止：
+     * 1. 先发 `SIGTERM`，给 CLI 一次机会做优雅清理（保存历史、关闭流等）。
+     * 2. 1500ms 内未退出则补发 `SIGKILL`，避免被卡住的网络 IO / osascript 等
+     *    导致子进程留下变成孤儿进程。
+     *
+     * 同时把 pid 加入 {@link expectedExitPids}，并保留 30s 自动清理；这样即便
+     * SIGKILL 后退出事件迟到（典型 macOS 下被 syscall 卡死的进程），也不会被
+     * `bindChildEvents` 误判为异常退出。
+     *
      * @param reason 日志记录用的清理原因。
      */
     private async disposeRunningChild(reason: string): Promise<void> {
         const child = this.child;
         if (!child) return;
         Logger.info(`停止 Chat CLI：${reason}`);
-        if (typeof child.pid === 'number') this.expectedExitPids.add(child.pid);
+        const pid = typeof child.pid === 'number' ? child.pid : undefined;
+        if (pid !== undefined) {
+            this.expectedExitPids.add(pid);
+            setTimeout(() => this.expectedExitPids.delete(pid), 30_000).unref?.();
+        }
         this.child = undefined;
         await new Promise<void>((resolve) => {
-            const timer = setTimeout(() => resolve(), 1500);
-            child.once('exit', () => {
+            let settled = false;
+            const finish = () => {
+                if (settled) return;
+                settled = true;
                 clearTimeout(timer);
                 resolve();
-            });
+            };
+            const timer = setTimeout(() => {
+                if (!child.killed) {
+                    Logger.warn(`Chat CLI SIGTERM 1500ms 未退出，追加 SIGKILL：pid=${pid ?? 'unknown'}`);
+                    try {
+                        child.kill('SIGKILL');
+                    } catch (err) {
+                        Logger.warn(`Chat CLI SIGKILL 失败：${err instanceof Error ? err.message : String(err)}`);
+                    }
+                }
+                finish();
+            }, 1500);
+            child.once('exit', finish);
             if (!child.killed) child.kill('SIGTERM');
         });
     }

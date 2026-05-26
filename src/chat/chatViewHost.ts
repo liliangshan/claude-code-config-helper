@@ -39,6 +39,17 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
     /** patch 队列刷新定时器。 */
     private patchFlushTimer: NodeJS.Timeout | undefined;
 
+    /**
+     * 微批合并的最大保留时长（毫秒）。
+     *
+     * 取值 4ms 大致对应 ~240Hz 的合并节奏：
+     * - 低于浏览器一帧（约 16ms），用户感知不到延迟。
+     * - 又略大于一次 microtask 队列长度，足以把同一段 CLI 解析中相邻产出的
+     *   多个 segment 合并成单条 message/patch，避免流式高峰期对 webview
+     *   postMessage 通道造成抖动。
+     */
+    private static readonly PATCH_FLUSH_WINDOW_MS = 4;
+
     /** Webview 消息事件发送器。 */
     private readonly messageEmitter = new vscode.EventEmitter<WebviewToExtension>();
 
@@ -129,7 +140,7 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
         }
         const webview = this.target?.webview;
         if (!webview) return false;
-        if (message.type === 'message/patch' && message.append) {
+        if (message.type === 'message/patch') {
             this.enqueuePatchMessage(message);
             return true;
         }

@@ -2,6 +2,18 @@
 
 All notable changes to this extension are documented in this file.
 
+## [2.0.13] - 2026-05-26
+
+### Added
+
+- Added built-in Chat token budget compression: the token meter can trigger manual compression, and large contexts can auto-trigger compression near the configured model context threshold.
+- Added relay interception for the internal `@llsccai-summ` trigger so compression uses the current CLI conversation context while avoiding Claude CLI slash-command handling.
+
+### Changed
+
+- Compression now summarizes a single flattened user-context message and removes `tool_use` / `tool_result` blocks from the summary input.
+- After compression, the extension clears `.LLSOAI/chat-session.json`, restarts the CLI into a fresh session, and injects the compressed summary internally without showing the seed message in the Chat transcript.
+
 ## [2.0.8] - 2026-05-25
 
 ### Changed

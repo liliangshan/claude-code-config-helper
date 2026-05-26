@@ -67,6 +67,24 @@ export class ChatCliSessionStore {
     }
 
     /**
+     * 删除指定工作目录保存的 session_id 文件。
+     *
+     * 由 Chat 「清空」操作调用：清空当前会话上下文意味着不再 --resume 旧 CLI session，
+     * 必须先抹掉磁盘上的 sessionId，再让 startChatCliFromCurrentConfig 以全新 session 启动。
+     * 文件不存在时静默忽略，其它 IO 错误向上抛由调用方决定如何降级。
+     *
+     * @param cwd CLI 子进程工作目录。
+     */
+    public async clearSessionId(cwd: string): Promise<void> {
+        try {
+            await fs.unlink(this.resolveSessionFile(cwd));
+        } catch (err: unknown) {
+            if (err && typeof err === 'object' && (err as { code?: string }).code === 'ENOENT') return;
+            throw err;
+        }
+    }
+
+    /**
      * 解析项目级 LLS OAI 状态目录路径。
      *
      * @param cwd CLI 子进程工作目录。

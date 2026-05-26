@@ -4,6 +4,8 @@
 .github/**
 src/**
 node_modules/**
+!node_modules/js-tiktoken/**
+!node_modules/base64-js/**
 tsconfig.json
 **/*.map
 **/*.ts

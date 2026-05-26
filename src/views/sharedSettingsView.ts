@@ -58,8 +58,16 @@ interface SharedSettingsTexts {
     testEnterHint: string;
 }
 
-/** 共享设置面板核心文案字典，未补全语言回落英文。 */
-const SHARED_SETTINGS_TEXTS: Record<ResolvedAppLanguage, SharedSettingsTexts> = {
+/**
+ * 共享设置面板核心文案字典。
+ *
+ * 仅提供 `en` 与 `zh-cn` 两套显式翻译，未补全语言通过 {@link getSharedSettingsTexts}
+ * 在读取侧回落到英文，避免出现 `undefined as unknown as` 这类骗类型占位。
+ *
+ * 注意：使用 `Partial<Record<...>>` 显式声明缺失语言为可选，而不是用强制 cast
+ * 假装字段已填，从而在编译期就要求调用方处理 undefined。
+ */
+const SHARED_SETTINGS_TEXTS: Partial<Record<ResolvedAppLanguage, SharedSettingsTexts>> = {
     en: {
         title: SHARED_SETTINGS_TITLE,
         description: 'Configure global/workspace system prompts. LLS CCAI task workflows are now created by the current main model through injected tools.',
@@ -93,23 +101,20 @@ const SHARED_SETTINGS_TEXTS: Record<ResolvedAppLanguage, SharedSettingsTexts> = 
         saveFailedPrefix: '保存共享设置失败',
         testEnterButton: '测试模拟回车',
         testEnterHint: '会向 Claude Code 输入框粘贴一段测试文本，然后调用系统级回车。macOS 首次运行会请求 VS Code 的「辅助功能」权限；如果未自动发送，请到「系统设置 → 隐私与安全性 → 辅助功能」中把 Visual Studio Code 的"允许控制电脑"权限打开后重试。Windows 使用 PowerShell SendKeys，无需额外授权。'
-    },
-    'zh-tw': undefined as unknown as SharedSettingsTexts,
-    ko: undefined as unknown as SharedSettingsTexts,
-    ja: undefined as unknown as SharedSettingsTexts,
-    fr: undefined as unknown as SharedSettingsTexts,
-    de: undefined as unknown as SharedSettingsTexts
+    }
 };
 
-SHARED_SETTINGS_TEXTS['zh-tw'] = SHARED_SETTINGS_TEXTS.en;
-SHARED_SETTINGS_TEXTS.ko = SHARED_SETTINGS_TEXTS.en;
-SHARED_SETTINGS_TEXTS.ja = SHARED_SETTINGS_TEXTS.en;
-SHARED_SETTINGS_TEXTS.fr = SHARED_SETTINGS_TEXTS.en;
-SHARED_SETTINGS_TEXTS.de = SHARED_SETTINGS_TEXTS.en;
-
-/** 根据解析后的 UI 语言读取共享设置页文案，缺失语言回落英文。 */
+/**
+ * 根据解析后的 UI 语言读取共享设置页文案。
+ *
+ * 当前仅有 `en` / `zh-cn` 提供完整翻译，其余语言一律回落到 `en`，
+ * 避免上层因缺失字段而触发运行期 `undefined` 访问异常。
+ *
+ * @param language 已解析的应用语言。
+ * @returns 命中语言或回落到英文的文案集合。
+ */
 function getSharedSettingsTexts(language: ResolvedAppLanguage): SharedSettingsTexts {
-    return SHARED_SETTINGS_TEXTS[language] ?? SHARED_SETTINGS_TEXTS.en;
+    return SHARED_SETTINGS_TEXTS[language] ?? (SHARED_SETTINGS_TEXTS.en as SharedSettingsTexts);
 }
 
 /**

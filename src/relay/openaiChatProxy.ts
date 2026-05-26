@@ -21,7 +21,9 @@ import type { DebugRecorder } from './debugRecorder';
 import { buildOpenAIForwardHeaders, describeOpenAIAuthHeaders } from './openAIHeaders';
 import { buildForwardHeaders, redactHeaders } from './forwardHeadersCommon';
 import type { UpstreamAdapter, UpstreamRequestContext } from './router';
+import { handleLlsCcaiSummCommand, isLlsCcaiSummCommandRequest } from './summCommand';
 import { injectLlsTaskRequestBody, type LlsTaskRequestInjectionDeps } from './taskRequestInjection';
+import type { TokenBudgetService } from './tokenBudget/service';
 import { joinUpstreamUrl } from './upstreamUrl';
 import { UPSTREAM_SOCKET_IDLE_TIMEOUT_MS } from './upstreamTimeouts';
 import { UsageReporter, type UsageSink } from './usageReporter';
@@ -48,12 +50,47 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
      * @param recorder 可选调试记录器。
      * @param taskDeps 可选任务流依赖。
      * @param usageSink 可选 token 使用量上报回调；用于把上游 usage 透传到 Chat UI。
+     * @param tokenBudget 可选 token 预算服务；在每次发送前/接收后做累计与自动压缩判定。
      */
     public constructor(
         private readonly recorder?: DebugRecorder,
         private readonly taskDeps?: OpenAIChatProxyTaskDeps,
-        private readonly usageSink?: UsageSink
+        private readonly usageSink?: UsageSink,
+        private readonly tokenBudget?: TokenBudgetService
     ) {}
+
+    /**
+     * 从 Anthropic 形态的请求体里提取 CLI 纯 session_id。
+     *
+     * CLI 通常会把 `{device_id, account_uuid, session_id}` 序列化后塞进
+     * `metadata.user_id`；这里优先解析其中的 session_id 字段，保证与 webview
+     * 收到的 stream-json `session/init` 事件 sessionId 对齐。
+     *
+     * @param parsedBody 已解析的请求体 JSON。
+     * @returns CLI 纯 session_id 字符串；取不到时返回空串。
+     */
+    private extractSessionId(parsedBody: unknown): string {
+        if (!parsedBody || typeof parsedBody !== 'object') return '';
+        const metadata = (parsedBody as { metadata?: unknown }).metadata;
+        if (!metadata || typeof metadata !== 'object') return '';
+        const meta = metadata as Record<string, unknown>;
+        if (typeof meta.session_id === 'string' && meta.session_id) return meta.session_id;
+        if (typeof meta.user_id === 'string' && meta.user_id) {
+            const raw = meta.user_id.trim();
+            if (raw.startsWith('{')) {
+                try {
+                    const parsed = JSON.parse(raw) as { session_id?: unknown };
+                    if (typeof parsed.session_id === 'string' && parsed.session_id) {
+                        return parsed.session_id;
+                    }
+                } catch {
+                    // 落到原值兜底。
+                }
+            }
+            return raw;
+        }
+        return '';
+    }
 
     /**
      * 处理一次 Claude Code `/v1/messages` 请求。
@@ -78,6 +115,31 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
             this.taskDeps,
             { createTriggered: ctx.llsTaskCreateTriggered === true, modelName: modelId }
         ).bodyText;
+        if (isLlsCcaiSummCommandRequest(this.parseJson(injectedBodyText))) {
+            handleLlsCcaiSummCommand({
+                res,
+                tokenBudget: this.tokenBudget,
+                sessionId: this.extractSessionId(parsedBody),
+                providerId: provider.id,
+                modelId,
+                anthropicBody: injectedBodyText
+            });
+            return;
+        }
+        // token 预算登记（在 Anthropic 形态下估算，不改写 body）
+        try {
+            const sessionId = this.extractSessionId(parsedBody);
+            if (sessionId) {
+                this.tokenBudget?.beforeSend({
+                    sessionId,
+                    providerId: provider.id,
+                    modelId,
+                    anthropicBody: injectedBodyText
+                });
+            }
+        } catch (err) {
+            Logger.warn(`[tokenBudget] beforeSend 调用异常：${err instanceof Error ? err.message : String(err)}`);
+        }
         await this.safeRecordRequestBody(injectedBodyText);
         const anthropicBody = this.parseJson(injectedBodyText);
         const converted = convertAnthropicToOpenAIChat(anthropicBody);

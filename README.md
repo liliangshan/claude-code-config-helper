@@ -1,11 +1,12 @@
 # Claude Code Config Helper
 
-**Version:** 2.0.8
+**Version:** 2.0.13
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
 
 ## Highlights
 
+- Added token budget context compression for the built-in Chat: the token meter can trigger compression, large contexts auto-trigger compression near the configured threshold, tool call/tool result blocks are removed from the summary input, and the compressed summary is injected into a fresh hidden CLI session.
 - Native Claude `TodoWrite` todos now appear in a separate footer panel, independent from the CC task-flow Todo panel, so both can be shown and collapsed independently.
 - Tool call cards are collapsed by default: only the summary row (icon + name + status badge + chevron) is shown; clicking the row toggles the body. Collapse state is preserved across tool status updates.
 - Running state lockdown: while the chat is responding, the bottom composer controls (model select, permission mode, expert model select, CC task flow button) are disabled, and the comet-beam border animation stays visible even when the textarea is focused.
@@ -152,6 +153,12 @@ When the built-in Chat is enabled and opened:
 4. CLI stdout/stderr JSON Lines are parsed into Chat segments.
 5. The Webview renders streaming markdown, code, diff, file references, tool cards, and errors.
 6. Recent Chat messages are restored from VS Code `workspaceState` for the current workspace until the user clears the session.
+
+## Context Compression
+
+The built-in Chat tracks token usage against the selected model's configured context length. When the context approaches the compression threshold, or when the user clicks the token meter compression action, the extension sends an internal `@llsccai-summ` trigger through the CLI so relay receives the current conversation context.
+
+The relay intercepts that trigger and runs a non-streaming summary request with a compacted single user message. Tool call and tool result blocks are removed from the summary input, keeping the generated summary focused on user goals, assistant decisions, touched files, constraints, and remaining work. After summary generation, the extension clears `.LLSOAI/chat-session.json`, restarts the CLI into a fresh session, and injects the compressed context internally without showing that seed message in the Chat transcript.
 
 ## Task Workflow Support
 

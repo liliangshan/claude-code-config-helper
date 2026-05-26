@@ -2075,6 +2075,115 @@ select[data-role="permission-mode-select"]:disabled {
     max-width: 150px;
 }
 
+/* token-meter 与悬浮操作按钮容器。 */
+.token-meter-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.token-meter-wrap[hidden] {
+    display: none;
+}
+
+.token-meter-wrap:not(.is-disabled).is-popover-open .token-meter-popover,
+.token-meter-wrap:not(.is-disabled):focus-within .token-meter-popover {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(-50%) translateY(-4px);
+}
+
+.token-meter-popover {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 6px);
+    z-index: 20;
+    min-width: 86px;
+    padding: 5px 8px;
+    border: 1px solid var(--lls-border, var(--vscode-widget-border, #3c3c3c));
+    border-radius: 8px;
+    color: var(--vscode-button-foreground, #fff);
+    background: var(--vscode-button-background, #0e639c);
+    font-size: 11px;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-50%) translateY(0);
+    transition: opacity var(--lls-transition-fast), transform var(--lls-transition-fast), background var(--lls-transition-fast);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.24);
+}
+
+.token-meter-popover:hover {
+    background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+.token-meter-popover::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 100%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: var(--vscode-button-background, #0e639c);
+}
+
+.token-meter-popover:hover::after {
+    border-top-color: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+/* bypass 下拉右侧的 token 用量指示，紧凑显示「used / limit · pct%」。 */
+.token-meter {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 8px;
+    margin-left: 4px;
+    font-size: 11px;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    color: var(--lls-fg-muted, var(--vscode-descriptionForeground, #888));
+    background: var(--lls-bg-subtle, transparent);
+    border: 1px solid var(--lls-border, var(--vscode-widget-border, transparent));
+    border-radius: 12px;
+    white-space: nowrap;
+    user-select: none;
+    cursor: default;
+    transition: color var(--lls-transition-fast), border-color var(--lls-transition-fast), background var(--lls-transition-fast);
+}
+
+.token-meter.is-warn {
+    color: var(--vscode-editorWarning-foreground, #d4a017);
+    border-color: var(--vscode-editorWarning-foreground, #d4a017);
+}
+
+.token-meter.is-danger {
+    color: var(--vscode-editorError-foreground, #d04040);
+    border-color: var(--vscode-editorError-foreground, #d04040);
+}
+
+.token-meter.is-over-threshold {
+    animation: tokenMeterPulse 1.6s ease-in-out infinite;
+}
+
+.token-meter.is-estimated::after {
+    content: '~';
+    margin-left: 4px;
+    opacity: 0.6;
+}
+
+.token-meter.is-compacting {
+    color: var(--vscode-progressBar-background, #3794ff);
+    border-color: var(--vscode-progressBar-background, #3794ff);
+    animation: tokenMeterPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes tokenMeterPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+}
+
 .model-select:hover {
     background: var(--lls-bg-hover);
     border-color: var(--lls-border);

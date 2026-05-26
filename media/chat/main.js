@@ -155,6 +155,9 @@
     const dropOverlayEl = document.querySelector('[data-role="drop-overlay"]');
     const modelSelectEl = document.querySelector('[data-role="model-select"]');
     const permissionModeSelectEl = document.querySelector('[data-role="permission-mode-select"]');
+    const tokenMeterEl = document.querySelector('[data-role="token-meter"]');
+    const tokenMeterWrapEl = document.querySelector('[data-role="token-meter-wrap"]');
+    const tokenMeterCompactEl = document.querySelector('[data-role="token-meter-compact"]');
     const statusEl = document.querySelector('[data-role="cli-status"]');
     const restartCliEl = document.querySelector('[data-role="restart-cli"]');
     const clearSessionEl = document.querySelector('[data-role="clear-session"]');
@@ -169,7 +172,8 @@
         permissionMode: 'acceptEdits',
         defaultAttachmentPaths: new Set(),
         dragDepth: 0,
-        chatRunning: false
+        chatRunning: false,
+        compacting: false
     };
     const taskFlowTodoState = {
         snapshot: null,
@@ -1085,6 +1089,10 @@
         // 运行中禁用：顶部模型选择 / 权限模式选择，以及输入框下方的专家模型
         // 选择和 CC 任务流按钮，避免在响应过程中误触发切换/重启或弹出面板。
         applyRunningDisabledControls(composerState.chatRunning);
+        if (tokenMeterWrapEl instanceof HTMLElement) {
+            tokenMeterWrapEl.classList.toggle('is-disabled', composerState.chatRunning || composerState.compacting);
+            if (composerState.chatRunning || composerState.compacting) closeTokenMeterPopover();
+        }
         if (!(sendEl instanceof HTMLButtonElement)) return;
         sendEl.textContent = composerState.chatRunning ? '■' : '↑';
         sendEl.title = composerState.chatRunning ? t('stopResponse') : t('sendMessage');
@@ -3915,8 +3923,200 @@
                 setChatRunning(false);
                 showToast('error', message.detail ? (message.error || t('unknownError')) + ': ' + message.detail : (message.error || t('unknownError')));
                 break;
+            case 'tokenBudget/usage':
+                renderTokenMeter({
+                    used: Number(message.used) || 0,
+                    limit: Number(message.limit) || 0,
+                    threshold: Number(message.threshold) || 0,
+                    source: message.source === 'api' ? 'api' : 'estimated'
+                });
+                break;
+            case 'compaction/started':
+                setComposerCompacting(true);
+                setTokenMeterCompacting(true);
+                showToast('info', '正在压缩上下文…');
+                break;
+            case 'compaction/finished':
+                setComposerCompacting(false);
+                setTokenMeterCompacting(false);
+                renderCompactionCard({
+                    oldSessionId: message.oldSessionId,
+                    newSessionId: message.newSessionId,
+                    beforeTokens: Number(message.beforeTokens) || 0,
+                    afterTokens: Number(message.afterTokens) || 0,
+                    summary: message.summary || ''
+                });
+                break;
+            case 'compaction/failed':
+                setComposerCompacting(false);
+                setTokenMeterCompacting(false);
+                showToast('error', '压缩失败：' + (message.error || t('unknownError')) + '，建议手动清空上下文。');
+                break;
             default:
                 break;
+        }
+    }
+
+    /**
+     * 切换 webview 输入框 / 发送按钮 / 附件按钮的「压缩中」禁用状态。
+     *
+     * 与 setChatRunning 互不冲突：compacting=true 时强制禁用并加 hover 提示；
+     * compacting=false 时恢复，由 setChatRunning 当前状态决定按钮形态。
+     *
+     * @param {boolean} compacting 是否处于自动压缩流程中。
+     */
+    function setComposerCompacting(compacting) {
+        var disabled = !!compacting;
+        composerState.compacting = disabled;
+        if (composerEl instanceof HTMLTextAreaElement) {
+            composerEl.disabled = disabled;
+            if (disabled) {
+                composerEl.dataset.compacting = 'true';
+                composerEl.title = '正在压缩上下文…';
+            } else {
+                delete composerEl.dataset.compacting;
+                composerEl.removeAttribute('title');
+            }
+        }
+        if (sendEl instanceof HTMLButtonElement) {
+            sendEl.disabled = disabled;
+            if (disabled) sendEl.title = '正在压缩上下文…';
+            else sendEl.title = composerState.chatRunning ? t('stopResponse') : t('sendMessage');
+        }
+        if (attachFileEl instanceof HTMLButtonElement) attachFileEl.disabled = disabled;
+        if (composerShellEl instanceof HTMLElement) {
+            composerShellEl.classList.toggle('chat-input--compacting', disabled);
+        }
+        if (tokenMeterWrapEl instanceof HTMLElement) {
+            tokenMeterWrapEl.classList.toggle('is-disabled', disabled || composerState.chatRunning);
+            if (disabled || composerState.chatRunning) closeTokenMeterPopover();
+        }
+    }
+
+    /**
+     * 把整数 token 数格式化为紧凑形式：1234 → "1.2k"，1234567 → "1.23m"。
+     *
+     * @param {number} n token 数。
+     * @returns {string} 紧凑展示文本。
+     */
+    function formatTokenCount(n) {
+        if (!Number.isFinite(n) || n <= 0) return '0';
+        if (n < 1000) return String(Math.round(n));
+        if (n < 1_000_000) return (n / 1000).toFixed(n < 10_000 ? 2 : 1).replace(/\.0+$/, '') + 'k';
+        return (n / 1_000_000).toFixed(2).replace(/\.0+$/, '') + 'm';
+    }
+
+    /** 关闭 token meter 的压缩操作弹层。 */
+    function closeTokenMeterPopover() {
+        if (!(tokenMeterWrapEl instanceof HTMLElement)) return;
+        tokenMeterWrapEl.classList.remove('is-popover-open');
+    }
+
+    /** 切换 token meter 的压缩操作弹层。 */
+    function toggleTokenMeterPopover() {
+        if (!(tokenMeterWrapEl instanceof HTMLElement)) return;
+        if (composerState.chatRunning || composerState.compacting || tokenMeterWrapEl.hidden) return;
+        tokenMeterWrapEl.classList.toggle('is-popover-open');
+    }
+
+    /**
+     * 渲染 bypass 下拉右侧的 token meter。
+     *
+     * 阈值配色：
+     *  - < 70%       默认；
+     *  - 70% – 90%   黄色；
+     *  - ≥ 90%       红色；
+     *  - 触达 threshold（约 limit-60k）额外加 `is-over-threshold` 类，
+     *    提示即将触发自动压缩。
+     *
+     * @param {{used:number,limit:number,threshold:number,source:'api'|'estimated'}} info usage 快照。
+     */
+    function renderTokenMeter(info) {
+        if (!(tokenMeterEl instanceof HTMLElement) || !(tokenMeterWrapEl instanceof HTMLElement)) return;
+        if (!info || !info.limit || info.limit <= 0) {
+            tokenMeterWrapEl.hidden = true;
+            closeTokenMeterPopover();
+            return;
+        }
+        var pct = Math.round((info.used / info.limit) * 1000) / 10;
+        if (!Number.isFinite(pct) || pct < 0) pct = 0;
+        if (pct > 999) pct = 999;
+        tokenMeterWrapEl.hidden = false;
+        tokenMeterEl.textContent = formatTokenCount(info.used) + ' / ' + formatTokenCount(info.limit) + ' · ' + pct.toFixed(1) + '%';
+        tokenMeterEl.classList.remove('is-warn', 'is-danger', 'is-over-threshold', 'is-estimated', 'is-compacting');
+        if (pct >= 90) tokenMeterEl.classList.add('is-danger');
+        else if (pct >= 70) tokenMeterEl.classList.add('is-warn');
+        if (info.threshold > 0 && info.used >= info.threshold) tokenMeterEl.classList.add('is-over-threshold');
+        if (info.source === 'estimated') tokenMeterEl.classList.add('is-estimated');
+        tokenMeterEl.title = '上下文用量 ' + info.used.toLocaleString() + ' / ' + info.limit.toLocaleString()
+            + ' tokens · ' + pct.toFixed(1) + '%'
+            + (info.source === 'estimated' ? '（本地估算）' : '（上游 usage）')
+            + (info.threshold > 0 && info.used >= info.threshold ? '\n已触达自动压缩阈值' : '');
+    }
+
+    /**
+     * 切换 token meter 的「压缩中…」临时态。
+     *
+     * @param {boolean} compacting 是否处于自动压缩流程中。
+     */
+    function setTokenMeterCompacting(compacting) {
+        if (!(tokenMeterEl instanceof HTMLElement) || !(tokenMeterWrapEl instanceof HTMLElement)) return;
+        if (compacting) {
+            tokenMeterWrapEl.hidden = false;
+            tokenMeterEl.classList.add('is-compacting');
+            tokenMeterEl.textContent = '压缩中…';
+            tokenMeterEl.title = '正在压缩上下文，完成后会切换到新会话';
+        } else {
+            tokenMeterEl.classList.remove('is-compacting');
+            // 实际数字由下一次 tokenBudget/usage 推送覆盖。
+        }
+    }
+
+    /**
+     * 在消息列表底部插入「上下文已压缩」卡片，视觉对齐"任务完成"卡片风格。
+     *
+     * @param {{oldSessionId:string,newSessionId:string,beforeTokens:number,afterTokens:number,summary:string}} info 压缩结果。
+     */
+    function renderCompactionCard(info) {
+        if (!(messagesEl instanceof HTMLElement)) return;
+        var card = document.createElement('div');
+        card.className = 'message_07S1Yg compaction-card_07S1Yg';
+        card.setAttribute('data-role', 'compaction-card');
+        var ratio = info.beforeTokens > 0
+            ? Math.round((1 - info.afterTokens / info.beforeTokens) * 1000) / 10
+            : 0;
+        var header = document.createElement('div');
+        header.className = 'compaction-card-header';
+        header.textContent = '🗜 上下文已压缩';
+        var body = document.createElement('div');
+        body.className = 'compaction-card-body';
+        body.innerHTML =
+            '<div>已开启新会话，原会话历史已被压缩为摘要。</div>'
+            + '<div class="compaction-card-stats">'
+            +   '<span>压缩前：' + info.beforeTokens.toLocaleString() + ' tokens</span>'
+            +   '<span>压缩后：' + info.afterTokens.toLocaleString() + ' tokens</span>'
+            +   '<span>节省：' + (ratio > 0 ? ratio.toFixed(1) : '0') + '%</span>'
+            + '</div>';
+        var toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'compaction-card-toggle';
+        toggle.textContent = '▾ 展开摘要';
+        var summaryEl = document.createElement('pre');
+        summaryEl.className = 'compaction-card-summary';
+        summaryEl.style.display = 'none';
+        summaryEl.style.whiteSpace = 'pre-wrap';
+        summaryEl.textContent = info.summary || '';
+        toggle.addEventListener('click', function () {
+            var open = summaryEl.style.display === 'none';
+            summaryEl.style.display = open ? 'block' : 'none';
+            toggle.textContent = open ? '▴ 收起摘要' : '▾ 展开摘要';
+        });
+        card.append(header, body, toggle, summaryEl);
+        messagesEl.appendChild(card);
+        if (typeof messagesEl.scrollTo === 'function') {
+            messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
+        } else {
+            messagesEl.scrollTop = messagesEl.scrollHeight;
         }
     }
 
@@ -3986,6 +4186,21 @@
         composerState.permissionMode = mode;
         renderPermissionModeSelect();
         post({ type: 'permissionMode/select', mode });
+    });
+    tokenMeterEl?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        toggleTokenMeterPopover();
+    });
+    tokenMeterCompactEl?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (composerState.chatRunning || composerState.compacting) return;
+        closeTokenMeterPopover();
+        post({ type: 'tokenBudget/compactNow' });
+    });
+    document.addEventListener('click', (event) => {
+        if (!(tokenMeterWrapEl instanceof HTMLElement)) return;
+        if (event.target instanceof Node && tokenMeterWrapEl.contains(event.target)) return;
+        closeTokenMeterPopover();
     });
     restartCliEl?.addEventListener('click', () => post({ type: 'cli/restart' }));
     clearSessionEl?.addEventListener('click', () => post({ type: 'session/clear' }));

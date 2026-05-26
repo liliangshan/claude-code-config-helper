@@ -11,6 +11,13 @@ const IDE_OPENED_FILE_RE = /<ide_opened_file>\s*The user opened the file\s+(.+?)
 
 /** 默认启动提示中要求用户替换的占位文案特征。 */
 const DEFAULT_START_PROMPT_MARKERS: readonly string[] = [
+    'please open a markdown planning document',
+    '请先在 ide 中打开',
+    '請先在 ide 中開啟',
+    'ide에서 markdown 계획 문서를 열거나',
+    'ide で markdown 計画ドキュメントを開くか',
+    'ouvrez un document de planification markdown',
+    'öffnen sie ein markdown-planungsdokument',
     'delete this sentence and use your own prompt',
     '删除这段使用自己的提示词',
     '刪除此句並使用自己的提示詞',
@@ -97,6 +104,31 @@ export function extractPlanningText(messages: unknown): string {
 export function extractIdeOpenedFilePath(messages: unknown): string {
     const match = IDE_OPENED_FILE_RE.exec(extractLastUserText(messages));
     return match?.[1]?.trim() ?? '';
+}
+
+/**
+ * 从最后一条 user 消息提取"用户在 @llsccai-task 后输入的原始提示词"。
+ *
+ * 与 {@link extractPlanningText} 不同：本函数会进一步剥离 Claude Code
+ * 注入的 `<ide_opened_file>...` 标签整块，避免把"IDE 自动告诉模型用户
+ * 打开了哪个文件"的环境信息当作用户原始需求保存下来；同时若用户没改
+ * 默认占位文本（{@link isDefaultStartPrompt} 命中），返回空字符串，
+ * 表示"没有可用的手输需求"。
+ *
+ * 输出供 service 持久化为 snapshot.originalUserPrompt，让后续自动续推
+ * 和 system 规则注入都能反复展示给模型，避免多轮续推后丢失原始意图。
+ *
+ * @param messages Anthropic messages 数组。
+ * @returns 干净的用户原始提示词；无可用内容时返回空字符串。
+ */
+export function extractOriginalUserPrompt(messages: unknown): string {
+    const planning = extractPlanningText(messages)
+        .replace(IDE_OPENED_FILE_RE, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!planning) return '';
+    if (isDefaultStartPrompt(planning)) return '';
+    return planning;
 }
 
 /**

@@ -24,7 +24,9 @@ import type { ApiType, ProviderConfig } from '../types';
 import type { DebugRecorder } from './debugRecorder';
 import { buildForwardHeaders, redactHeaders } from './forwardHeadersCommon';
 import type { UpstreamAdapter, UpstreamRequestContext } from './router';
+import { extractAnthropicSessionId, handleLlsCcaiSummCommand, isLlsCcaiSummCommandRequest } from './summCommand';
 import { injectLlsTaskRequestBody, type LlsTaskRequestInjectionDeps } from './taskRequestInjection';
+import type { TokenBudgetService } from './tokenBudget/service';
 import { UPSTREAM_SOCKET_IDLE_TIMEOUT_MS } from './upstreamTimeouts';
 import { UsageReporter, type UsageSink } from './usageReporter';
 
@@ -178,6 +180,44 @@ export function requestAnthropicUsageStats(bodyText: string): string {
 export type AnthropicProxyTaskDeps = LlsTaskRequestInjectionDeps;
 
 /**
+ * 从 Anthropic 形态的请求体中提取 CLI 纯 session_id。
+ *
+ * Claude Code CLI 会把 `{device_id, account_uuid, session_id}` 序列化为 JSON 字符串
+ * 再塞到 `metadata.user_id` 里下发；少数实现也可能直接给纯字符串。优先级：
+ *   1. metadata.session_id（字符串、UUID 形态）→ 直接返回；
+ *   2. metadata.user_id 是 JSON → 解析后取其中的 session_id；
+ *   3. metadata.user_id 是纯字符串 → 直接返回。
+ *
+ * 与 webview 那边从 stream-json `session/init` 事件拿到的 `event.sessionId` 对齐，
+ * 避免 relay 与 webview 用不同 key 写同一份 token-count.json。
+ *
+ * @param parsedBody 已解析的请求体 JSON。
+ * @returns CLI 纯 session_id 字符串；取不到时返回空串。
+ */
+function extractSessionId(parsedBody: unknown): string {
+    if (!parsedBody || typeof parsedBody !== 'object') return '';
+    const metadata = (parsedBody as { metadata?: unknown }).metadata;
+    if (!metadata || typeof metadata !== 'object') return '';
+    const meta = metadata as Record<string, unknown>;
+    if (typeof meta.session_id === 'string' && meta.session_id) return meta.session_id;
+    if (typeof meta.user_id === 'string' && meta.user_id) {
+        const raw = meta.user_id.trim();
+        if (raw.startsWith('{')) {
+            try {
+                const parsed = JSON.parse(raw) as { session_id?: unknown };
+                if (typeof parsed.session_id === 'string' && parsed.session_id) {
+                    return parsed.session_id;
+                }
+            } catch {
+                // 落到原值兜底。
+            }
+        }
+        return raw;
+    }
+    return '';
+}
+
+/**
  * Anthropic 透传适配器实现。
  *
  * 可选地把每次转发请求中的 messages 聚合写入工作区 `.LLSOAI/` 目录，便于排查上下文问题。
@@ -192,11 +232,13 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
     * @param recorder 可选的调试记录器；提供后会按天聚合写入 messages。
     * @param taskDeps 可选任务流依赖；提供后才会执行任务流注入与拦截。
     * @param usageSink 可选 token 使用量上报回调；提供后会从上游响应抽取 usage 并上报到 Chat UI。
+    * @param tokenBudget 可选 token 预算服务；提供后在每次发送前/接收后做 token 累计与自动压缩判定。
      */
     public constructor(
         private readonly recorder?: DebugRecorder,
         private readonly taskDeps?: AnthropicProxyTaskDeps,
-        private readonly usageSink?: UsageSink
+        private readonly usageSink?: UsageSink,
+        private readonly tokenBudget?: TokenBudgetService
     ) {}
 
     /**
@@ -242,6 +284,31 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
             { createTriggered: ctx.llsTaskCreateTriggered === true, modelName: modelId }
         );
         const bodyText = requestAnthropicUsageStats(injectedRequest.bodyText);
+        if (isLlsCcaiSummCommandRequest(JSON.parse(bodyText) as unknown)) {
+            handleLlsCcaiSummCommand({
+                res,
+                tokenBudget: this.tokenBudget,
+                sessionId: extractAnthropicSessionId(parsedBody),
+                providerId: provider.id,
+                modelId,
+                anthropicBody: bodyText
+            });
+            return;
+        }
+        // token 预算登记（仅估算 + 登记，不改写 body；阈值触发的压缩走响应侧 afterRecv）
+        try {
+            const sessionId = extractSessionId(parsedBody);
+            if (sessionId) {
+                this.tokenBudget?.beforeSend({
+                    sessionId,
+                    providerId: provider.id,
+                    modelId,
+                    anthropicBody: bodyText
+                });
+            }
+        } catch (err) {
+            Logger.warn(`[tokenBudget] beforeSend 调用异常：${err instanceof Error ? err.message : String(err)}`);
+        }
         await this.safeRecordRequestBody(bodyText);
         const bodyBuffer = Buffer.from(bodyText, 'utf-8');
         headers['content-length'] = String(bodyBuffer.byteLength);

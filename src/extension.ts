@@ -34,6 +34,9 @@ import { OpenAIChatProxyAdapter } from './relay/openaiChatProxy';
 import { OpenAIResponsesProxyAdapter } from './relay/openaiResponsesProxy';
 import { createRelayRouter } from './relay/router';
 import { RelayServer } from './relay/server';
+import { CompactionClient } from './relay/tokenBudget/compactor';
+import { TokenBudgetService, type CompactionState, type SeedInjector, type SessionResetter } from './relay/tokenBudget/service';
+import type { UsageSink } from './relay/usageReporter';
 import { ExpertRunnerService } from './expertMode/expertRunnerService';
 import { SettingsWriter } from './settingsWriter';
 import type { ResolvedAppLanguage } from './types';
@@ -88,6 +91,9 @@ let streamJsonCliAdapterSubscription: vscode.Disposable | undefined;
 
 /** 模块级 Chat WebviewPanel 宿主实例。 */
 let chatViewHost: ChatViewHost | undefined;
+
+/** 模块级 TokenBudgetService 实例，用于 CLI usage segment 回填 contextWindow。 */
+let tokenBudgetServiceRef: TokenBudgetService | undefined;
 
 /** 模块级 Chat 内存消息列表，任务 4 阶段用于 Webview reload 恢复。 */
 let chatMessages: ChatMessage[] = [];
@@ -648,6 +654,81 @@ async function ensureChatCliStarted(): Promise<void> {
 }
 
 /**
+ * 同步返回当前已知的 CLI session_id（不发起任何异步读取）。
+ *
+ * Relay usageSink 在每次响应结束时会被同步调用，需要立即拿到当前 sessionId 才能
+ * 把 usage 报到对应的 TokenBudgetService 桶里。此处实现策略：
+ *   1) 优先读模块级缓存 lastKnownChatCliSessionId（CLI session/init 事件写入）；
+ *   2) 退化时返回空串——由调用方自己跳过登记。
+ *
+ * @returns sessionId 字符串；未知时返回空串。
+ */
+function currentChatCliSessionIdSync(): string {
+    return lastKnownChatCliSessionId;
+}
+
+/** 模块级缓存：最近一次 CLI session/init 拿到的 session_id，供 usageSink 同步读取。 */
+let lastKnownChatCliSessionId = '';
+
+/** 需要静默吞掉的内部 CLI 响应轮数。 */
+let hiddenCliResponseTurns = 0;
+
+/**
+ * 创建一个 SessionResetter，复用现有"清空上下文 + 重启 CLI"链路。
+ *
+ * 与 `session/clear` webview 消息分支等价：
+ *   1. 删除 `.LLSOAI/chat-session.json` 中保存的 sessionId；
+ *   2. 清空 LlsTaskService 内存快照；
+ *   3. 后台重启 CLI；
+ *   4. 等待新 sessionId 落盘后返回。
+ *
+ * 由 TokenBudgetService 在自动压缩流程中调用。
+ *
+ * @returns SessionResetter 实例。
+ */
+function createSessionResetter(): import('./relay/tokenBudget/service').SessionResetter {
+    return {
+        reset: async () => {
+            const cwd = chatCliConfigService?.getConfig().cwd;
+            if (cwd) {
+                try {
+                    await chatCliSessionStore?.clearSessionId(cwd);
+                    Logger.info(`[tokenBudget.reset] 已删除 CLI sessionId 文件：cwd=${cwd}`);
+                } catch (err) {
+                    Logger.warn('[tokenBudget.reset] 删除 CLI sessionId 失败：'
+                        + (err instanceof Error ? err.message : String(err)));
+                }
+            }
+            llsTaskService?.clear();
+            autoContinueScheduler?.cancel('tokenBudget/compact');
+            autoContinueScheduler?.resetMissingToolCounter('tokenBudget/compact');
+            await restartChatCli({ silent: true });
+            const newSessionId = cwd ? await waitForChatCliSessionId(cwd) : undefined;
+            if (!newSessionId) {
+                throw new Error('CLI 重启后未拿到新 sessionId');
+            }
+            return { newSessionId };
+        }
+    };
+}
+
+/**
+ * 等待 Chat CLI init 事件把新 session_id 写入 `.LLSOAI/chat-session.json`。
+ *
+ * @param cwd CLI 工作目录。
+ * @returns 新 session_id；超时返回 undefined。
+ */
+async function waitForChatCliSessionId(cwd: string): Promise<string | undefined> {
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline) {
+        const sessionId = await chatCliSessionStore?.readSessionId(cwd);
+        if (sessionId) return sessionId;
+        await new Promise<void>((resolve) => setTimeout(resolve, 200));
+    }
+    return undefined;
+}
+
+/**
  * 按当前配置启动 Chat CLI 长连接进程。
  *
  * @throws 配置无效或子进程启动失败时抛出错误。
@@ -774,9 +855,17 @@ function notifyPermissionDeniedToUser(resultText: string): void {
 async function handleParsedCliEvent(event: ParsedCliEvent): Promise<void> {
     switch (event.type) {
         case 'segments':
+            if (hiddenCliResponseTurns > 0) {
+                if (event.done) hiddenCliResponseTurns = Math.max(0, hiddenCliResponseTurns - 1);
+                return;
+            }
             await appendAssistantSegments(event.segments, event.done ?? false);
             return;
         case 'done':
+            if (hiddenCliResponseTurns > 0) {
+                hiddenCliResponseTurns = Math.max(0, hiddenCliResponseTurns - 1);
+                return;
+            }
             await finishActiveAssistantMessage();
             return;
         case 'error':
@@ -786,6 +875,7 @@ async function handleParsedCliEvent(event: ParsedCliEvent): Promise<void> {
             return;
         case 'session/init':
             await chatCliSessionStore?.writeSessionId(event.cwd, event.sessionId);
+            lastKnownChatCliSessionId = event.sessionId;
             Logger.info(`已保存 Chat CLI session_id 到 ${event.cwd}/.LLSOAI`);
             return;
         case 'tool/permissionRequest':
@@ -954,6 +1044,29 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
             clearHttpExpectation('session_clear');
             cancelPendingResend('session_clear');
             await clearPersistedChatSession();
+            // 同步抹掉 Claude CLI 端的 session 上下文：
+            //   1) 删除 .LLSOAI/chat-session.json 中保存的 sessionId，下次启动 CLI
+            //      就不会再 --resume 旧会话，CC 那边 1.3MB 历史也随之失效；
+            //   2) 清空 LlsTaskService 内存快照，避免遗留的 workflow 继续注入；
+            //   3) 后台重启 CLI，让用户下一条消息直接进入全新空上下文。
+            try {
+                const cwd = chatCliConfigService?.getConfig().cwd;
+                if (cwd) {
+                    await chatCliSessionStore?.clearSessionId(cwd);
+                    Logger.info(`[session/clear] 已删除 CLI sessionId 文件：cwd=${cwd}`);
+                }
+            } catch (err) {
+                Logger.warn('[session/clear] 删除 CLI sessionId 失败：' + (err instanceof Error ? err.message : String(err)));
+            }
+            llsTaskService?.clear();
+            autoContinueScheduler?.cancel('session/clear');
+            autoContinueScheduler?.resetMissingToolCounter('session/clear');
+            try {
+                await restartChatCli({ silent: true });
+                Logger.info('[session/clear] Chat CLI 已后台重启为全新空上下文');
+            } catch (err) {
+                Logger.warn('[session/clear] Chat CLI 重启失败：' + (err instanceof Error ? err.message : String(err)));
+            }
             await postChatUiLanguage();
             await chatViewHost?.postMessage({
                 type: 'session/init',
@@ -964,6 +1077,14 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
         case 'file/open':
             await openWorkspaceFileReference(message.path, message.line, message.endLine);
             return;
+        case 'tokenBudget/compactNow': {
+            const sessionId = currentChatCliSessionIdSync();
+            const started = sessionId ? tokenBudgetServiceRef?.compactNow(sessionId) : false;
+            if (!started) {
+                await showChatToast('warn', '当前上下文暂时无法压缩：请先发送至少一轮消息，或等待当前响应结束。');
+            }
+            return;
+        }
         case 'log':
             Logger[message.level](`[Chat Webview] ${message.message}`);
             if (message.message.startsWith('[boot]')) {
@@ -1719,12 +1840,14 @@ function cancelPendingResend(reason: string): void {
  *
  * @param text 用户输入文本。
  */
-async function sendUserMessageToCli(text: string): Promise<void> {
+async function sendUserMessageToCli(text: string, options: { hidden?: boolean } = {}): Promise<void> {
     Logger.info(`准备发送 Chat 消息到 CLI：length=${text.length}`);
     chatCliCancelRequested = false;
     activeAssistantMessageId = undefined;
-    const assistantMessage = await createActiveAssistantMessage();
-    Logger.info(`Chat 已创建 assistant 输出区域：id=${assistantMessage.id}`);
+    if (!options.hidden) {
+        const assistantMessage = await createActiveAssistantMessage();
+        Logger.info(`Chat 已创建 assistant 输出区域：id=${assistantMessage.id}`);
+    }
     try {
         await ensureChatCliStarted();
         ensureStreamJsonCliAdapter();
@@ -1732,7 +1855,9 @@ async function sendUserMessageToCli(text: string): Promise<void> {
         Logger.info('Chat 消息已提交到 stream-json 适配器');
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        await appendAssistantSegments([{ kind: 'error', text: `\n发送到 CLI 失败：${message}\n` }], true);
+        if (!options.hidden) {
+            await appendAssistantSegments([{ kind: 'error', text: `\n发送到 CLI 失败：${message}\n` }], true);
+        }
         throw err;
     }
 }
@@ -1746,6 +1871,22 @@ async function appendUserMessageAndSend(text: string): Promise<void> {
     await openBuiltInChat();
     await appendLocalChatMessage('user', text);
     await sendUserMessageToCli(text);
+}
+
+/**
+ * 向 CLI 发送内部消息，不在内置 Chat 中追加用户气泡。
+ *
+ * @param text 内部消息文本。
+ */
+async function sendHiddenUserMessageToCli(text: string): Promise<void> {
+    hiddenCliResponseTurns += 1;
+    try {
+        await ensureChatCliStarted();
+        await sendUserMessageToCli(text, { hidden: true });
+    } catch (err) {
+        hiddenCliResponseTurns = Math.max(0, hiddenCliResponseTurns - 1);
+        throw err;
+    }
 }
 
 /**
@@ -1952,6 +2093,7 @@ async function appendAssistantSegments(segments: ChatSegment[], done: boolean): 
     // —— 此时应原地替换已有 segment，而不是追加新条目，以避免重复渲染。
     for (const incoming of segments) {
         rememberExpertToolContext(message.id, incoming);
+        syncTokenBudgetContextWindowFromUsage(incoming, message);
         if (incoming.id) {
             const existingIndex = message.segments.findIndex((item) => item.id === incoming.id);
             if (existingIndex >= 0) {
@@ -1976,6 +2118,46 @@ async function appendAssistantSegments(segments: ChatSegment[], done: boolean): 
         pending: message.pending,
         append: true
     });
+}
+
+/**
+ * 从 CLI result 的 usage segment 中回填 modelUsage.contextWindow。
+ *
+ * 上游 OpenAI-compatible 服务有时返回 usage.input_tokens=0，但 CLI result.modelUsage
+ * 仍会携带准确 contextWindow。这里把 contextWindow 同步给 TokenBudgetService，
+ * 让 token-meter 从「29k/166k」修正为「29k/200k」，同时不改变 estimator 的 used。
+ *
+ * @param segment 本次到达的 ChatSegment。
+ */
+function syncTokenBudgetContextWindowFromUsage(segment: ChatSegment, message: ChatMessage): void {
+    if (segment.kind !== 'usage') return;
+    const sessionId = currentChatCliSessionIdSync();
+    if (!sessionId) return;
+    const contextWindow = segment.usage?.contextWindow;
+    const outputTokens = estimateAssistantOutputTokensForMeter(segment, message);
+    tokenBudgetServiceRef?.updateCliUsage(sessionId, contextWindow, outputTokens);
+}
+
+/**
+ * 估算 token-meter 中应计入的本轮 assistant 回复 token。
+ *
+ * 优先使用 CLI result.modelUsage.outputTokens；若上游返回 0，则从当前 assistant
+ * message 已聚合的 text/markdown/code 内容做本地粗估，避免请求结束后 used 仍只
+ * 显示 input，不包含刚生成的回复。
+ *
+ * @param usageSegment 本轮 usage segment。
+ * @param message      当前 assistant 消息。
+ * @returns output token 数或 undefined。
+ */
+function estimateAssistantOutputTokensForMeter(usageSegment: ChatSegment, message: ChatMessage): number | undefined {
+    const fromUsage = usageSegment.usage?.outputTokens;
+    if (typeof fromUsage === 'number' && Number.isFinite(fromUsage) && fromUsage > 0) return fromUsage;
+    const text = message.segments
+        .filter((segment) => segment.kind === 'text' || segment.kind === 'markdown' || segment.kind === 'code')
+        .map((segment) => segment.text || '')
+        .join('\n');
+    if (!text.trim()) return undefined;
+    return Math.max(1, Math.ceil(text.length / 3.5));
 }
 
 /**
@@ -2398,17 +2580,133 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // RelayRouter（用于 `/__expert/run` 入口校验）。
     const expertRunnerService = new ExpertRunnerService(chatCliConfigService, chatViewHost);
     expertRunnerServiceRef = expertRunnerService;
-    // 注：token 使用量统计由 CLI 自己在最终 `result` 事件中携带（usage / modelUsage），
-    // 经 stream-json 适配器解析为 `kind:'usage'` ChatSegment 与最后一条消息同帧到达，
-    // 因此 Relay 侧不再单独上报 usage，三个 proxy 的 usageSink 参数保持 undefined。
+    // 装配 TokenBudgetService：
+    //   - beforeSend：三个 adapter 在 injectLlsTaskRequestBody 后做 token 估算与登记；
+    //   - afterRecv：通过共用 usageSink 桥接，把 UsageReporter 抽到的权威 usage
+    //     覆盖 current，并在累计 input ≥ contextLimit−60000 时异步触发自动压缩；
+    //   - 触发压缩时依次执行：模型摘要 → <summ> 包装 → SessionResetter.reset →
+    //     SeedInjector 注入摘要 → webview 卡片渲染。
+    const sessionResetter: SessionResetter = createSessionResetter();
+    const seedInjector: SeedInjector = {
+        sendUserMessage: async (text: string) => {
+            await sendHiddenUserMessageToCli(text);
+        }
+    };
+    const compactionClient = new CompactionClient();
+    const tokenBudgetService = new TokenBudgetService({
+        configManager,
+        compactionClient,
+        commandSender: async (command: string) => {
+            await sendHiddenUserMessageToCli(command);
+        },
+        sessionResetter,
+        seedInjector,
+        notifier: {
+            notifyCompactionState: (state: CompactionState) => {
+                // 把 CompactionState 转换为 chatViewHost 协议消息推送到 webview。
+                if (state.kind === 'started') {
+                    void chatViewHost?.postMessage({
+                        type: 'compaction/started',
+                        sessionId: state.sessionId,
+                        beforeTokens: state.beforeTokens
+                    });
+                } else if (state.kind === 'finished') {
+                    void chatViewHost?.postMessage({
+                        type: 'compaction/finished',
+                        oldSessionId: state.oldSessionId,
+                        newSessionId: state.newSessionId,
+                        beforeTokens: state.beforeTokens,
+                        afterTokens: state.afterTokens,
+                        summary: state.summary
+                    });
+                } else {
+                    void chatViewHost?.postMessage({
+                        type: 'compaction/failed',
+                        sessionId: state.sessionId,
+                        error: state.error
+                    });
+                }
+            }
+        }
+    });
+    tokenBudgetServiceRef = tokenBudgetService;
+    context.subscriptions.push({
+        dispose: () => { void tokenBudgetService.dispose(); }
+    });
+    // 把每次 token 用量变更推送给 webview，让 bypass 下拉右侧的 token-meter
+    // 渲染「used / limit · pct%」。订阅本身在扩展生命周期内一直保持。
+    context.subscriptions.push(tokenBudgetService.onDidChangeUsage((snapshot) => {
+        void chatViewHost?.postMessage({
+            type: 'tokenBudget/usage',
+            sessionId: snapshot.sessionId,
+            used: snapshot.current.totalInputForBudget + snapshot.current.outputTokens,
+            limit: snapshot.contextLimit,
+            threshold: snapshot.threshold,
+            source: snapshot.lastSource
+        });
+    }));
+    // 三个 proxy 共用的 usageSink 工厂：把 UsageReporter 抽到的 Anthropic 形态 usage
+    // 直接喂给 TokenBudgetService.afterRecv。providerId 由 adapter 装配时显式传入
+    // （上游 usage 里没有 providerId，只有 model 字段无法可靠反查 provider）。
+    // requestBodyAtSend 由 service 在 beforeSend 阶段自行缓存
+    // （lastRequestBodyBySession），sink 这里给空串即可。
+    const buildUsageSink = (providerId: string): UsageSink => (report) => {
+        const sessionId = currentChatCliSessionIdSync();
+        if (!sessionId) return;
+        tokenBudgetService.afterRecv({
+            sessionId,
+            providerId,
+            modelId: report.model ?? '',
+            usage: report,
+            requestBodyAtSend: ''
+        });
+    };
+    // 注：token 使用量统计也会被 CLI 自己在最终 `result` 事件中携带；这里 relay
+    // 侧的统计与 CLI 侧统计并存，分别服务"token 预算/自动压缩"与"Chat UI 显示"。
+    // adapter 在 handle() 里拿到 ctx.provider.id 后会调用 tokenBudget.beforeSend
+    // 登记 sessionId↔providerId 映射；sink 触发时用 sessionId 查映射拿到正确的
+    // providerId。为简化第一版，先按 adapter 实例与 provider 静态绑定方式
+    // 透传——由 adapter handle() 中调用 buildUsageSink 时显式传入 provider.id。
+    const usageSinkRef: { sink: UsageSink } = {
+        sink: (report) => {
+            const sessionId = currentChatCliSessionIdSync();
+            if (!sessionId) return;
+            const snapshot = tokenBudgetService.getSnapshot(sessionId);
+            const providerId = snapshot?.providerId ?? '';
+            if (!providerId) return;
+            tokenBudgetService.afterRecv({
+                sessionId,
+                providerId,
+                modelId: report.model ?? snapshot?.modelId ?? '',
+                usage: report,
+                requestBodyAtSend: ''
+            });
+        }
+    };
+    void buildUsageSink; // 保留工厂以便未来按 provider 实例化；当前用 sessionId 反查更稳。
     relayServer.setHandler(createRelayRouter({
         configManager,
         llsTaskService,
         autoContinueScheduler,
         adapters: [
-            new AnthropicProxyAdapter(debugRecorder, { configManager, llsTaskService, autoContinueScheduler }),
-            new OpenAIChatProxyAdapter(debugRecorder, { configManager, llsTaskService, autoContinueScheduler }),
-            new OpenAIResponsesProxyAdapter(debugRecorder, { configManager, llsTaskService, autoContinueScheduler })
+            new AnthropicProxyAdapter(
+                debugRecorder,
+                { configManager, llsTaskService, autoContinueScheduler },
+                (report) => usageSinkRef.sink(report),
+                tokenBudgetService
+            ),
+            new OpenAIChatProxyAdapter(
+                debugRecorder,
+                { configManager, llsTaskService, autoContinueScheduler },
+                (report) => usageSinkRef.sink(report),
+                tokenBudgetService
+            ),
+            new OpenAIResponsesProxyAdapter(
+                debugRecorder,
+                { configManager, llsTaskService, autoContinueScheduler },
+                (report) => usageSinkRef.sink(report),
+                tokenBudgetService
+            )
         ],
         expertHandler: {
             authToken: expertRunnerService.getAuthToken(),
