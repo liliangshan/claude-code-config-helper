@@ -1946,7 +1946,14 @@ select:focus-visible {
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
+    row-gap: 6px;
     margin-top: 8px;
+    min-width: 0;
+}
+
+.composer-shortcut-bar > * {
+    min-width: 0;
+    max-width: 100%;
 }
 
 .composer-shortcut-button {
@@ -2026,12 +2033,14 @@ select[data-role="permission-mode-select"]:disabled {
     color: var(--lls-fg-subtle);
 }
 
-/* 工具栏 */
+/* 工具栏：窄宽度下允许换行，确保发送按钮始终可见。 */
 .composer-toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--lls-space-2);
+    flex-wrap: wrap;
+    row-gap: var(--lls-space-2);
 }
 
 .composer-toolbar__left,
@@ -2039,6 +2048,29 @@ select[data-role="permission-mode-select"]:disabled {
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+/* 左侧控件组在空间不足时优先换行，并允许独占一行；右侧发送按钮保持
+   不收缩，始终对齐右端，避免被左侧元素挤出视图。 */
+.composer-toolbar__left {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.composer-toolbar__right {
+    flex: 0 0 auto;
+    margin-left: auto;
+}
+
+/* 工具栏内主要控件允许收缩，必要时显示省略号；不写死大宽度避免挤压。 */
+.composer-toolbar .model-select,
+.composer-toolbar .permission-mode-select,
+.composer-toolbar .token-meter-wrap,
+.composer-toolbar .token-meter {
+    min-width: 0;
+    max-width: 100%;
 }
 
 .icon-button {
@@ -2075,7 +2107,7 @@ select[data-role="permission-mode-select"]:disabled {
     max-width: 150px;
 }
 
-/* token-meter 与悬浮操作按钮容器。 */
+/* token-meter 与上下文窗口弹层容器。 */
 .token-meter-wrap {
     position: relative;
     display: inline-flex;
@@ -2086,37 +2118,139 @@ select[data-role="permission-mode-select"]:disabled {
     display: none;
 }
 
-.token-meter-wrap:not(.is-disabled).is-popover-open .token-meter-popover,
-.token-meter-wrap:not(.is-disabled):focus-within .token-meter-popover {
+.token-meter-wrap.is-popover-open .token-meter-popover {
     opacity: 1;
     pointer-events: auto;
-    transform: translateX(-50%) translateY(-4px);
+    transform: translateX(-50%) translateY(-6px);
 }
 
+.token-meter-wrap.is-popover-open .token-meter {
+    color: var(--lls-fg);
+    border-color: var(--lls-border-strong);
+    background: var(--lls-bg-hover);
+}
+
+/* 弹层：固定方框，显示上下文窗口标题、用量、进度条、压缩按钮。 */
 .token-meter-popover {
     position: absolute;
     left: 50%;
     bottom: calc(100% + 6px);
-    z-index: 20;
-    min-width: 86px;
-    padding: 5px 8px;
-    border: 1px solid var(--lls-border, var(--vscode-widget-border, #3c3c3c));
-    border-radius: 8px;
-    color: var(--vscode-button-foreground, #fff);
-    background: var(--vscode-button-background, #0e639c);
-    font-size: 11px;
-    line-height: 1;
-    white-space: nowrap;
-    cursor: pointer;
+    z-index: 30;
+    width: 260px;
+    padding: 12px 14px;
+    border: 1px solid var(--lls-border-strong, var(--vscode-focusBorder, #3794ff));
+    border-radius: 10px;
+    color: var(--lls-fg);
+    background: var(--lls-bg-elevated, #252526);
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
     opacity: 0;
     pointer-events: none;
     transform: translateX(-50%) translateY(0);
-    transition: opacity var(--lls-transition-fast), transform var(--lls-transition-fast), background var(--lls-transition-fast);
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.24);
+    transition: opacity var(--lls-transition-fast), transform var(--lls-transition-fast);
+    cursor: default;
+    user-select: none;
+    text-align: left;
+    white-space: normal;
 }
 
-.token-meter-popover:hover {
-    background: var(--vscode-button-hoverBackground, #1177bb);
+.token-meter-popover__title {
+    font-size: var(--lls-font-sm);
+    font-weight: 600;
+    color: var(--lls-fg);
+    margin-bottom: 8px;
+}
+
+.token-meter-popover__row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: var(--lls-font-sm);
+    color: var(--lls-fg);
+    font-variant-numeric: tabular-nums;
+    margin-bottom: 6px;
+}
+
+.token-meter-popover__pct {
+    color: var(--lls-fg-muted);
+    font-size: var(--lls-font-xs);
+}
+
+.token-meter-popover__bar {
+    position: relative;
+    height: 6px;
+    background: var(--lls-bg-input, rgba(255, 255, 255, 0.06));
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.token-meter-popover__bar-used {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 0%;
+    background: var(--lls-info, #3794ff);
+    transition: width var(--lls-transition-base);
+}
+
+.token-meter-popover__bar-reserved {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 0%;
+    background-image: repeating-linear-gradient(
+        135deg,
+        rgba(55, 148, 255, 0.45) 0 4px,
+        rgba(55, 148, 255, 0.15) 4px 8px
+    );
+    transition: width var(--lls-transition-base);
+}
+
+.token-meter-popover__legend {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--lls-fg-muted);
+    font-size: var(--lls-font-xs);
+    margin-bottom: 10px;
+}
+
+.token-meter-popover__legend-swatch {
+    display: inline-block;
+    width: 14px;
+    height: 8px;
+    border-radius: 2px;
+    background-image: repeating-linear-gradient(
+        135deg,
+        rgba(55, 148, 255, 0.6) 0 3px,
+        rgba(55, 148, 255, 0.15) 3px 6px
+    );
+}
+
+.token-meter-popover__action {
+    display: block;
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid var(--lls-border);
+    border-radius: var(--lls-radius-sm);
+    color: var(--lls-fg);
+    background: transparent;
+    font-size: var(--lls-font-sm);
+    cursor: pointer;
+    transition: background var(--lls-transition-fast), border-color var(--lls-transition-fast), color var(--lls-transition-fast);
+}
+
+.token-meter-popover__action:hover {
+    background: var(--lls-bg-hover);
+    border-color: var(--lls-border-strong);
+}
+
+.token-meter-popover__action:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    pointer-events: none;
 }
 
 .token-meter-popover::after {
@@ -2125,21 +2259,19 @@ select[data-role="permission-mode-select"]:disabled {
     left: 50%;
     top: 100%;
     transform: translateX(-50%);
-    border: 5px solid transparent;
-    border-top-color: var(--vscode-button-background, #0e639c);
+    border: 6px solid transparent;
+    border-top-color: var(--lls-bg-elevated, #252526);
 }
 
-.token-meter-popover:hover::after {
-    border-top-color: var(--vscode-button-hoverBackground, #1177bb);
-}
-
-/* bypass 下拉右侧的 token 用量指示，紧凑显示「used / limit · pct%」。 */
+/* bypass 下拉右侧的 token 用量指示。鼠标悬浮显示手势，点击展开弹层。 */
 .token-meter {
     display: inline-flex;
     align-items: center;
+    gap: 6px;
     height: 24px;
-    padding: 0 8px;
+    padding: 0 10px;
     margin-left: 4px;
+    font-family: inherit;
     font-size: 11px;
     line-height: 1;
     font-variant-numeric: tabular-nums;
@@ -2149,8 +2281,20 @@ select[data-role="permission-mode-select"]:disabled {
     border-radius: 12px;
     white-space: nowrap;
     user-select: none;
-    cursor: default;
+    cursor: pointer;
     transition: color var(--lls-transition-fast), border-color var(--lls-transition-fast), background var(--lls-transition-fast);
+}
+
+.token-meter:hover {
+    color: var(--lls-fg);
+    border-color: var(--lls-border-strong);
+    background: var(--lls-bg-hover);
+}
+
+.token-meter-wrap.is-disabled .token-meter {
+    cursor: not-allowed;
+    opacity: 0.55;
+    pointer-events: none;
 }
 
 .token-meter.is-warn {

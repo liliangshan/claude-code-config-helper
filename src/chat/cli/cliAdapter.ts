@@ -99,9 +99,6 @@ export type ParsedCliEvent =
 /** 解析事件总线事件名。 */
 const EVENT_PARSED = 'parsed';
 
-/** stdout 解析日志预览长度上限。 */
-const LOG_PREVIEW_LIMIT = 2000;
-
 /** 工具入参累积上限（防止异常情况导致内存爆炸）。 */
 const TOOL_INPUT_JSON_MAX_LENGTH = 200_000;
 
@@ -201,6 +198,9 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
 
     /** tool_use_id → 工具卡片 segment 引用，便于 tool_result 回填。 */
     private readonly toolSegmentById = new Map<string, ChatSegment>();
+
+    /** tool_use_id 集合，用于静默丢弃被隐藏工具的后续 tool_result。 */
+    private readonly hiddenToolUseIds = new Set<string>();
 
     /**
      * 上一次因权限拦截向用户通知的时间戳，用于在 applyToolResult 中节流。
@@ -341,6 +341,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         }
         this.emitter.removeAllListeners();
         this.toolSegmentById.clear();
+        this.hiddenToolUseIds.clear();
         this.currentMessage = null;
     }
 
@@ -371,48 +372,15 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     /**
      * 处理来自 CliProcess 的 chunk，并把解析结果广播给监听者。
      *
-     * 为方便排查"CLI 已输出但聊天区不渲染"类问题，这里在 info 级别打印 chunk 摘要
-     * 与解析后事件的类型直方图。
-     *
      * @param chunk 原始 CLI chunk。
      */
     private handleChunk(chunk: CliChunk): void {
-        Logger.info(
-            `Chat CLI chunk：source=${chunk.source}, length=${chunk.text.length}`,
-            this.previewLogText(chunk.text)
-        );
         const events = this.parseOutput(chunk);
-        const summary = this.summarizeEventsForLog(events);
-        Logger.info(`Chat CLI chunk 解析完成：events=${events.length}, summary=${summary}`);
         for (const event of events) {
             this.emitParsed(event);
         }
     }
 
-    /**
-     * 将解析得到的事件列表压缩为简短直方图字符串，便于在 OutputChannel 中追踪。
-     *
-     * 输出示例：`segments(2)/done(1)`
-     *
-     * @param events 解析事件列表。
-     * @returns 直方图字符串；列表为空时返回 `<empty>`。
-     */
-    private summarizeEventsForLog(events: ParsedCliEvent[]): string {
-        if (events.length === 0) return '<empty>';
-        const counts = new Map<string, number>();
-        for (const event of events) {
-            const key =
-                event.type === 'segments'
-                    ? event.done
-                        ? 'segments+done'
-                        : `segments(${event.segments.length})`
-                    : event.type;
-            counts.set(key, (counts.get(key) ?? 0) + 1);
-        }
-        return Array.from(counts.entries())
-            .map(([k, v]) => `${k}×${v}`)
-            .join('/');
-    }
 
     /**
      * 解析 stdout 文本：优先按 JSON 对象边界消费，再按行回退，保证 JSONL/粘包都能处理。
@@ -734,6 +702,15 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         'task_started',
         'tasknotification',
         'task_notification',
+        'taskprogress',
+        'task_progress',
+    ]);
+
+    private static readonly HIDDEN_CHAT_TOOL_NAMES: ReadonlySet<string> = new Set([
+        'Agent',
+        'Task',
+        'EnterPlanMode',
+        'ExitPlanMode'
     ]);
 
     /**
@@ -886,6 +863,10 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
             state.toolUseId = typeof blockRecord.id === 'string' ? blockRecord.id : undefined;
             state.toolName = typeof blockRecord.name === 'string' ? blockRecord.name : 'tool';
             this.registerBlockState(index, state);
+            if (this.isHiddenChatToolName(state.toolName)) {
+                if (state.toolUseId) this.hiddenToolUseIds.add(state.toolUseId);
+                return { type: 'segments', segments: [], done: false };
+            }
 
             const segment = this.buildInitialToolSegment(state);
             if (state.toolUseId) {
@@ -983,6 +964,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         const partial = typeof delta.partial_json === 'string' ? delta.partial_json : '';
         if (!partial) return { type: 'segments', segments: [], done: false };
         const block = this.ensureBlockState(index, 'tool_use');
+        if (this.isHiddenChatToolName(block.toolName)) return { type: 'segments', segments: [], done: false };
         if (block.toolInputJson.length + partial.length > TOOL_INPUT_JSON_MAX_LENGTH) {
             Logger.warn(`tool_use 入参累积超过 ${TOOL_INPUT_JSON_MAX_LENGTH}，已停止累积`);
             return { type: 'segments', segments: [], done: false };
@@ -1023,6 +1005,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         if (!block) return { type: 'segments', segments: [], done: false };
 
         if (block.type === 'tool_use' && block.toolUseId) {
+            if (this.isHiddenChatToolName(block.toolName)) return { type: 'segments', segments: [], done: false };
             const segment = this.toolSegmentById.get(block.toolUseId);
             if (segment) {
                 const pretty = this.tryFormatJson(block.toolInputJson) ?? block.toolInputJson;
@@ -1160,6 +1143,10 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     ): string {
         if (status === 'permission_denied') return `${name} · 需要授权（已拦截）`;
         return `${name} · ${status}`;
+    }
+
+    private isHiddenChatToolName(name: string | undefined): boolean {
+        return !!name && StreamJsonCliAdapter.HIDDEN_CHAT_TOOL_NAMES.has(name);
     }
 
     /**
@@ -1301,6 +1288,10 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
                 continue;
             }
             if (blockType === 'tool_use') {
+                if (this.isHiddenChatToolName(typeof block.name === 'string' ? block.name : undefined)) {
+                    if (typeof block.id === 'string') this.hiddenToolUseIds.add(block.id);
+                    continue;
+                }
                 const segment = this.buildSegmentFromCompleteToolUse(block);
                 segments.push(segment);
                 continue;
@@ -1464,6 +1455,10 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     private handleStandaloneToolBlock(record: Record<string, unknown>): ParsedCliEvent {
         const type = record.type === 'tool_result' ? 'tool_result' : 'tool_use';
         if (type === 'tool_use') {
+            if (this.isHiddenChatToolName(typeof record.name === 'string' ? record.name : undefined)) {
+                if (typeof record.id === 'string') this.hiddenToolUseIds.add(record.id);
+                return { type: 'segments', segments: [], done: false };
+            }
             const segment = this.buildSegmentFromCompleteToolUse(record);
             return { type: 'segments', segments: [segment], done: false };
         }
@@ -1538,6 +1533,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      */
     private applyToolResult(block: Record<string, unknown>): ChatSegment | undefined {
         const toolUseId = typeof block.tool_use_id === 'string' ? block.tool_use_id : undefined;
+        if (toolUseId && this.hiddenToolUseIds.has(toolUseId)) return undefined;
         const isError = block.is_error === true;
         const resultText = this.stringifyToolResultContent(block.content);
         const isPermissionDenied = isError && this.isPermissionDeniedMessage(resultText);
@@ -1699,6 +1695,13 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         if (!isToolEvent) return undefined;
 
         const name = this.extractLooseToolName(record);
+        if (this.isHiddenChatToolName(name)) {
+            const looseId =
+                typeof record.id === 'string' ? record.id :
+                typeof record.tool_use_id === 'string' ? record.tool_use_id : undefined;
+            if (looseId) this.hiddenToolUseIds.add(looseId);
+            return undefined;
+        }
         const status = this.extractLooseToolStatus(record);
         const detail = this.tryStringifyValue(record);
         const looseId =
@@ -1886,7 +1889,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      */
     private stripEmbeddedSystemTaskEvents(text: string): string {
         if (!text) return text;
-        const marker = /\{[^{}]*?"type"\s*:\s*"system"[^{}]*?"subtype"\s*:\s*"(?:taskstarted|task_started|tasknotification|task_notification)"/g;
+        const marker = /\{[^{}]*?"type"\s*:\s*"system"[^{}]*?"subtype"\s*:\s*"(?:taskstarted|task_started|tasknotification|task_notification|taskprogress|task_progress)"/g;
         if (!marker.test(text)) return text;
         marker.lastIndex = 0;
         let out = '';
@@ -1957,18 +1960,6 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         this.recentAssistantText = codePoints.length > limit
             ? codePoints.slice(-limit).join('')
             : combined;
-    }
-
-    /**
-     * 截断原始输出内容用于日志预览，避免大块回复撑爆 OutputChannel。
-     *
-     * @param text 原始 stdout/stderr chunk 文本。
-     * @returns 最多 LOG_PREVIEW_LIMIT 字符的日志预览文本。
-     */
-    private previewLogText(text: string): string {
-        return text.length > LOG_PREVIEW_LIMIT
-            ? `${text.slice(0, LOG_PREVIEW_LIMIT)}\n...<truncated ${text.length - LOG_PREVIEW_LIMIT} chars>`
-            : text;
     }
 
     /**

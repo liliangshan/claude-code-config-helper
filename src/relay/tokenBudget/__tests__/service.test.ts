@@ -206,7 +206,7 @@ test('依赖未注入时即使触达阈值也跳过压缩，并写 warn 日志',
     assert.equal(snap.compact.triggerCount, 0);
 });
 
-test('contextLength 配置生效 → threshold = contextLength - 60000', () => {
+test('contextLength 配置生效 → threshold = contextLength - 50000', () => {
     const { service, store } = buildService({ contextLength: 100000 });
     service.beforeSend({
         sessionId: 's1', providerId: 'p1', modelId: 'm',
@@ -214,7 +214,7 @@ test('contextLength 配置生效 → threshold = contextLength - 60000', () => {
     });
     const snap = store.getSession('s1');
     assert.equal(snap.contextLimit, 100000);
-    assert.equal(snap.threshold, 40000);
+    assert.equal(snap.threshold, 50000);
 });
 
 test('未知 model 走 DEFAULT_CONTEXT_LIMIT = 166000', () => {
@@ -225,5 +225,5 @@ test('未知 model 走 DEFAULT_CONTEXT_LIMIT = 166000', () => {
     });
     const snap = store.getSession('s1');
     assert.equal(snap.contextLimit, 166000);
-    assert.equal(snap.threshold, 106000);
+    assert.equal(snap.threshold, 116000);
 });

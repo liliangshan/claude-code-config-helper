@@ -703,11 +703,22 @@ function createSessionResetter(): import('./relay/tokenBudget/service').SessionR
             autoContinueScheduler?.cancel('tokenBudget/compact');
             autoContinueScheduler?.resetMissingToolCounter('tokenBudget/compact');
             await restartChatCli({ silent: true });
-            const newSessionId = cwd ? await waitForChatCliSessionId(cwd) : undefined;
-            if (!newSessionId) {
-                throw new Error('CLI 重启后未拿到新 sessionId');
+            // 部分 CLI 实现必须等收到首条 user 消息后才会触发 init 写入新
+            // sessionId；这里短暂尝试一次，拿不到就先返回空字符串，由 service
+            // 在 seed 注入之后调用 awaitNewSessionId 再次等待。
+            const newSessionId = cwd ? await waitForChatCliSessionId(cwd, 3_000) : undefined;
+            return { newSessionId: newSessionId ?? '' };
+        },
+        awaitNewSessionId: async (_previousSessionId: string) => {
+            const cwd = chatCliConfigService?.getConfig().cwd;
+            if (!cwd) {
+                throw new Error('Chat CLI cwd 未配置');
             }
-            return { newSessionId };
+            const sessionId = await waitForChatCliSessionId(cwd, 15_000);
+            if (!sessionId) {
+                throw new Error('等待 CLI 写入新 sessionId 超时');
+            }
+            return sessionId;
         }
     };
 }
@@ -718,8 +729,8 @@ function createSessionResetter(): import('./relay/tokenBudget/service').SessionR
  * @param cwd CLI 工作目录。
  * @returns 新 session_id；超时返回 undefined。
  */
-async function waitForChatCliSessionId(cwd: string): Promise<string | undefined> {
-    const deadline = Date.now() + 15_000;
+async function waitForChatCliSessionId(cwd: string, timeoutMs: number = 15_000): Promise<string | undefined> {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
     while (Date.now() < deadline) {
         const sessionId = await chatCliSessionStore?.readSessionId(cwd);
         if (sessionId) return sessionId;
@@ -1079,8 +1090,15 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
             return;
         case 'tokenBudget/compactNow': {
             const sessionId = currentChatCliSessionIdSync();
+            Logger.info(`[tokenBudget] 收到 Chat 压缩会话请求：sessionId=${sessionId || '(none)'}`);
             const started = sessionId ? tokenBudgetServiceRef?.compactNow(sessionId) : false;
+            Logger.info(`[tokenBudget] Chat 压缩会话请求处理结果：started=${started ? 'true' : 'false'}`);
             if (!started) {
+                await chatViewHost?.postMessage({
+                    type: 'compaction/failed',
+                    sessionId: sessionId ?? '',
+                    error: '当前上下文暂时无法压缩：请先发送至少一轮消息，或等待当前响应结束。'
+                });
                 await showChatToast('warn', '当前上下文暂时无法压缩：请先发送至少一轮消息，或等待当前响应结束。');
             }
             return;
@@ -2084,14 +2102,12 @@ function extractPlainTextFromSegments(segments: ChatSegment[] | undefined): stri
  * @param done 是否标记当前 assistant 消息完成。
  */
 async function appendAssistantSegments(segments: ChatSegment[], done: boolean): Promise<void> {
-    if (segments.length === 0 && !done) return;
-    Logger.info(
-        `appendAssistantSegments：incoming=${segments.length}, done=${done}, kinds=${segments.map((s) => s.kind).join(',') || '<none>'}`
-    );
+    const visibleSegments = segments.filter((segment) => !isHiddenChatToolSegment(segment));
+    if (visibleSegments.length === 0 && !done) return;
     const message = await getActiveAssistantMessageForPatch();
     // 按 segment.id 去重合并：相同 id 的片段视为对同一 segment 的多次更新（典型场景为工具卡片）
     // —— 此时应原地替换已有 segment，而不是追加新条目，以避免重复渲染。
-    for (const incoming of segments) {
+    for (const incoming of visibleSegments) {
         rememberExpertToolContext(message.id, incoming);
         syncTokenBudgetContextWindowFromUsage(incoming, message);
         if (incoming.id) {
@@ -2105,19 +2121,22 @@ async function appendAssistantSegments(segments: ChatSegment[], done: boolean): 
     }
     if (done) message.pending = false;
     schedulePersistChatSession();
-    Logger.info(
-        `appendAssistantSegments → postMessage：id=${message.id}, segments=${segments.length}, pending=${message.pending}`
-    );
     // 这里只发送本次 incoming segments（append: true），交由 ChatViewHost 微批合并：
     // 同一 message id 的多次 patch 会在 ~4ms 窗口内 concat 成单条 message/patch
     // 投递给 webview，避免流式高峰期对 postMessage 通道造成抖动。
     await chatViewHost?.postMessage({
         type: 'message/patch',
         id: message.id,
-        segments,
+        segments: visibleSegments,
         pending: message.pending,
         append: true
     });
+}
+
+function isHiddenChatToolSegment(segment: ChatSegment): boolean {
+    if (segment.kind !== 'tool') return false;
+    const name = segment.tool?.name || segment.text || '';
+    return name === 'Agent' || name === 'Task' || name === 'EnterPlanMode' || name === 'ExitPlanMode';
 }
 
 /**

@@ -496,11 +496,9 @@ export class CliProcess implements vscode.Disposable {
         child.stdout.setEncoding('utf8');
         child.stderr.setEncoding('utf8');
         child.stdout.on('data', (text: string) => {
-            Logger.debug(`Chat CLI stdout chunk：length=${text.length}`, this.previewLogText(text));
             this.emitter.emit(CHUNK_EVENT, { source: 'stdout', text, receivedAt: Date.now() } satisfies CliChunk);
         });
         child.stderr.on('data', (text: string) => {
-            Logger.debug(`Chat CLI stderr chunk：length=${text.length}`, this.previewLogText(text));
             this.emitter.emit(CHUNK_EVENT, { source: 'stderr', text, receivedAt: Date.now() } satisfies CliChunk);
         });
         child.on('error', (err) => {

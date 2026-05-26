@@ -2,6 +2,39 @@
 
 All notable changes to this extension are documented in this file.
 
+## [2.0.20] - 2026-05-26
+
+### Changed
+
+- Reduced noisy Chat/relay logs by removing high-frequency CLI chunk logs, assistant segment patch logs, and OpenAI conversion warning logs.
+- Adjusted automatic context compaction to trigger at model context limit minus 50k tokens, with request-side estimator fallback when upstream usage is missing.
+
+## [2.0.19] - 2026-05-26
+
+### Added
+
+- Added a per-model visibility switch in the provider model editor; disabled models are hidden from both the Chat model dropdown and expert model dropdown.
+
+### Fixed
+
+- Suppressed Claude Code internal `Agent` / `Task` / Plan Mode tool cards and `taskprogress` system events from the Chat transcript.
+
+## [2.0.18] - 2026-05-26
+
+### Fixed
+
+- Fixed duplicate Chat compaction success cards by deduplicating concurrent and delayed `@llsccai-summ` compaction requests for the same session, with a UI-side duplicate render guard.
+
+## [2.0.14] - 2026-05-26
+
+### Removed
+
+- Removed the internal `get_llsccai_vscode_diagnostics` tool and the `@llsccai-get-errors` continuation trigger, including request injection, local interception, auto-continue scheduling, Chat UI labels, and related documentation. The model can no longer read VS Code Problems through this extension; users can paste error output manually instead.
+
+### Fixed
+
+- Fixed Chat footer responsive layout: the model dropdown, bypass mode select, context token meter, and shortcut bar now wrap to additional rows at narrow widths so the send button stays visible and reachable.
+
 ## [2.0.13] - 2026-05-26
 
 ### Added

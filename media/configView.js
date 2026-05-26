@@ -1033,6 +1033,7 @@
                                 ['none', 'None (do not pass)']
                             ].map(([value, label]) => `<option value="${value}" ${model.samplingMode === value ? 'selected' : ''}>${label}</option>`).join('')}
                         </select></div>
+                        <div class="checkbox-row"><input id="model-user-selectable" type="checkbox" ${model.isUserSelectable !== false ? 'checked' : ''} /><label for="model-user-selectable">${t('showInModelDropdown')}</label></div>
                         <div class="checkbox-row"><input id="model-vision" type="checkbox" ${model.vision ? 'checked' : ''} /><label for="model-vision">${t('vision')}</label></div>
                         <div class="checkbox-row"><input id="model-tool" type="checkbox" ${model.toolCalling !== false ? 'checked' : ''} /><label for="model-tool">${t('toolCalling')}</label></div>
                         <div class="checkbox-row"><input id="model-transform-think" type="checkbox" ${model.transformThink ? 'checked' : ''} /><label for="model-transform-think">Transform Think Tags (&lt;|im_start|&gt;/♩)</label></div>
@@ -1205,6 +1206,7 @@
         model.temperature = Number(document.getElementById('model-temperature').value || 1);
         model.topP = Number(document.getElementById('model-top-p').value || 1);
         model.samplingMode = document.getElementById('model-sampling-mode').value;
+        model.isUserSelectable = document.getElementById('model-user-selectable').checked;
         model.vision = document.getElementById('model-vision').checked;
         model.toolCalling = document.getElementById('model-tool').checked;
         model.transformThink = document.getElementById('model-transform-think').checked;

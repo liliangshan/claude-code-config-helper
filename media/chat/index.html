@@ -53,8 +53,23 @@
                             <option value="bypassPermissions">bypassPermissions</option>
                         </select>
                         <span class="token-meter-wrap" data-role="token-meter-wrap" hidden>
-                            <span class="token-meter" data-role="token-meter" aria-live="polite"></span>
-                            <button type="button" class="token-meter-popover" data-role="token-meter-compact">压缩上下文</button>
+                            <button type="button" class="token-meter" data-role="token-meter" aria-haspopup="dialog" aria-expanded="false" aria-live="polite"></button>
+                            <div class="token-meter-popover" data-role="token-meter-popover" role="dialog" aria-hidden="true">
+                                <div class="token-meter-popover__title" data-i18n="contextWindowTitle">上下文窗口</div>
+                                <div class="token-meter-popover__row">
+                                    <span class="token-meter-popover__used" data-role="token-meter-used">0/0</span>
+                                    <span class="token-meter-popover__pct" data-role="token-meter-pct">0%</span>
+                                </div>
+                                <div class="token-meter-popover__bar">
+                                    <div class="token-meter-popover__bar-used" data-role="token-meter-bar-used"></div>
+                                    <div class="token-meter-popover__bar-reserved" data-role="token-meter-bar-reserved"></div>
+                                </div>
+                                <div class="token-meter-popover__legend">
+                                    <span class="token-meter-popover__legend-swatch"></span>
+                                    <span data-i18n="contextWindowReserved">保留用于响应</span>
+                                </div>
+                                <button type="button" class="token-meter-popover__action" data-role="token-meter-compact" data-i18n="contextWindowCompact">压缩对话</button>
+                            </div>
                         </span>
                     </div>
                     <div class="composer-toolbar__right">

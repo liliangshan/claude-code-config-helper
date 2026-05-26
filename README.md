@@ -21,7 +21,6 @@ Claude Code Config Helper is a VS Code extension for enhancing Claude Code workf
 - Visual provider/model configuration utilities for Claude Code settings migration and compatibility.
 - Secure API key storage through VS Code `SecretStorage` before activation.
 - Task workflow support for planning, progress tracking, and automatic continuation.
-- VS Code Problems diagnostics retrieval for model-assisted error fixing.
 - Import/export of provider configuration and shared prompts.
 - Multi-language UI support.
 
@@ -183,39 +182,6 @@ Typical workflow commands include:
 
 The Chat host injects workflow instructions and tools only when a workflow is active or when task creation is explicitly triggered. Workflow updates can be intercepted locally so that task progress is reflected in VS Code without requiring the model to execute external side effects.
 
-## VS Code Diagnostics Retrieval
-
-The extension can expose current VS Code Problems diagnostics to the model through the internal diagnostics tool:
-
-```text
-get_llsccai_vscode_diagnostics
-```
-
-This helps the model fix real editor errors instead of guessing from stale build output.
-
-The diagnostics flow is designed to be safe and explicit:
-
-1. The model requests diagnostics through the internal tool.
-2. The extension returns an acknowledgement and schedules an automatic continuation.
-3. On the next Chat turn, the request contains the trigger token:
-
-   ```text
-   @llsccai-get-errors
-   ```
-
-4. The Chat host scans the user messages for that trigger token.
-5. The Chat host injects the latest VS Code Problems diagnostics into that user message before sending it to the CLI.
-
-The tool instruction itself is injected as a system rule, not as normal user content. Only the actual diagnostics result is added to the next user turn when the trigger token is present.
-
-Diagnostics may include:
-
-- File path.
-- Line and column.
-- Severity.
-- Source.
-- Error or warning message.
-- Related information when available.
 
 ## Shared Prompts
 

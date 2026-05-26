@@ -143,9 +143,6 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
         await this.safeRecordRequestBody(injectedBodyText);
         const anthropicBody = this.parseJson(injectedBodyText);
         const converted = convertAnthropicToOpenAIChat(anthropicBody);
-        if (converted.warnings.length > 0) {
-            Logger.warn(`OpenAI Chat 请求转换 warnings：${JSON.stringify(converted.warnings)}`);
-        }
         const upstreamBodyText = JSON.stringify(converted.body);
         const headers = buildOpenAIForwardHeaders(provider, req.headers);
         headers['content-length'] = String(Buffer.byteLength(upstreamBodyText, 'utf-8'));
@@ -277,9 +274,6 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
     ): string {
         try {
             const converted = convertOpenAIChatJsonToAnthropic(JSON.parse(body) as unknown);
-            if (converted.warnings.length > 0) {
-                Logger.warn(`OpenAI Chat 响应转换 warnings：${JSON.stringify(converted.warnings)}`);
-            }
             const anthropicBody = JSON.stringify(converted.body);
             const intercepted = this.taskDeps
                 ? interceptAnthropicResponse(anthropicBody, 'application/json', this.toInterceptorDeps())
@@ -341,8 +335,6 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
             }
             usageReporter.end();
             if (!ctx.res.writableEnded) ctx.res.end();
-            const warnings = converter.getWarnings();
-            if (warnings.length > 0) Logger.warn(`OpenAI Chat SSE 转换 warnings：${JSON.stringify(warnings)}`);
             captureBody(chunks.join(''));
             resolve();
         });

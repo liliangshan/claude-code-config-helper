@@ -5,8 +5,7 @@
  * 本地执行下列工具，并把原始 tool_use 改写为 text block，避免 Claude Code
  * 再进入工具往返：
  *
- * - `create_llsccai_task_workflow` / `update_llsccai_task_workflow`：任务流；
- * - `get_llsccai_vscode_diagnostics`：VS Code 问题面板读取。
+ * - `create_llsccai_task_workflow` / `update_llsccai_task_workflow`：任务流。
  */
 
 import type { AutoContinueScheduler } from './autoContinue';
@@ -36,7 +35,7 @@ interface LocalToolBlockState {
     /** 改写后文本块是否已经 start。 */
     textBlockStarted: boolean;
     /** 本地工具种类。 */
-    kind: 'workflow' | 'diagnostics';
+    kind: 'workflow';
 }
 
 /** 流式拦截器依赖。 */
@@ -53,8 +52,6 @@ export interface LlsTaskStreamingInterceptorResult {
     sawToolUse: boolean;
     /** 是否本地处理了 workflow tool。 */
     handledWorkflowTool: boolean;
-    /** 是否本地处理了诊断 tool。 */
-    handledDiagnosticsTool: boolean;
     /** 是否出现"非本地"工具（Claude Code 会进入 tool_result 往返）。 */
     sawNonLocalTool: boolean;
 }
@@ -77,9 +74,6 @@ export class LlsTaskStreamingInterceptor {
 
     /** 是否本地处理了 workflow tool。 */
     private handledWorkflowTool = false;
-
-    /** 是否本地处理了诊断 tool。 */
-    private handledDiagnosticsTool = false;
 
     /** 是否出现"非本地"工具调用。 */
     private sawNonLocalTool = false;
@@ -125,7 +119,6 @@ export class LlsTaskStreamingInterceptor {
         return {
             sawToolUse: this.sawToolUse,
             handledWorkflowTool: this.handledWorkflowTool,
-            handledDiagnosticsTool: this.handledDiagnosticsTool,
             sawNonLocalTool: this.sawNonLocalTool
         };
     }
@@ -188,7 +181,6 @@ export class LlsTaskStreamingInterceptor {
             return formatSseEvent(record);
         }
         if (kind === 'workflow') this.handledWorkflowTool = true;
-        else this.handledDiagnosticsTool = true;
         this.localBlocks.set(index, { index, name, inputJson: '', textBlockStarted: true, kind });
         return formatSseEvent({
             event: 'content_block_start',
@@ -247,8 +239,7 @@ export class LlsTaskStreamingInterceptor {
      */
     private handleMessageDelta(record: SseEventRecord, payload: Record<string, unknown>): string {
         const delta = isRecord(payload.delta) ? payload.delta : undefined;
-        const handledAnyLocalTool = this.handledWorkflowTool || this.handledDiagnosticsTool;
-        if (delta?.stop_reason === 'tool_use' && handledAnyLocalTool && !this.sawNonLocalTool) {
+        if (delta?.stop_reason === 'tool_use' && this.handledWorkflowTool && !this.sawNonLocalTool) {
             delta.stop_reason = 'end_turn';
             return formatSseEvent({ event: record.event, data: JSON.stringify(payload) });
         }
@@ -261,7 +252,6 @@ export class LlsTaskStreamingInterceptor {
      * 调度规则与非流式拦截器 {@link interceptAnthropicResponse} 保持一致：
      * - 命中 workflow 工具 → 按工作流状态触发或取消续推；
      * - 命中真正的"非本地"工具 → 取消续推，由 Claude Code 自己处理 tool_result；
-     * - 仅命中诊断工具 → 调度诊断续推，让下一轮请求注入诊断数据；
      * - 全部都不是 → 任务流活跃则按"缺失"重新登记续推。
      */
     private finalizeScheduling(): void {
@@ -274,11 +264,6 @@ export class LlsTaskStreamingInterceptor {
             }
         } else if (this.sawNonLocalTool) {
             this.deps.autoContinueScheduler.cancel('响应包含非任务流工具调用，等待 Claude Code 工具结果');
-        } else if (this.handledDiagnosticsTool) {
-            // 诊断工具命中：本地伪造 ACK + stop_reason=end_turn 已经写回响应，
-            // Claude Code 收到的是终态助手回复，自身不会再发起下一轮。这里必须
-            // 主动调度续推，让下一轮请求触发 @llsccai-get-errors 注入诊断数据。
-            this.deps.autoContinueScheduler.scheduleAfterDiagnosticsTool();
         } else if (this.deps.service.hasActiveWorkflow()) {
             this.deps.service.markWorkflowUpdateMissing();
             this.deps.autoContinueScheduler.schedule();

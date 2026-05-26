@@ -282,7 +282,7 @@ export type ExtensionToWebview =
           used: number;
           /** 模型上下文上限（来自 ModelConfig.contextLength 或静态表）。 */
           limit: number;
-          /** 压缩触发阈值 = limit - 60000。 */
+          /** 压缩触发阈值 = limit - 50000。 */
           threshold: number;
           /** 数据来源：上游 usage 权威值（api）或本地 estimator 估算（estimated）。 */
           source: 'api' | 'estimated';

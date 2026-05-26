@@ -10,16 +10,6 @@ export const LLS_CCAI_TASK_TOOL_NAME = 'update_llsccai_task_workflow';
 /** LLS CCAI 任务流创建工具名称。 */
 export const LLS_CCAI_TASK_CREATE_TOOL_NAME = 'create_llsccai_task_workflow';
 
-/**
- * LLS CCAI 诊断读取工具名称。
- *
- * 该工具不属于任务流执行链路，而是一个通用的"模型主动读取 VS Code 问题面板"
- * 工具。命中后由拦截器本地调用 {@link "./diagnostics".executeGetDiagnosticsTool}
- * 执行，并把 tool_use 改写为 text block 直接返回给模型，模型在同一轮里看到诊断
- * 数据后继续推进。
- */
-export const LLS_CCAI_GET_DIAGNOSTICS_TOOL_NAME = 'get_llsccai_vscode_diagnostics';
-
 /** Anthropic 工具定义的最小结构。 */
 export interface AnthropicToolDefinition {
     /** 工具名称。 */
@@ -237,69 +227,3 @@ function isToolLike(value: unknown): value is AnthropicToolDefinition {
     return !!value && typeof value === 'object' && typeof (value as { name?: unknown }).name === 'string';
 }
 
-/**
- * 构造 LLS CCAI 诊断读取工具定义。
- *
- * 该工具由模型主动调用，由扩展本地拦截并使用 VS Code
- * {@link vscode.languages.getDiagnostics} 实时读取问题面板内容，最多返回 10 条
- * 按严重级别排序的诊断。模型可在确认修复完成前调用它做"自检"。
- *
- * @returns Anthropic tools[] 可直接使用的诊断工具定义。
- */
-export function buildGetLlsCcaiDiagnosticsTool(): AnthropicToolDefinition {
-    return {
-        name: LLS_CCAI_GET_DIAGNOSTICS_TOOL_NAME,
-        description: [
-            'Get current diagnostics known to VS Code, typically shown in the Problems panel.',
-            'This tool is executed locally by the extension and returns at most 10 diagnostics sorted by severity (error > warning > information > hint).',
-            'Use it to verify that your edits actually cleared compile or lint errors before claiming a fix is complete,',
-            'or when the user asks about errors / problems in the workspace.'
-        ].join(' '),
-        input_schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-                filePaths: {
-                    type: 'array',
-                    items: { type: 'string' },
-                    description: 'Optional list of file or directory paths used to filter diagnostics. Omit to return diagnostics from the entire workspace.'
-                }
-            }
-        }
-    };
-}
-
-/**
- * 构造注入给主模型的"诊断工具使用指南"系统规则。
- *
- * 该规则单独成段，在任务流活跃 / 创建期间也会一并注入，让模型知道何时可以
- * 调用诊断工具、调用后会得到什么形态的结果。
- *
- * @returns 诊断工具使用规则文本。
- */
-export function buildGetLlsCcaiDiagnosticsSystemRule(): string {
-    const lines = [
-        `You have access to a tool named \`${LLS_CCAI_GET_DIAGNOSTICS_TOOL_NAME}\` that returns the current VS Code Problems panel diagnostics (up to 10 entries, sorted by severity).`,
-        '',
-        `WHEN TO CALL \`${LLS_CCAI_GET_DIAGNOSTICS_TOOL_NAME}\`:`,
-        '- After editing code files, call it to verify whether compile / lint errors were actually fixed.',
-        '- When the user asks "what errors are there", "check the problems panel", "fix the errors", or similar.',
-        '- Before claiming a fix is complete in your final reply, call it to confirm no remaining errors.',
-        '',
-        `WHEN NOT TO CALL \`${LLS_CCAI_GET_DIAGNOSTICS_TOOL_NAME}\`:`,
-        '- Do not call it repeatedly in the same round without making any code edits in between.',
-        '- Do not call it when the user has not asked about errors and you have not edited any code.',
-        '',
-        'INPUT SCHEMA:',
-        '  { "filePaths": ["optional", "array", "of", "file", "or", "directory", "paths"] }',
-        '',
-        'OUTPUT (returned to you as a text block in the same turn):',
-        '  A JSON wrapped between [get_llsccai_vscode_diagnostics] tool result (BEGIN) and (END) markers, with fields:',
-        '    { "ok": true, "summary": { "total": N, "errors": E, "warnings": W, ... },',
-        '      "diagnostics": [ { "filePath": "...", "range": { "startLine": N, "startCharacter": C, ... }, "severity": "error", "message": "...", "source": "ts", "code": "2322" } ],',
-        '      "truncated": false, "message": "..." }',
-        '',
-        'Treat the returned diagnostics as authoritative VS Code Problems panel data. Prioritize fixing entries whose severity is "error" before warnings.'
-    ];
-    return lines.join('\n');
-}

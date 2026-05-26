@@ -2,7 +2,6 @@
 
 import * as vscode from 'vscode';
 import { Logger } from '../logger';
-import { GET_DIAGNOSTICS_TRIGGER_TOKEN } from './diagnostics';
 import { pasteToClaudeCode } from './paster';
 import type { LlsTaskService } from './service';
 
@@ -39,40 +38,15 @@ const AUTO_CONTINUE_DELAY_MS = 4_000;
 const TOOL_CONTINUE_DELAY_MS = 4_000;
 
 /**
- * 诊断工具（get_llsccai_vscode_diagnostics）拦截执行后的续推延时，单位毫秒。
- *
- * 与任务流工具同样需要等 Claude Code 完成 turn 结束流程；诊断本身就是模型为
- * "下一步修复"做的准备动作，必须在拿到诊断后立刻让模型继续修复，否则诊断
- * JSON 会被当作终态助手回复展示给用户。
- */
-const DIAGNOSTICS_CONTINUE_DELAY_MS = 4_000;
-
-/**
  * 连续多少次"模型只回文字、未调用任何工具"后熔断自动续推。
  *
  * 上游模型偶尔会陷入"反复用文字声称已完成、却始终不发 tool_use"的死循环；
  * 此时无论再发多少轮续推都拿不到状态推进，反而让用户看到大量重复的
  * "请继续执行"提示。达到该阈值后调度器会停止自动续推，并通过 VS Code
- * 通知告知用户介入。计数会在任何"实际调用了任务流 / 诊断本地工具"的
- * 健康路径被重置为 0。
+ * 通知告知用户介入。计数会在任何"实际调用了任务流本地工具"的健康路径
+ * 被重置为 0。
  */
 const MAX_CONSECUTIVE_MISSING_TOOL_COUNT = 3;
-
-/**
- * 诊断工具命中后写回 Claude Code 的续推提示词。
- *
- * 提示词以 {@link GET_DIAGNOSTICS_TRIGGER_TOKEN} 作为首行，让下一轮请求经过
- * Chat 发送链路时识别并把实时 VS Code 诊断 JSON 注入到 user 消息中。模型此时看到的诊断是
- * "用户/系统刚刚提供的最新数据"，而不是上一轮自己说出来的过期 JSON。
- */
-const DIAGNOSTICS_CONTINUE_PROMPT = [
-    GET_DIAGNOSTICS_TRIGGER_TOKEN,
-    '',
-    'You requested VS Code diagnostics via `get_llsccai_vscode_diagnostics` in the previous turn.',
-    'The chat host has injected the live diagnostics above (or will inject them once this message is processed).',
-    'Please continue based on those diagnostics. Prioritize fixing entries whose severity is "error".',
-    'After each batch of edits, you may call `get_llsccai_vscode_diagnostics` again to verify the diagnostics actually cleared.'
-].join('\n');
 
 /**
  * 自动续推调度器。
@@ -80,11 +54,10 @@ const DIAGNOSTICS_CONTINUE_PROMPT = [
  * 全局只维护一个定时器；每次 schedule 前都会 cancel 旧定时器。
  * 定时器触发时会重新检查 workflow 是否仍存在、是否未完成，避免过期补刀。
  *
- * 支持三种续推场景：
+ * 支持两种续推场景：
  *
  * - {@link schedule}：上一轮缺失任务流工具调用，重新粘贴 workflow 续推提示词；
- * - {@link scheduleAfterWorkflowTool}：本地执行了 workflow 工具，让模型继续推进任务；
- * - {@link scheduleAfterDiagnosticsTool}：本地执行了诊断工具，让模型基于诊断继续修复。
+ * - {@link scheduleAfterWorkflowTool}：本地执行了 workflow 工具，让模型继续推进任务。
  */
 export class AutoContinueScheduler {
     /** 当前等待中的全局定时器句柄。 */
@@ -93,19 +66,13 @@ export class AutoContinueScheduler {
     /** 递增全局版本号，用于识别被取消的旧定时器。 */
     private static version = 0;
 
-    /** 当前等待中续推的种类，决定 {@link runIfCurrent} 的执行路径。 */
-    private static pendingKind: 'workflow' | 'diagnostics' = 'workflow';
-
-    /** 诊断续推使用的自定义提示词；仅在 pendingKind=diagnostics 时有效。 */
-    private static pendingDiagnosticsPrompt = '';
-
     /**
      * 连续"模型未调用任何工具"的次数。
      *
      * 仅由缺失工具路径 {@link schedule} 累加；任何健康路径
-     * （{@link scheduleAfterWorkflowTool} / {@link scheduleAfterDiagnosticsTool} /
-     * {@link resetMissingToolCounter}）都会清零。达到
-     * {@link MAX_CONSECUTIVE_MISSING_TOOL_COUNT} 时熔断后续自动续推。
+     * （{@link scheduleAfterWorkflowTool} / {@link resetMissingToolCounter}）
+     * 都会清零。达到 {@link MAX_CONSECUTIVE_MISSING_TOOL_COUNT} 时熔断后续
+     * 自动续推。
      */
     private static consecutiveMissingCount = 0;
 
@@ -169,25 +136,6 @@ export class AutoContinueScheduler {
     }
 
     /**
-     * 调度一次本地诊断工具返回后的自动续推。
-     *
-     * 此续推不依赖 workflow 状态，即使任务流未激活也会执行。这是因为诊断工具
-     * 已经被本地拦截改写为 text 块 + `stop_reason=end_turn`，若不主动续推，
-     * Claude Code 会把诊断 JSON 当作模型最终回答展示并结束对话，模型再也没有
-     * 机会基于诊断继续修复代码。
-     *
-     * 若任务流同时活跃，调用方应优先使用 {@link scheduleAfterWorkflowTool}，
-     * 由 workflow 自带的续推提示词驱动后续行动。
-     *
-     * @param prompt 续推提示词；缺省时使用 {@link DIAGNOSTICS_CONTINUE_PROMPT}。
-     */
-    public scheduleAfterDiagnosticsTool(prompt?: string): void {
-        this.resetMissingToolCounter('诊断工具命中');
-        AutoContinueScheduler.pendingDiagnosticsPrompt = prompt ?? DIAGNOSTICS_CONTINUE_PROMPT;
-        this.scheduleAfter(DIAGNOSTICS_CONTINUE_DELAY_MS, '4 秒', 'diagnostics');
-    }
-
-    /**
      * 重置"连续缺失工具调用"计数器。
      *
      * 任何确认模型重新进入工具调用循环的健康路径都应调用本方法，避免之前
@@ -224,12 +172,11 @@ export class AutoContinueScheduler {
      *
      * @param delayMs 延迟毫秒数。
      * @param label 日志中展示的延迟标签。
-     * @param kind 续推种类，决定 {@link runIfCurrent} 取哪段提示词。
+     * @param kind 续推种类，目前只保留 `workflow`。
      */
-    private scheduleAfter(delayMs: number, label: string, kind: 'workflow' | 'diagnostics'): void {
+    private scheduleAfter(delayMs: number, label: string, kind: 'workflow'): void {
         this.cancel(`重新调度 ${label} 自动续推`);
-        if (kind === 'workflow' && !this.service.hasActiveWorkflow()) return;
-        AutoContinueScheduler.pendingKind = kind;
+        if (!this.service.hasActiveWorkflow()) return;
         const myVersion = ++AutoContinueScheduler.version;
         AutoContinueScheduler.timer = setTimeout(() => {
             void this.runIfCurrent(myVersion);
@@ -292,17 +239,13 @@ export class AutoContinueScheduler {
     }
 
     /**
-     * 根据当前 {@link AutoContinueScheduler.pendingKind} 解析续推提示词。
+     * 解析 workflow 续推提示词。
      *
-     * - `workflow`：依赖任务流当前快照构造提示；若 workflow 已不存在或已完成则返回空串；
-     * - `diagnostics`：使用预先存入的诊断续推提示词。
+     * 若 workflow 已不存在或已完成则返回空串，调度器据此放弃本次续推。
      *
      * @returns 续推提示词；不需要续推时返回空串。
      */
     private resolvePromptForCurrentKind(): string {
-        if (AutoContinueScheduler.pendingKind === 'diagnostics') {
-            return AutoContinueScheduler.pendingDiagnosticsPrompt || DIAGNOSTICS_CONTINUE_PROMPT;
-        }
         if (!this.service.hasActiveWorkflow() || this.service.isWorkflowCompleted()) return '';
         const snapshot = this.service.getSnapshot();
         if (!snapshot.workflow) return '';

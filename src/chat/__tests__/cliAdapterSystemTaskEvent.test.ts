@@ -4,7 +4,7 @@
  * 覆盖两套实现路径：
  * 1. {@link StreamJsonCliAdapter.parseOutput} 在 stdout 顶层遇到
  *    `{"type":"system","subtype":"taskstarted" | "task_started" |
- *    "tasknotification" | "task_notification"}` 时应返回空 segments，
+ *    "tasknotification" | "task_notification" | "taskprogress" | "task_progress"}` 时应返回空 segments，
  *    避免任务调度事件 raw JSON 漏到聊天区。
  * 2. `stripEmbeddedSystemTaskEvents`（私有方法，通过反射读取）应能识别
  *    嵌入在自由文本中的同一组 subtype 写法并整段剥离。
@@ -91,6 +91,18 @@ test('parseSystemTaskEvent 丢弃 task_notification 下划线写法', () => {
     assert.equal(events[0].type, 'segments');
 });
 
+test('parseSystemTaskEvent 丢弃 taskprogress 紧凑写法', () => {
+    const events = parseSingleStdoutLine(JSON.stringify({ type: 'system', subtype: 'taskprogress', payload: { id: 't5' } }));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'segments');
+});
+
+test('parseSystemTaskEvent 丢弃 task_progress 下划线写法', () => {
+    const events = parseSingleStdoutLine(JSON.stringify({ type: 'system', subtype: 'task_progress', payload: { id: 't6' } }));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'segments');
+});
+
 test('parseSystemTaskEvent 对未知 subtype 不静默吞', () => {
     const events = parseSingleStdoutLine(JSON.stringify({ type: 'system', subtype: 'someUnknownSubtype', payload: {} }));
     const allEmpty = events.every((event) => event.type === 'segments' && event.segments.length === 0);
@@ -121,6 +133,16 @@ test('stripEmbeddedSystemTaskEvents 同时剥离两种写法的嵌入 JSON', () 
         {
             name: 'task_notification 下划线写法',
             input: '前文\n{"type":"system","subtype":"task_notification","id":4}\n后文',
+            expected: '前文\n后文'
+        },
+        {
+            name: 'taskprogress 紧凑写法',
+            input: '前文\n{"type":"system","subtype":"taskprogress","id":5}\n后文',
+            expected: '前文\n后文'
+        },
+        {
+            name: 'task_progress 下划线写法',
+            input: '前文\n{"type":"system","subtype":"task_progress","id":6}\n后文',
             expected: '前文\n后文'
         },
         {

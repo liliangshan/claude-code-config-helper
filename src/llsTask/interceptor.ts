@@ -2,13 +2,8 @@
 
 import { Logger } from '../logger';
 import type { AutoContinueScheduler } from './autoContinue';
-import {
-    executeGetDiagnosticsTool,
-    formatGetDiagnosticsToolMessage
-} from './diagnostics';
 import type { LlsTaskService } from './service';
 import {
-    LLS_CCAI_GET_DIAGNOSTICS_TOOL_NAME,
     LLS_CCAI_TASK_CREATE_TOOL_NAME,
     LLS_CCAI_TASK_TOOL_NAME
 } from './tools';
@@ -30,8 +25,6 @@ export interface InterceptResponseResult {
     sawToolUse: boolean;
     /** 本轮是否命中 LLS CCAI 任务流工具（create/update）。 */
     handledWorkflowTool: boolean;
-    /** 本轮是否命中诊断工具（get_llsccai_vscode_diagnostics）。 */
-    handledDiagnosticsTool: boolean;
     /** 本轮是否出现"非本地"工具调用（Claude Code 会触发 tool_result 往返）。 */
     sawNonLocalTool: boolean;
 }
@@ -59,7 +52,7 @@ interface SseEventRecord {
 }
 
 /** 本地可执行工具的种类标识，用于区分调度副作用。 */
-type LocalToolKind = 'workflow' | 'diagnostics';
+type LocalToolKind = 'workflow';
 
 /** 流式 tool_use 累积器。 */
 interface ToolUseAccumulator {
@@ -109,15 +102,7 @@ export function interceptAnthropicResponse(
             deps.autoContinueScheduler.cancel('任务流工具处理后 workflow 已完成或不存在');
         }
     } else if (result.sawNonLocalTool) {
-        // 只有"真正会让 Claude Code 进入 tool_result 往返"的工具才取消续推。
-        // 诊断工具已被本地改写成 text 块、stop_reason 也改为 end_turn，
-        // 因此不应阻止任务流续推。
         deps.autoContinueScheduler.cancel('响应包含非任务流工具调用，等待 Claude Code 工具结果');
-    } else if (result.handledDiagnosticsTool) {
-        // 诊断工具命中：本地伪造 tool_result 已经写回响应，Claude Code 收到的是
-        // stop_reason=end_turn 的"终态助手回复"，自身不会再发起下一轮。这里必须
-        // 主动调度续推，否则用户会看到诊断 JSON 直接成为最终回答、模型无法继续修复。
-        deps.autoContinueScheduler.scheduleAfterDiagnosticsTool();
     } else if (deps.service.hasActiveWorkflow()) {
         deps.service.markWorkflowUpdateMissing();
         deps.autoContinueScheduler.schedule();
@@ -138,7 +123,6 @@ function interceptJsonResponse(body: string, deps: LlsTaskInterceptorDeps): Inte
         const content = Array.isArray(json.content) ? json.content : [];
         let sawToolUse = false;
         let handledWorkflowTool = false;
-        let handledDiagnosticsTool = false;
         let sawNonLocalTool = false;
         const rewritten = content.map((block) => {
             if (block?.type !== 'tool_use') return block;
@@ -149,33 +133,24 @@ function interceptJsonResponse(body: string, deps: LlsTaskInterceptorDeps): Inte
                 const message = executeWorkflowTool(block.input, deps, name);
                 return { type: 'text', text: message };
             }
-            if (isDiagnosticsToolName(name)) {
-                handledDiagnosticsTool = true;
-                const resultJson = executeGetDiagnosticsTool(block.input);
-                return { type: 'text', text: formatGetDiagnosticsToolMessage(resultJson) };
-            }
             sawNonLocalTool = true;
             return block;
         });
-        const handledAnyLocalTool = handledWorkflowTool || handledDiagnosticsTool;
-        if (handledAnyLocalTool) {
+        if (handledWorkflowTool) {
             json.content = rewritten;
-            // 仅当本轮没有"真正会触发 tool_result 往返"的工具时，才能把 stop_reason
-            // 改为 end_turn；否则 Claude Code 需要正常处理剩余工具调用。
             if (json.stop_reason === 'tool_use' && !sawNonLocalTool) {
                 json.stop_reason = 'end_turn';
             }
         }
         return {
-            body: handledAnyLocalTool ? JSON.stringify(json) : body,
+            body: handledWorkflowTool ? JSON.stringify(json) : body,
             sawToolUse,
             handledWorkflowTool,
-            handledDiagnosticsTool,
             sawNonLocalTool
         };
     } catch (err) {
         Logger.warn('[LlsTask][Interceptor] 非流式响应解析失败：' + (err instanceof Error ? err.message : String(err)));
-        return { body, sawToolUse: false, handledWorkflowTool: false, handledDiagnosticsTool: false, sawNonLocalTool: false };
+        return { body, sawToolUse: false, handledWorkflowTool: false, sawNonLocalTool: false };
     }
 }
 
@@ -192,7 +167,6 @@ function interceptSseResponse(body: string, deps: LlsTaskInterceptorDeps): Inter
     const accumulators = new Map<number, ToolUseAccumulator>();
     let sawToolUse = false;
     let handledWorkflowTool = false;
-    let handledDiagnosticsTool = false;
     let sawNonLocalTool = false;
 
     for (const record of records) {
@@ -215,7 +189,6 @@ function interceptSseResponse(body: string, deps: LlsTaskInterceptorDeps): Inter
             const localKind = classifyLocalToolKind(name);
             accumulators.set(index, { index, name, inputJson: '', localKind });
             if (localKind === 'workflow') handledWorkflowTool = true;
-            else if (localKind === 'diagnostics') handledDiagnosticsTool = true;
             else sawNonLocalTool = true;
             if (localKind) {
                 // 把本地工具的 content_block_start 改写为 text 块的 start。
@@ -263,10 +236,7 @@ function interceptSseResponse(body: string, deps: LlsTaskInterceptorDeps): Inter
 
         if (payload.type === 'message_delta' && payload.delta?.stop_reason === 'tool_use') {
             sawToolUse = true;
-            // 仅当本轮命中过本地工具、且没有真正的"非本地"工具时，把 stop_reason
-            // 改成 end_turn，避免 Claude Code 等待下游 tool_result。
-            const handledAnyLocalTool = handledWorkflowTool || handledDiagnosticsTool;
-            if (handledAnyLocalTool && !sawNonLocalTool) {
+            if (handledWorkflowTool && !sawNonLocalTool) {
                 payload.delta.stop_reason = 'end_turn';
                 output.push(formatSseEvent({
                     event: record.event,
@@ -279,7 +249,7 @@ function interceptSseResponse(body: string, deps: LlsTaskInterceptorDeps): Inter
         output.push(formatSseEvent(record));
     }
 
-    return { body: output.join(''), sawToolUse, handledWorkflowTool, handledDiagnosticsTool, sawNonLocalTool };
+    return { body: output.join(''), sawToolUse, handledWorkflowTool, sawNonLocalTool };
 }
 
 /**
@@ -312,28 +282,16 @@ export function isWorkflowToolName(name: unknown): boolean {
 }
 
 /**
- * 判断工具名称是否属于 LLS CCAI 诊断读取工具。
- *
- * @param name 待判断的工具名。
- * @returns 是否为诊断工具。
- */
-export function isDiagnosticsToolName(name: unknown): boolean {
-    return name === LLS_CCAI_GET_DIAGNOSTICS_TOOL_NAME;
-}
-
-/**
  * 把工具名分类为本地工具种类。
  *
  * - `workflow`：任务流创建 / 更新工具；
- * - `diagnostics`：VS Code 诊断读取工具；
  * - `undefined`：非本地工具，应原样透传给下游 Claude Code。
  *
  * @param name 待分类的工具名。
  * @returns 本地工具种类；非本地工具时返回 undefined。
  */
-export function classifyLocalToolKind(name: unknown): 'workflow' | 'diagnostics' | undefined {
+export function classifyLocalToolKind(name: unknown): 'workflow' | undefined {
     if (isWorkflowToolName(name)) return 'workflow';
-    if (isDiagnosticsToolName(name)) return 'diagnostics';
     return undefined;
 }
 
@@ -347,13 +305,13 @@ export function classifyLocalToolKind(name: unknown): 'workflow' | 'diagnostics'
  * @returns 写回响应文本块的内容。
  */
 export function executeLocalToolByKind(
-    kind: 'workflow' | 'diagnostics',
+    kind: 'workflow',
     name: string,
     input: unknown,
     deps: LlsTaskInterceptorDeps
 ): string {
     if (kind === 'workflow') return executeWorkflowTool(input, deps, name);
-    return formatGetDiagnosticsToolMessage(executeGetDiagnosticsTool(input));
+    return '';
 }
 
 /**

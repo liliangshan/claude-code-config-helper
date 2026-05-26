@@ -101,7 +101,7 @@ export interface SessionUsage {
     modelKey: string;
     /** 模型上下文上限。 */
     contextLimit: number;
-    /** 触发阈值 = contextLimit - 60000。 */
+    /** 触发阈值 = contextLimit - 50000。 */
     threshold: number;
     /** 最近一次更新时间（ISO 8601）。 */
     lastUpdated: string;
@@ -147,7 +147,7 @@ export function createEmptySession(
         modelId,
         modelKey: `${providerId}/${modelId}`,
         contextLimit,
-        threshold: Math.max(0, contextLimit - 60000),
+        threshold: Math.max(0, contextLimit - 50000),
         lastUpdated: now,
         lastSource: 'estimated',
         current: {

@@ -1,7 +1,7 @@
 /**
  * @file LLS 任务流请求注入轻量测试。
  *
- * 覆盖诊断工具系统规则注入位置，避免工具说明污染 user 消息历史。
+ * 覆盖任务流注入路径，以及"诊断工具已被彻底移除"的回归断言。
  */
 
 import * as assert from 'assert';
@@ -19,35 +19,52 @@ interface TestCase {
 /** 请求注入测试集合。 */
 const tests: TestCase[] = [
     {
-        name: '诊断工具使用说明应注入 system 而不是 user message',
+        name: '无任务流时不应注入任何 tools 或 system 规则',
         run: () => {
-            const result = injectLlsTaskRequestBody(JSON.stringify({
+            const input = JSON.stringify({
                 model: 'm',
                 messages: [{ role: 'user', content: 'hello' }]
-            }), undefined);
-            const body = JSON.parse(result.bodyText) as { system?: unknown; messages?: Array<{ role?: string; content?: unknown }>; tools?: Array<{ name?: string }> };
-            assert.strictEqual(result.injected, true);
-            assert.strictEqual(typeof body.system, 'string');
-            assert.ok(String(body.system).includes('get_llsccai_vscode_diagnostics'));
-            assert.strictEqual(body.messages?.length, 1);
-            assert.strictEqual(body.messages?.[0].role, 'user');
-            assert.strictEqual(body.messages?.[0].content, 'hello');
-            assert.ok(body.tools?.some((tool) => tool.name === 'get_llsccai_vscode_diagnostics'));
+            });
+            const result = injectLlsTaskRequestBody(input, undefined);
+            assert.strictEqual(result.injected, false);
+            assert.strictEqual(result.bodyText, input);
         }
     },
     {
-        name: '已有 system text block 数组时诊断规则应追加为新的 system text block',
+        name: '诊断工具与 @llsccai-get-errors 触发词不应再被注入到出站请求',
         run: () => {
+            const fakeDeps = {
+                configManager: {
+                    getResolvedUiLanguage: () => 'en' as const,
+                    getGlobalSystemPrompt: () => '',
+                    getWorkspaceSystemPrompt: () => ''
+                },
+                llsTaskService: {
+                    hasActiveWorkflow: () => true,
+                    hasPendingWorkflowCreation: () => false,
+                    getSnapshot: () => ({ workflow: { title: 't', tasks: [] } })
+                },
+                autoContinueScheduler: {
+                    cancel: () => undefined
+                }
+            };
             const result = injectLlsTaskRequestBody(JSON.stringify({
                 model: 'm',
-                system: [{ type: 'text', text: 'base-system' }],
-                messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]
-            }), undefined);
-            const body = JSON.parse(result.bodyText) as { system?: Array<{ type?: string; text?: string }>; messages?: Array<{ content?: unknown }> };
-            assert.ok(Array.isArray(body.system));
-            assert.strictEqual(body.system?.[0].text, 'base-system');
-            assert.ok(body.system?.[1].text?.includes('get_llsccai_vscode_diagnostics'));
-            assert.deepStrictEqual(body.messages?.[0].content, [{ type: 'text', text: 'hello' }]);
+                messages: [{
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: '请检查 @llsccai-get-errors' }
+                    ]
+                }]
+            }), fakeDeps as never);
+            const serialized = result.bodyText;
+            assert.ok(!serialized.includes('get_llsccai_vscode_diagnostics'),
+                '出站请求不应再包含诊断工具名');
+            assert.ok(!serialized.includes('buildGetLlsCcaiDiagnosticsSystemRule'),
+                '出站请求不应再包含诊断 system 规则函数名');
+            // @llsccai-get-errors 文本如果是用户自己输入的，应当原样保留、不再被识别为触发词改写。
+            assert.ok(serialized.includes('@llsccai-get-errors'),
+                '用户原始文本中的 @llsccai-get-errors 应当被当作普通文本保留');
         }
     },
     {
@@ -62,7 +79,7 @@ const tests: TestCase[] = [
         }
     },
     {
-        name: '全局和工作区系统提示词应注入 Anthropic system 字段',
+        name: '全局和工作区系统提示词应在任务流活跃时注入 Anthropic system 字段',
         run: () => {
             const fakeDeps = {
                 configManager: {
@@ -71,8 +88,9 @@ const tests: TestCase[] = [
                     getWorkspaceSystemPrompt: () => 'workspace-rule'
                 },
                 llsTaskService: {
-                    hasActiveWorkflow: () => false,
-                    hasPendingWorkflowCreation: () => false
+                    hasActiveWorkflow: () => true,
+                    hasPendingWorkflowCreation: () => false,
+                    getSnapshot: () => ({ workflow: { title: 't', tasks: [] } })
                 },
                 autoContinueScheduler: {
                     cancel: () => undefined
@@ -83,13 +101,12 @@ const tests: TestCase[] = [
                 system: 'base-system',
                 messages: [{ role: 'user', content: 'hello' }]
             }), fakeDeps as never);
-            const body = JSON.parse(result.bodyText) as { system?: unknown; messages?: Array<{ content?: unknown }> };
+            const body = JSON.parse(result.bodyText) as { system?: unknown };
             assert.strictEqual(result.injected, true);
             assert.strictEqual(typeof body.system, 'string');
             assert.ok(String(body.system).includes('base-system'));
             assert.ok(String(body.system).includes('[Global System Prompt]\nglobal-rule'));
             assert.ok(String(body.system).includes('[Workspace System Prompt]\nworkspace-rule'));
-            assert.strictEqual(body.messages?.[0].content, 'hello');
         }
     },
     {
@@ -122,35 +139,30 @@ const tests: TestCase[] = [
         }
     },
     {
-        name: '诊断触发结果应无条件插入最后一条 user content 索引 0',
+        name: '标题生成侧请求应跳过全部任务流注入',
         run: () => {
-            const result = injectLlsTaskRequestBody(JSON.stringify({
-                model: 'm',
-                messages: [{
-                    role: 'user',
-                    content: [
-                        { type: 'text', text: '<system-reminder>skills</system-reminder>' },
-                        { type: 'text', text: '<ide_opened_file>file</ide_opened_file>' },
-                        { type: 'text', text: `请检查 ${'@llsccai-get-errors'}` }
-                    ]
-                }]
-            }), undefined);
-            const body = JSON.parse(result.bodyText) as { messages?: Array<{ content?: Array<{ text?: string }> }> };
-            assert.ok(body.messages?.[0].content?.[0].text?.includes('[get_llsccai_vscode_diagnostics]'));
-            assert.strictEqual(body.messages?.[0].content?.[1].text, '<system-reminder>skills</system-reminder>');
-            assert.strictEqual(body.messages?.[0].content?.[2].text, '<ide_opened_file>file</ide_opened_file>');
-        }
-    },
-    {
-        name: '标题生成侧请求应跳过全部任务流和诊断工具注入',
-        run: () => {
+            const fakeDeps = {
+                configManager: {
+                    getResolvedUiLanguage: () => 'en' as const,
+                    getGlobalSystemPrompt: () => '',
+                    getWorkspaceSystemPrompt: () => ''
+                },
+                llsTaskService: {
+                    hasActiveWorkflow: () => true,
+                    hasPendingWorkflowCreation: () => false,
+                    getSnapshot: () => ({ workflow: { title: 't', tasks: [] } })
+                },
+                autoContinueScheduler: {
+                    cancel: () => undefined
+                }
+            };
             const input = JSON.stringify({
                 model: 'm',
                 system: 'Generate a concise, sentence-case title for this conversation.',
                 messages: [{ role: 'user', content: '请给这个会话生成标题' }],
                 output_config: { format: { type: 'json_schema' } }
             });
-            const result = injectLlsTaskRequestBody(input, undefined);
+            const result = injectLlsTaskRequestBody(input, fakeDeps as never);
             assert.strictEqual(result.injected, false);
             assert.strictEqual(result.bodyText, input);
         }

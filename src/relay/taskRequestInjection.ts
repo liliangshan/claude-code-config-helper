@@ -9,18 +9,11 @@
 import type { ConfigManager } from '../configManager';
 import { Logger } from '../logger';
 import type { AutoContinueScheduler } from '../llsTask/autoContinue';
-import {
-    GET_DIAGNOSTICS_TRIGGER_TOKEN,
-    executeGetDiagnosticsTool,
-    formatGetDiagnosticsInjectionBlock
-} from '../llsTask/diagnostics';
 import type { LlsTaskService } from '../llsTask/service';
 import {
     AnthropicToolDefinition,
     buildCreateLlsCcaiTaskSystemRule,
     buildCreateLlsCcaiTaskWorkflowTool,
-    buildGetLlsCcaiDiagnosticsSystemRule,
-    buildGetLlsCcaiDiagnosticsTool,
     buildLlsCcaiTaskSystemRule,
     buildUpdateLlsCcaiTaskWorkflowTool,
     mergeAnthropicTools
@@ -35,6 +28,13 @@ const EXIT_PLAN_MODE_TOOL_NAME = 'ExitPlanMode';
 
 /** Claude Code 用于进入 Plan Mode 的工具名，转发上游时统一过滤掉。 */
 const ENTER_PLAN_MODE_TOOL_NAME = 'EnterPlanMode';
+
+const ALWAYS_BLOCKED_CHAT_TOOL_NAMES = new Set<string>([
+    EXPERT_NATIVE_AGENT_TOOL_NAME,
+    'Task',
+    ENTER_PLAN_MODE_TOOL_NAME,
+    EXIT_PLAN_MODE_TOOL_NAME
+]);
 
 /**
  * Claude Code CLI 内部"会话标题生成"侧轨请求的 system 关键标识。
@@ -106,11 +106,10 @@ export interface InjectedLlsTaskRequest {
  *
  * - 任务流活跃 → 注入 `update_llsccai_task_workflow` + 任务流执行规则；
  * - 触发了 workflow 创建 → 注入 `create_llsccai_task_workflow` + 创建规则；
- * - 始终注入 `get_llsccai_vscode_diagnostics` 让模型可主动读取 VS Code 问题面板；
  * - 侧轨请求（如标题生成）直接跳过任何注入。
  *
  * @param bodyText 已经重写 model 后的请求体字符串。
- * @param deps 任务流依赖；缺省时只跳过任务流相关逻辑，但仍会注入诊断工具。
+ * @param deps 任务流依赖；缺省时跳过任务流相关注入逻辑。
  * @param options 注入选项，用于标记本轮是否触发 workflow 创建。
  * @returns 注入结果，包含最终请求体文本与是否改写的标记。
  */
@@ -124,22 +123,22 @@ export function injectLlsTaskRequestBody(
     const hasPendingWorkflowCreation = !!deps?.llsTaskService.hasPendingWorkflowCreation();
     const shouldInjectWorkflowExecution = hasActiveWorkflow;
     const shouldInjectWorkflowCreation = !hasActiveWorkflow && (createTriggered || hasPendingWorkflowCreation);
-    // 诊断工具与任务流互不依赖：只要请求不是侧轨、且能成功解析 JSON，就注入。
-    const shouldInjectDiagnostics = true;
-    if (!shouldInjectWorkflowExecution && !shouldInjectWorkflowCreation && !shouldInjectDiagnostics) {
-        return { bodyText, injected: false };
-    }
     try {
         const parsed = JSON.parse(bodyText) as Record<string, unknown>;
+        const originalTools = parsed.tools;
+        parsed.tools = filterAnthropicToolsByName(parsed.tools, ALWAYS_BLOCKED_CHAT_TOOL_NAMES);
+        const didFilterAlwaysBlockedTools = parsed.tools !== originalTools;
+        if (!shouldInjectWorkflowExecution && !shouldInjectWorkflowCreation) {
+            return didFilterAlwaysBlockedTools
+                ? { bodyText: JSON.stringify(parsed), injected: true }
+                : { bodyText, injected: false };
+        }
         if (isClaudeCodeSideTrackRequest(parsed)) {
             Logger.info('[LlsTask] 跳过侧轨请求注入（会话标题生成等内部请求）');
-            return { bodyText, injected: false };
+            return didFilterAlwaysBlockedTools
+                ? { bodyText: JSON.stringify(parsed), injected: true }
+                : { bodyText, injected: false };
         }
-        // 先尝试用 @llsccai-get-errors 触发词注入实时诊断；这一步不依赖任务流
-        // 是否活跃、不依赖 deps，是一个独立的"用户消息扫描+注入"环节。命中后
-        // 会直接修改 parsed.messages，下游所有 tools/system 注入都基于修改后的
-        // messages 继续工作。
-        const diagnosticsInjected = maybeInjectDiagnosticsFromTrigger(parsed);
         // 通过侧轨过滤后才取消自动续推定时器，避免标题生成等并发请求误把
         // 主对话刚刚登记的"缺失工具调用"续推计划清掉。
         deps?.autoContinueScheduler.cancel('任务流请求开始，避免旧定时器重复续推');
@@ -163,11 +162,7 @@ export function injectLlsTaskRequestBody(
         //   仍能完成所有任务，不影响功能。
         // - `EnterPlanMode` / `ExitPlanMode` 是宿主规划态控制工具，不应暴露给上游模型，
         //   否则会让模型在普通转发对话里误触发规划模式。
-        const blockedToolNames = new Set<string>([
-            EXPERT_NATIVE_AGENT_TOOL_NAME,
-            ENTER_PLAN_MODE_TOOL_NAME,
-            EXIT_PLAN_MODE_TOOL_NAME
-        ]);
+        const blockedToolNames = new Set<string>(ALWAYS_BLOCKED_CHAT_TOOL_NAMES);
         if (shouldInjectWorkflowExecution && deps && language) {
             builtIns.push(buildUpdateLlsCcaiTaskWorkflowTool());
             blockedToolNames.add(ASK_USER_QUESTION_TOOL_NAME);
@@ -183,17 +178,10 @@ export function injectLlsTaskRequestBody(
             blockedToolNames.add(EXIT_PLAN_MODE_TOOL_NAME);
             userControlRules.push(buildCreateLlsCcaiTaskSystemRule(language));
         }
-        if (shouldInjectDiagnostics) {
-            builtIns.push(buildGetLlsCcaiDiagnosticsTool());
-            systemRules.push(buildGetLlsCcaiDiagnosticsSystemRule());
-        }
         if (builtIns.length === 0) {
-            // 即使没有 tools/system 注入，只要诊断触发词命中、parsed.messages 被改写，
-            // 也必须把改写后的请求体序列化回去返回。
-            if (diagnosticsInjected) {
-                return { bodyText: JSON.stringify(parsed), injected: true };
-            }
-            return { bodyText, injected: false };
+            return didFilterAlwaysBlockedTools
+                ? { bodyText: JSON.stringify(parsed), injected: true }
+                : { bodyText, injected: false };
         }
         parsed.tools = mergeAnthropicTools(
             filterAnthropicToolsByName(parsed.tools, blockedToolNames) as unknown,
@@ -432,91 +420,3 @@ export function extractAnthropicSystemText(system: unknown): string {
     return parts.join('\n');
 }
 
-/**
- * 扫描请求体最后一条 user 消息，命中 {@link GET_DIAGNOSTICS_TRIGGER_TOKEN} 时
- * 把实时 VS Code 诊断 JSON 注入到该消息 content 头部。
- *
- * 这是"模型自助拉取诊断"循环的关键一步：
- * 1. 模型在前一轮调用 `get_llsccai_vscode_diagnostics`，拦截器写回 ACK 文本；
- * 2. 自动续推把含触发词的提示词粘贴到 Claude Code 输入框并回车；
- * 3. Claude Code CLI 把它作为新一轮 user 消息发到 relay；
- * 4. 本函数识别触发词，立即调用 {@link executeGetDiagnosticsTool} 读取实时诊断，
- *    并以 {@link formatGetDiagnosticsInjectionBlock} 包装后插入同一条 user 消息头部。
- *
- * 设计要点：
- * - 仅检查"最后一条 user 消息"，避免历史里残留的触发词反复触发；
- * - 不剥离触发词本身，保留它能让模型在历史里清楚地看到本轮的诊断来源；
- * - 命中后立刻返回 true，调用方据此把请求体序列化回去；
- * - 任何异常都以 catch 兜底并记日志，不阻断主链路。
- *
- * @param parsed Anthropic 请求体对象（会被原地修改）。
- * @returns 命中触发词且成功注入时返回 true，否则返回 false。
- */
-export function maybeInjectDiagnosticsFromTrigger(parsed: Record<string, unknown>): boolean {
-    try {
-        const messages = parsed.messages;
-        if (!Array.isArray(messages) || messages.length === 0) {
-            return false;
-        }
-        const lastMessage = messages[messages.length - 1];
-        if (!isAnthropicUserMessageRecord(lastMessage)) {
-            return false;
-        }
-        if (!userMessageContainsTriggerToken(lastMessage, GET_DIAGNOSTICS_TRIGGER_TOKEN)) {
-            return false;
-        }
-        const resultJson = executeGetDiagnosticsTool({});
-        const injectionText = formatGetDiagnosticsInjectionBlock(resultJson);
-        prependTextBlockToUserMessage(lastMessage, injectionText);
-        Logger.info(`[LlsTask] 命中诊断触发词 ${GET_DIAGNOSTICS_TRIGGER_TOKEN}，已把实时 VS Code 诊断注入到 user 消息`);
-        return true;
-    } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        Logger.warn(`[LlsTask] 诊断触发词处理失败: ${detail}`);
-        return false;
-    }
-}
-
-/**
- * 判断一条 Anthropic user message 的任意文本块是否包含给定触发词。
- *
- * 兼容三种 content 形态：
- * - 字符串；
- * - 由 `{type:'text', text}` 等组成的数组；
- * - 其它形态视为不包含。
- *
- * 比较时大小写不敏感，避免触发词大小写差异导致漏匹配。
- *
- * @param message 目标 user message。
- * @param token 触发词。
- * @returns 命中时返回 true。
- */
-export function userMessageContainsTriggerToken(
-    message: { role: 'user'; content?: unknown },
-    token: string
-): boolean {
-    const needle = token.toLowerCase();
-    const content = message.content;
-    if (typeof content === 'string') {
-        return content.toLowerCase().includes(needle);
-    }
-    if (!Array.isArray(content)) {
-        return false;
-    }
-    for (const block of content) {
-        if (typeof block === 'string') {
-            if (block.toLowerCase().includes(needle)) {
-                return true;
-            }
-            continue;
-        }
-        if (!block || typeof block !== 'object') {
-            continue;
-        }
-        const text = (block as { text?: unknown }).text;
-        if (typeof text === 'string' && text.toLowerCase().includes(needle)) {
-            return true;
-        }
-    }
-    return false;
-}
