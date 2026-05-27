@@ -24,6 +24,7 @@ import type {
     ProviderConfig
 } from '../types';
 import type { RelayRequestHandler } from './server';
+import type { UpstreamTimeoutKind } from './upstreamTimeouts';
 
 /** Claude Code 当前转发的目标路径。 */
 const RELAY_PATH = '/v1/messages';
@@ -65,6 +66,8 @@ export interface UpstreamRequestContext {
     parsedBody: unknown | null;
     /** 本轮请求是否触发了创建 LLS CCAI 任务流。 */
     llsTaskCreateTriggered?: boolean;
+    /** 上游卡住时通知扩展宿主自愈。 */
+    onUpstreamTimeout?: (kind: UpstreamTimeoutKind) => void;
 }
 
 /**
@@ -89,6 +92,8 @@ export interface RelayRouterDeps {
     configManager: ConfigManager;
     /** 上游适配器列表，按 apiType 选择匹配。 */
     adapters: UpstreamAdapter[];
+    /** 上游超时通知回调，用于宿主层触发自动续发。 */
+    onUpstreamTimeout?: (kind: UpstreamTimeoutKind) => void;
     /** 可选任务流服务，用于处理 @llsccai-task 触发。 */
     llsTaskService?: LlsTaskService;
     /**
@@ -265,7 +270,7 @@ function writeJsonError(
  * @returns 与 {@link RelayRequestHandler} 兼容的请求处理函数。
  */
 export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
-    const { configManager, adapters, llsTaskService, expertHandler } = deps;
+    const { configManager, adapters, llsTaskService, expertHandler, onUpstreamTimeout } = deps;
     const adapterMap = new Map<ApiType, UpstreamAdapter>();
     for (const adapter of adapters) {
         adapterMap.set(adapter.apiType, adapter);
@@ -376,7 +381,7 @@ export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
         Logger.info(
             `Relay 转发：${providerId}/${modelId} -> ${provider.baseUrl}（apiType=${provider.apiType}）`
         );
-        await adapter.handle({ req, res, provider, modelId, rawBody, parsedBody, llsTaskCreateTriggered });
+        await adapter.handle({ req, res, provider, modelId, rawBody, parsedBody, llsTaskCreateTriggered, onUpstreamTimeout });
     };
 }
 

@@ -27,7 +27,7 @@ import type { UpstreamAdapter, UpstreamRequestContext } from './router';
 import { extractAnthropicSessionId, handleLlsCcaiSummCommand, isLlsCcaiSummCommandRequest } from './summCommand';
 import { injectLlsTaskRequestBody, type LlsTaskRequestInjectionDeps } from './taskRequestInjection';
 import type { TokenBudgetService } from './tokenBudget/service';
-import { UPSTREAM_SOCKET_IDLE_TIMEOUT_MS } from './upstreamTimeouts';
+import { UPSTREAM_FIRST_BYTE_TIMEOUT_MS, UPSTREAM_STREAM_IDLE_TIMEOUT_MS } from './upstreamTimeouts';
 import { UsageReporter, type UsageSink } from './usageReporter';
 
 /** Anthropic 协议默认转发路径；provider.baseUrl 已自行决定是否包含 /v1。 */
@@ -326,8 +326,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
             hostname: upstreamUrl.hostname,
             port: upstreamUrl.port || (upstreamUrl.protocol === 'http:' ? 80 : 443),
             path: `${upstreamUrl.pathname}${upstreamUrl.search}`,
-            headers,
-            timeout: UPSTREAM_SOCKET_IDLE_TIMEOUT_MS
+            headers
         };
 
         // 聚合响应体用于任务流本地拦截与最终 messages 聚合记录；不再输出单次 request/response 调试文件。
@@ -340,10 +339,51 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
         const usageReporter = new UsageReporter(this.usageSink);
 
         await new Promise<void>((resolve) => {
+            let settled = false;
+            let gotHeaders = false;
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(firstByteTimer);
+                resolve();
+            };
+            const firstByteTimer = setTimeout(() => {
+                if (gotHeaders) return;
+                const seconds = Math.round(UPSTREAM_FIRST_BYTE_TIMEOUT_MS / 1000);
+                errorMessage = `上游首字节超时（${seconds}s）`;
+                Logger.error(`Anthropic 透传上游首字节 ${seconds}s 超时，主动断开：${upstreamUrl.toString()}`);
+                ctx.onUpstreamTimeout?.('first_byte');
+                try {
+                    upstreamReq.destroy(new Error(errorMessage));
+                } catch {
+                    // ignore
+                }
+                this.writeErrorJson(res, 504, 'timeout', errorMessage);
+                finish();
+            }, UPSTREAM_FIRST_BYTE_TIMEOUT_MS);
             const upstreamReq = transport.request(options, (upstreamRes) => {
+                gotHeaders = true;
+                clearTimeout(firstByteTimer);
                 responseStatus = upstreamRes.statusCode;
                 responseHeaders = upstreamRes.headers;
                 const isStream = this.isEventStream(upstreamRes.headers['content-type']);
+                if (isStream) {
+                    upstreamRes.setTimeout(UPSTREAM_STREAM_IDLE_TIMEOUT_MS, () => {
+                        const seconds = Math.round(UPSTREAM_STREAM_IDLE_TIMEOUT_MS / 1000);
+                        errorMessage = `上游流式响应空闲超时（${seconds}s）`;
+                        Logger.error(`Anthropic 透传上游流式响应空闲 ${seconds}s 超时，主动断开：${upstreamUrl.toString()}`);
+                        ctx.onUpstreamTimeout?.('stream_idle');
+                        try {
+                            upstreamRes.destroy(new Error(errorMessage));
+                        } catch {
+                            // ignore
+                        }
+                        if (!res.writableEnded) {
+                            res.end();
+                        }
+                        finish();
+                    });
+                }
                 const streamInterceptor = isStream && this.taskDeps
                     ? new LlsTaskStreamingInterceptor({
                         service: this.taskDeps.llsTaskService,
@@ -383,7 +423,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                     if (!res.writableEnded) {
                         res.end();
                     }
-                    resolve();
+                    finish();
                 });
                 upstreamRes.on('end', () => {
                     if (!res.writableEnded) {
@@ -397,7 +437,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                             }
                             usageReporter.end();
                             res.end();
-                            resolve();
+                            finish();
                             return;
                         }
                         const finalBody = this.taskDeps
@@ -416,28 +456,16 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                         res.write(finalBody);
                         res.end();
                     }
-                    resolve();
+                    finish();
                 });
             });
 
             upstreamReq.on('error', (err) => {
+                if (settled) return;
                 errorMessage = err.message;
                 Logger.error(`上游请求错误：${err.message}`);
                 this.writeErrorJson(res, 502, 'bad_gateway', `上游请求失败：${err.message}`);
-                resolve();
-            });
-
-            upstreamReq.on('timeout', () => {
-                const seconds = Math.round(UPSTREAM_SOCKET_IDLE_TIMEOUT_MS / 1000);
-                errorMessage = `上游请求超时（${seconds}s 空闲）`;
-                Logger.error(`Anthropic 透传上游 socket 空闲 ${seconds}s 超时，主动断开：${upstreamUrl.toString()}`);
-                try {
-                    upstreamReq.destroy(new Error(errorMessage));
-                } catch {
-                    // ignore
-                }
-                this.writeErrorJson(res, 504, 'timeout', errorMessage);
-                resolve();
+                finish();
             });
 
             // 客户端中途断开时尽量释放上游连接。

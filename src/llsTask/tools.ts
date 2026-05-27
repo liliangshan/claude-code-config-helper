@@ -64,7 +64,7 @@ export function buildUpdateLlsCcaiTaskWorkflowTool(): AnthropicToolDefinition {
 export function buildCreateLlsCcaiTaskWorkflowTool(): AnthropicToolDefinition {
     return {
         name: LLS_CCAI_TASK_CREATE_TOOL_NAME,
-        description: 'Create an LLS CCAI task workflow from the user prompt, opened planning document, or gathered context. You must also echo back the planning document path you used (if any) and the user\'s original request text, so later turns can keep the original context anchored.',
+        description: 'Create an LLS CCAI task workflow from the user prompt, opened planning document, or gathered context. You must also echo back the planning document path you used (if any) and the user\'s original request text, so later turns can keep the original context anchored without repeating document contents.',
         input_schema: {
             type: 'object',
             additionalProperties: false,
@@ -102,7 +102,7 @@ export function buildCreateLlsCcaiTaskWorkflowTool(): AnthropicToolDefinition {
                 },
                 originalUserPrompt: {
                     type: 'string',
-                    description: 'The user\'s original request text after the @llsccai-task trigger (or the full document content when the request was document-driven). This text will be reused verbatim in later continue-prompts so the model never forgets the original intent.'
+                    description: 'The user\'s original request text after the @llsccai-task trigger. If a document/file was used, keep this to the user\'s typed request only and do not paste document or file contents; later continue-prompts will reuse the planningDocumentPath instead.'
                 }
             },
             required: ['workflow', 'planningDocumentPath', 'originalUserPrompt']
@@ -152,7 +152,7 @@ export function buildLlsCcaiTaskSystemRule(
 ): string {
     const texts = getLlsCcaiTaskTexts(language);
     const trimmedPath = (planningDocumentPath || '').trim();
-    const trimmedPrompt = (originalUserPrompt || '').trim();
+    const trimmedPrompt = !trimmedPath ? (originalUserPrompt || '').trim() : '';
     const lines = [
         'Active llsccai-task workflow is available for the current workspace.',
         '',
@@ -205,9 +205,9 @@ export function buildCreateLlsCcaiTaskSystemRule(language: ResolvedAppLanguage):
         '- Create the workflow from the actual document content, even if the document is informal, partial, non-standard, or written as notes. Infer clear executable tasks when possible.',
         '- If neither a useful prompt nor any usable opened/provided document content is available, ask the user to open a document or edit the prompt; do not create an unrelated workflow.',
         '- When you invoke create_llsccai_task_workflow, you MUST also fill the planningDocumentPath and originalUserPrompt arguments:',
-        '  * planningDocumentPath: workspace-relative path of the document you actually read (from <ide_opened_file> or otherwise). Use an empty string if no document was used.',
-        '  * originalUserPrompt: the user request text after @llsccai-task verbatim. When the request is document-driven and the user wrote no meaningful prompt, paste the full document content here so later turns still see the original source.',
-        '  These two fields are reused in every later turn to keep the original user intent / document anchored. Do not omit them and do not paraphrase.',
+        '  * planningDocumentPath: workspace-relative path of the document/file you actually read (from <ide_opened_file> or otherwise). Use an empty string if no document/file was used.',
+        '  * originalUserPrompt: only the user request text after @llsccai-task verbatim. If the workflow is document/file-driven and the user wrote no meaningful prompt, use an empty string. Never paste document/file contents into originalUserPrompt.',
+        '  Later turns reuse planningDocumentPath to keep the original document/file anchored, so do not duplicate its contents.',
         '- The workflow must contain clear, executable tasks.',
         '- Only include tasks that the model can complete autonomously through edit / write / run / search style tool calls (for example: editing files, running build / test / lint commands, searching the codebase, generating code).',
         '- Do NOT include tasks that require the user to verify, confirm, approve, sign off, manually test, deploy, configure, click, run interactive commands, take screenshots, or otherwise perform actions outside the model. Skip any such step instead of adding it as a task.',

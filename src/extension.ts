@@ -36,6 +36,7 @@ import { createRelayRouter } from './relay/router';
 import { RelayServer } from './relay/server';
 import { CompactionClient } from './relay/tokenBudget/compactor';
 import { TokenBudgetService, type CompactionState, type SeedInjector, type SessionResetter } from './relay/tokenBudget/service';
+import type { UpstreamTimeoutKind } from './relay/upstreamTimeouts';
 import type { UsageSink } from './relay/usageReporter';
 import { ExpertRunnerService } from './expertMode/expertRunnerService';
 import { SettingsWriter } from './settingsWriter';
@@ -187,7 +188,16 @@ let pendingResendTimer: NodeJS.Timeout | undefined;
 const HTTP_EXPECTATION_TIMEOUT_MS = 20_000;
 
 /** 自愈重启后到内部重发之间的等待时长（毫秒），给 CLI 充足启动时间。 */
-const HEAL_RESEND_DELAY_MS = 20_000;
+const HEAL_RESEND_DELAY_MS = 2_000;
+
+/** 上游转发卡死后自动续发的固定英文提示。 */
+const UPSTREAM_TIMEOUT_CONTINUE_PROMPT = 'Continue';
+
+/** 上游超时自动续发最小间隔，避免多个请求同时超时时重复发送。 */
+const UPSTREAM_TIMEOUT_CONTINUE_COOLDOWN_MS = 30_000;
+
+/** 最近一次上游超时自动续发时间戳。 */
+let lastUpstreamTimeoutContinueAt = 0;
 
 /** workspaceState 中保存的 Chat 会话结构。 */
 interface PersistedChatSession {
@@ -678,9 +688,8 @@ let hiddenCliResponseTurns = 0;
  *
  * 与 `session/clear` webview 消息分支等价：
  *   1. 删除 `.LLSOAI/chat-session.json` 中保存的 sessionId；
- *   2. 清空 LlsTaskService 内存快照；
- *   3. 后台重启 CLI；
- *   4. 等待新 sessionId 落盘后返回。
+ *   2. 后台重启 CLI；
+ *   3. 等待新 sessionId 落盘后返回。
  *
  * 由 TokenBudgetService 在自动压缩流程中调用。
  *
@@ -699,7 +708,6 @@ function createSessionResetter(): import('./relay/tokenBudget/service').SessionR
                         + (err instanceof Error ? err.message : String(err)));
                 }
             }
-            llsTaskService?.clear();
             autoContinueScheduler?.cancel('tokenBudget/compact');
             autoContinueScheduler?.resetMissingToolCounter('tokenBudget/compact');
             await restartChatCli({ silent: true });
@@ -1057,9 +1065,11 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
             await clearPersistedChatSession();
             // 同步抹掉 Claude CLI 端的 session 上下文：
             //   1) 删除 .LLSOAI/chat-session.json 中保存的 sessionId，下次启动 CLI
-            //      就不会再 --resume 旧会话，CC 那边 1.3MB 历史也随之失效；
-            //   2) 清空 LlsTaskService 内存快照，避免遗留的 workflow 继续注入；
-            //   3) 后台重启 CLI，让用户下一条消息直接进入全新空上下文。
+            //      就不会再 --resume 旧会话，CC 那边历史也随之失效；
+            //   2) 后台重启 CLI，让用户下一条消息直接进入全新空上下文。
+            //
+            // 注意：这里只清 Chat/CLI 上下文，不清 LLS CCAI 任务流；右上角清空
+            // 会话应保留当前 workflow，用户仍可通过任务流菜单单独清空任务流。
             try {
                 const cwd = chatCliConfigService?.getConfig().cwd;
                 if (cwd) {
@@ -1069,9 +1079,7 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
             } catch (err) {
                 Logger.warn('[session/clear] 删除 CLI sessionId 失败：' + (err instanceof Error ? err.message : String(err)));
             }
-            llsTaskService?.clear();
             autoContinueScheduler?.cancel('session/clear');
-            autoContinueScheduler?.resetMissingToolCounter('session/clear');
             try {
                 await restartChatCli({ silent: true });
                 Logger.info('[session/clear] Chat CLI 已后台重启为全新空上下文');
@@ -1743,58 +1751,61 @@ async function onHttpExpectationTimeout(): Promise<void> {
 async function healRelayAndCli(prompt: string): Promise<void> {
     const expectationSeconds = Math.round(HTTP_EXPECTATION_TIMEOUT_MS / 1000);
     Logger.warn(`Relay ${expectationSeconds} 秒未命中，开始自愈：promptLength=${prompt.length}`);
-    await appendAssistantSegments(
+    void appendAssistantSegments(
         [{
             kind: 'error',
             text: `\n本地中转 ${expectationSeconds} 秒内未收到请求，正在自动重启 Relay 与 CLI，重启完成后 ${Math.round(HEAL_RESEND_DELAY_MS / 1000)} 秒再重发上一条消息…\n`
         }],
         false
     );
-    await showChatToast('warn', `本地中转 ${expectationSeconds} 秒未响应，正在自动恢复…`);
+    void showChatToast('warn', `本地中转 ${expectationSeconds} 秒未响应，正在自动恢复…`);
     if (relayServer) {
         const oldPort = relayServer.getActualPort();
-        await appendAssistantSegments(
+        Logger.warn(`自愈：准备重启 Relay，oldPort=${oldPort ?? 'unknown'}`);
+        void appendAssistantSegments(
             [{
                 kind: 'markdown',
-                text: `\n> 🛑 正在停止本地中转 HTTP 服务${typeof oldPort === 'number' ? `（旧端口 ${oldPort}）` : ''}…\n`
+                text: `\n> 正在停止本地中转 HTTP 服务${typeof oldPort === 'number' ? `（旧端口 ${oldPort}）` : ''}…\n`
             }],
             false
         );
         try {
             const newPort = await relayServer.restart();
             Logger.info(`Relay 已自愈重启，新端口=${newPort}`);
-            await appendAssistantSegments(
+            void appendAssistantSegments(
                 [{
                     kind: 'markdown',
-                    text: `\n> ✅ 本地中转 HTTP 服务已启动：http://127.0.0.1:${newPort}\n`
+                    text: `\n> 本地中转 HTTP 服务已启动：http://127.0.0.1:${newPort}\n`
                 }],
                 false
             );
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             Logger.error(`Relay 自愈重启失败：${message}`);
-            await appendAssistantSegments(
-                [{ kind: 'error', text: `\n❌ 本地中转 HTTP 服务重启失败：${message}\n` }],
+            void appendAssistantSegments(
+                [{ kind: 'error', text: `\n本地中转 HTTP 服务重启失败：${message}\n` }],
                 false
             );
             throw err;
         }
     }
-    await appendAssistantSegments(
-        [{ kind: 'markdown', text: '\n> 🔄 正在重启 Claude CLI 子进程…\n' }],
+    void appendAssistantSegments(
+        [{ kind: 'markdown', text: '\n> 正在重启 Claude CLI 子进程…\n' }],
         false
     );
     try {
+        Logger.warn('自愈：准备重启 Claude CLI');
         await restartChatCli({ silent: true });
-        await appendAssistantSegments(
-            [{ kind: 'markdown', text: '\n> ✅ Claude CLI 已重启完成\n' }],
+        Logger.info('自愈：Claude CLI 已重启完成');
+        void appendAssistantSegments(
+            [{ kind: 'markdown', text: '\n> Claude CLI 已重启完成\n' }],
             false
         );
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         Logger.error(`CLI 自愈重启失败：${message}`);
-        await appendAssistantSegments(
-            [{ kind: 'error', text: `\n❌ Claude CLI 重启失败：${message}\n` }],
+        void appendAssistantSegments(
+            [{ kind: 'error', text: `\nClaude CLI 重启失败：${message}\n` }],
             false
         );
         throw err;
@@ -1992,6 +2003,25 @@ async function appendLocalChatMessage(role: ChatMessage['role'], text: string, s
     trimInMemoryChatMessages();
     schedulePersistChatSession();
     await chatViewHost?.postMessage({ type: 'message/append', message });
+}
+
+/**
+ * 上游首字节或流空闲超时后，结束当前 pending 气泡并自动发送英文 Continue。
+ *
+ * @param kind 超时类型。
+ */
+async function handleUpstreamTimeoutAutoContinue(kind: UpstreamTimeoutKind): Promise<void> {
+    const now = Date.now();
+    if (now - lastUpstreamTimeoutContinueAt < UPSTREAM_TIMEOUT_CONTINUE_COOLDOWN_MS) {
+        Logger.warn(`上游超时自动 Continue 已在冷却中，忽略：kind=${kind}`);
+        return;
+    }
+    lastUpstreamTimeoutContinueAt = now;
+    Logger.warn(`检测到上游${kind === 'first_byte' ? '首字节' : '流空闲'}超时，自动发送 Continue`);
+    clearHttpExpectation(`upstream_${kind}_timeout`);
+    await finishActiveAssistantMessage();
+    armHttpExpectation(UPSTREAM_TIMEOUT_CONTINUE_PROMPT);
+    await appendUserMessageAndSend(UPSTREAM_TIMEOUT_CONTINUE_PROMPT);
 }
 
 /**
@@ -2727,6 +2757,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 tokenBudgetService
             )
         ],
+        onUpstreamTimeout: (kind) => {
+            void handleUpstreamTimeoutAutoContinue(kind).catch((err: unknown) => {
+                Logger.error(`上游超时自动 Continue 失败：${err instanceof Error ? err.message : String(err)}`);
+            });
+        },
         expertHandler: {
             authToken: expertRunnerService.getAuthToken(),
             run: (body, signal) =>
@@ -2841,7 +2876,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             if (event.textEditor !== vscode.window.activeTextEditor) return;
             const uri = event.textEditor.document.uri;
             if (uri.scheme === 'comment' || uri.scheme === 'output') return;
-            Logger.info(`检测到活动编辑器选区变化：${uri.toString()} ${JSON.stringify(serializeSelection(event.textEditor.selection))}`);
             void postActiveEditorAttachmentToChat().catch((err: unknown) => {
                 Logger.warn(`刷新 Chat 默认选区上下文失败：${err instanceof Error ? err.message : String(err)}`);
             });

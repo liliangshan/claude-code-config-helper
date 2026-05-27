@@ -168,7 +168,7 @@ export class LlsTaskService implements vscode.Disposable {
         const pathSuffix = snapshot.planningDocumentPath
             ? `\n\n${texts.planningPathLabel}: ${snapshot.planningDocumentPath}`
             : '';
-        const promptSuffix = snapshot.originalUserPrompt
+        const promptSuffix = !snapshot.planningDocumentPath && snapshot.originalUserPrompt
             ? `\n\nOriginal request: ${snapshot.originalUserPrompt}`
             : '';
         return `${base}${pathSuffix}${promptSuffix}`;

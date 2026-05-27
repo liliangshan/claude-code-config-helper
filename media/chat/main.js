@@ -1757,22 +1757,77 @@
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
+
+        // 占位符保护：行内代码、Markdown 链接/图片、纯文本 URL 都先抽出来，
+        // 避免随后强调/斜体等正则吞掉 URL 里的下划线、星号等字符。
+        var placeholders = [];
+        function stash(html) {
+            var key = ' PH' + placeholders.length + ' ';
+            placeholders.push(html);
+            return key;
+        }
+
         // 行内代码 `code`
+        // 若整段 code 就是一个 URL，则外层再包一层 <a>，保留 code 样式同时支持点击。
         escaped = escaped.replace(/`([^`]+)`/g, function (_, code) {
-            return '<code>' + code + '</code>';
+            var trimmed = code.trim();
+            var m = trimmed.match(/^(https?:\/\/[^\s<]+|www\.[^\s<]+)$/i);
+            if (m) {
+                var raw = m[1];
+                var href = /^https?:\/\//i.test(raw) ? raw : 'http://' + raw;
+                return stash('<a href="' + href + '" target="_blank" rel="noopener noreferrer"><code>' + code + '</code></a>');
+            }
+            return stash('<code>' + code + '</code>');
         });
+        // 图片 ![alt](url)
+        escaped = escaped.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, function (_, alt, url) {
+            return stash('<img src="' + url + '" alt="' + alt + '">');
+        });
+        // 链接 [text](url)
+        escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function (_, t, url) {
+            return stash('<a href="' + url + '">' + t + '</a>');
+        });
+        // 纯文本 URL 自动识别（http/https 以及裸 www.）
+        escaped = escaped.replace(/(\bhttps?:\/\/[^\s<]+|\bwww\.[^\s<]+)/gi, function (raw) {
+            var url = raw;
+            var trail = '';
+            // 句末常见标点不应是 URL 的一部分；) 仅在不成对时剥离，兼容 Wikipedia 式链接
+            while (url.length > 0) {
+                var last = url.charAt(url.length - 1);
+                if (last === '.' || last === ',' || last === '!' || last === '?') {
+                    trail = last + trail;
+                    url = url.slice(0, -1);
+                    continue;
+                }
+                if (last === ')') {
+                    var opens = (url.match(/\(/g) || []).length;
+                    var closes = (url.match(/\)/g) || []).length;
+                    if (closes > opens) {
+                        trail = last + trail;
+                        url = url.slice(0, -1);
+                        continue;
+                    }
+                }
+                break;
+            }
+            var href = /^https?:\/\//i.test(url) ? url : 'http://' + url;
+            return stash('<a href="' + href + '" target="_blank" rel="noopener noreferrer">' + url + '</a>') + trail;
+        });
+
         // 加粗 **text** 或 __text__
+        // 注意：__ 仅在两侧非单词字符时才识别为强调，避免吞掉 snake_case 等标识符里的下划线
         escaped = escaped.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-        escaped = escaped.replace(/__(.+?)__/g, '<strong>$1</strong>');
+        escaped = escaped.replace(/(^|[^A-Za-z0-9_])__(?=\S)([\s\S]+?\S)__(?![A-Za-z0-9_])/g, '$1<strong>$2</strong>');
         // 斜体 *text* 或 _text_
         escaped = escaped.replace(/\*(.+?)\*/g, '<em>$1</em>');
-        escaped = escaped.replace(/_(.+?)_/g, '<em>$1</em>');
+        escaped = escaped.replace(/(^|[^A-Za-z0-9_])_(?=\S)([\s\S]+?\S)_(?![A-Za-z0-9_])/g, '$1<em>$2</em>');
         // 删除线 ~~text~~
         escaped = escaped.replace(/~~(.+?)~~/g, '<del>$1</del>');
-        // 链接 [text](url)
-        escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-        // 图片 ![alt](url)
-        escaped = escaped.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">');
+
+        // 还原占位符
+        escaped = escaped.replace(/ PH(\d+) /g, function (_, idx) {
+            return placeholders[Number(idx)];
+        });
         return escaped;
     }
 
@@ -3385,8 +3440,59 @@
         for (var i = 0; i < lines.length; i++) {
             if (i > 0) container.appendChild(document.createElement('br'));
             if (lines[i].length > 0) {
-                container.appendChild(document.createTextNode(lines[i]));
+                appendLineWithLinks(container, lines[i]);
             }
+        }
+    }
+
+    /**
+     * 把一行用户原文按"纯文本 + 自动链接"的方式追加到容器里。
+     * 仅识别 URL，不做其他 markdown 渲染，避免破坏用户输入的可视格式；
+     * 全程通过 DOM API 设置 href / textContent，避免 HTML 注入。
+     *
+     * @param {HTMLElement} container 目标容器。
+     * @param {string} line 单行文本（不含换行符）。
+     */
+    function appendLineWithLinks(container, line) {
+        var urlRe = /(\bhttps?:\/\/[^\s<]+|\bwww\.[^\s<]+)/gi;
+        var lastIndex = 0;
+        var match;
+        while ((match = urlRe.exec(line)) !== null) {
+            var raw = match[0];
+            var trail = '';
+            // 句末标点不应是 URL 的一部分；) 仅在不成对时剥离，兼容 Wikipedia 式链接
+            while (raw.length > 0) {
+                var last = raw.charAt(raw.length - 1);
+                if (last === '.' || last === ',' || last === '!' || last === '?' || last === '；' || last === '，' || last === '。') {
+                    trail = last + trail;
+                    raw = raw.slice(0, -1);
+                    continue;
+                }
+                if (last === ')') {
+                    var opens = (raw.match(/\(/g) || []).length;
+                    var closes = (raw.match(/\)/g) || []).length;
+                    if (closes > opens) {
+                        trail = last + trail;
+                        raw = raw.slice(0, -1);
+                        continue;
+                    }
+                }
+                break;
+            }
+            if (match.index > lastIndex) {
+                container.appendChild(document.createTextNode(line.slice(lastIndex, match.index)));
+            }
+            var a = document.createElement('a');
+            a.href = /^https?:\/\//i.test(raw) ? raw : 'http://' + raw;
+            a.textContent = raw;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            container.appendChild(a);
+            if (trail) container.appendChild(document.createTextNode(trail));
+            lastIndex = match.index + match[0].length;
+        }
+        if (lastIndex < line.length) {
+            container.appendChild(document.createTextNode(line.slice(lastIndex)));
         }
     }
 

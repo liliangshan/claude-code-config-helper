@@ -861,6 +861,11 @@ select:focus-visible {
     color: var(--vscode-textPreformat-foreground, var(--lls-fg));
 }
 
+.message_07S1Yg a > code,
+.message_07S1Yg a:hover > code {
+    color: inherit;
+}
+
 /* ---------------------------------------------------------------------------
  * 6. 代码块（root_-a7MRw / codeBlockWrapper_-a7MRw / copyButton_-a7MRw）
  * --------------------------------------------------------------------------- */

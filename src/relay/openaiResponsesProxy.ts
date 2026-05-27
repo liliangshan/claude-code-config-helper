@@ -25,7 +25,7 @@ import { handleLlsCcaiSummCommand, isLlsCcaiSummCommandRequest } from './summCom
 import { injectLlsTaskRequestBody, type LlsTaskRequestInjectionDeps } from './taskRequestInjection';
 import type { TokenBudgetService } from './tokenBudget/service';
 import { joinUpstreamUrl } from './upstreamUrl';
-import { UPSTREAM_SOCKET_IDLE_TIMEOUT_MS } from './upstreamTimeouts';
+import { UPSTREAM_FIRST_BYTE_TIMEOUT_MS, UPSTREAM_STREAM_IDLE_TIMEOUT_MS } from './upstreamTimeouts';
 import { UsageReporter, type UsageSink } from './usageReporter';
 
 /** OpenAI Responses API 路径。 */
@@ -176,8 +176,7 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
             hostname: upstreamUrl.hostname,
             port: upstreamUrl.port || (upstreamUrl.protocol === 'http:' ? 80 : 443),
             path: `${upstreamUrl.pathname}${upstreamUrl.search}`,
-            headers,
-            timeout: UPSTREAM_SOCKET_IDLE_TIMEOUT_MS
+            headers
         };
         let responseStatus: number | undefined;
         let responseHeaders: Record<string, string | string[] | undefined> = {};
@@ -186,7 +185,32 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
         let errorMessage: string | undefined;
 
         await new Promise<void>((resolve) => {
+            let settled = false;
+            let gotHeaders = false;
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(firstByteTimer);
+                resolve();
+            };
+            const firstByteTimer = setTimeout(() => {
+                if (gotHeaders) return;
+                const seconds = Math.round(UPSTREAM_FIRST_BYTE_TIMEOUT_MS / 1000);
+                errorMessage = `上游首字节超时（${seconds}s）`;
+                Logger.error(`OpenAI Responses 上游首字节 ${seconds}s 超时，主动断开：${upstreamUrl.toString()}`);
+                ctx.onUpstreamTimeout?.('first_byte');
+                try {
+                    upstreamReq.destroy(new Error(errorMessage));
+                } catch {
+                    // ignore
+                }
+                const isStream = ctx.res.headersSent && !ctx.res.writableEnded;
+                this.writeStreamOrJsonError(ctx.res, isStream, 'timeout', errorMessage);
+                finish();
+            }, UPSTREAM_FIRST_BYTE_TIMEOUT_MS);
             const upstreamReq = transport.request(options, (upstreamRes) => {
+                gotHeaders = true;
+                clearTimeout(firstByteTimer);
                 responseStatus = upstreamRes.statusCode;
                 responseHeaders = upstreamRes.headers;
                 const isStream = this.isEventStream(upstreamRes.headers['content-type']);
@@ -199,12 +223,12 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
                         const error = buildAnthropicErrorFromUpstream(upstreamRes.statusCode ?? 500, body);
                         responseBody = JSON.stringify(error);
                         this.writeJsonError(ctx.res, upstreamRes.statusCode ?? 500, error);
-                        resolve();
+                        finish();
                     });
                     return;
                 }
                 if (isStream) {
-                    this.handleStreamResponse(ctx, upstreamRes, (body) => { responseBody = body; }, (body) => { upstreamResponseBody = body; }, resolve);
+                    this.handleStreamResponse(ctx, upstreamRes, (body) => { responseBody = body; }, (body) => { upstreamResponseBody = body; }, finish);
                     return;
                 }
                 upstreamRes.on('data', (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))));
@@ -212,32 +236,19 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
                     const body = Buffer.concat(chunks).toString('utf-8');
                     upstreamResponseBody = body;
                     responseBody = this.handleJsonResponse(ctx, upstreamRes.statusCode ?? 200, upstreamRes.headers, body);
-                    resolve();
+                    finish();
                 });
                 upstreamRes.on('error', (err) => {
                     errorMessage = err.message;
                     this.writeStreamOrJsonError(ctx.res, isStream, 'api_error', `上游响应流中断：${err.message}`);
-                    resolve();
+                    finish();
                 });
             });
             upstreamReq.on('error', (err) => {
+                if (settled) return;
                 errorMessage = err.message;
                 this.writeJsonError(ctx.res, 502, buildAnthropicErrorFromUpstream(502, err.message));
-                resolve();
-            });
-            upstreamReq.on('timeout', () => {
-                const seconds = Math.round(UPSTREAM_SOCKET_IDLE_TIMEOUT_MS / 1000);
-                errorMessage = `上游请求超时（${seconds}s 空闲）`;
-                Logger.error(`OpenAI Responses 上游 socket 空闲 ${seconds}s 超时，主动断开：${upstreamUrl.toString()}`);
-                try {
-                    upstreamReq.destroy(new Error(errorMessage));
-                } catch {
-                    // ignore
-                }
-                // 流式响应已开始时改用 SSE error 帧；否则回写 JSON 504。
-                const isStream = ctx.res.headersSent && !ctx.res.writableEnded;
-                this.writeStreamOrJsonError(ctx.res, isStream, 'timeout', errorMessage);
-                resolve();
+                finish();
             });
             upstreamReq.write(upstreamBodyText);
             upstreamReq.end();
@@ -377,6 +388,21 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
         const usageReporter = new UsageReporter(this.usageSink);
         const chunks: string[] = [];
         const upstreamChunks: string[] = [];
+        upstreamRes.setTimeout(UPSTREAM_STREAM_IDLE_TIMEOUT_MS, () => {
+            const seconds = Math.round(UPSTREAM_STREAM_IDLE_TIMEOUT_MS / 1000);
+            const message = sanitizeErrorMessage(`上游流式响应空闲超时（${seconds}s）`);
+            ctx.onUpstreamTimeout?.('stream_idle');
+            const out = converter.end() + formatAnthropicSseError('timeout', message);
+            chunks.push(out);
+            if (!ctx.res.writableEnded) {
+                ctx.res.write(out);
+                ctx.res.end();
+            }
+            captureBody(chunks.join(''));
+            captureUpstreamBody(upstreamChunks.join(''));
+            upstreamRes.destroy(new Error(message));
+            resolve();
+        });
         upstreamRes.on('data', (chunk: Buffer | string) => {
             const text = Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : String(chunk);
             upstreamChunks.push(text);

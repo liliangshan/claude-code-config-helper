@@ -221,10 +221,8 @@ export class TokenBudgetService implements vscode.Disposable {
             return false;
         }
         if (session.compact.inProgress) {
-            if (!this.resetStaleCompactionIfNeeded(session)) {
-                Logger.warn(`[tokenBudget] 手动压缩忽略：session=${sessionId} 已在压缩中`);
-                return false;
-            }
+            Logger.warn(`[tokenBudget] 手动压缩强制复位旧状态：session=${sessionId}`);
+            this.forceResetCompactionForManual(session);
         }
         if (!this.deps.compactionClient || !this.deps.sessionResetter || !this.deps.seedInjector) {
             Logger.warn('[tokenBudget] 手动压缩失败：依赖未注入');
@@ -549,14 +547,7 @@ export class TokenBudgetService implements vscode.Disposable {
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             Logger.warn(`[tokenBudget] 自动压缩失败：${message}`);
-            const failedSession = this.store.getSession(oldSessionId);
-            if (failedSession) {
-                failedSession.compact.inProgress = false;
-                failedSession.compact.lastOutcome = 'failed';
-                failedSession.compact.lastError = message;
-                this.store.saveSession(failedSession);
-            }
-            const failedState: CompactionState = { kind: 'failed', sessionId: oldSessionId, error: message };
+            const failedState = await this.resetSessionAfterCompactionFailure(oldSessionId, beforeTokens, message);
             this.compactionEmitter.fire(failedState);
             this.deps.notifier?.notifyCompactionState(failedState);
             this.activeCompactionSessions.delete(oldSessionId);
@@ -564,6 +555,83 @@ export class TokenBudgetService implements vscode.Disposable {
         }
 
         // 成功分支：旧桶已归档，inProgress 在新桶里默认 false。
+    }
+
+    /**
+     * 压缩失败后也强制清空旧上下文，避免继续保留超大 session。
+     *
+     * @param oldSessionId 旧 session id。
+     * @param beforeTokens 失败前 token 数。
+     * @param errorMessage 压缩失败原因。
+     * @returns 需要广播给 UI 的失败状态。
+     */
+    private async resetSessionAfterCompactionFailure(
+        oldSessionId: string,
+        beforeTokens: number,
+        errorMessage: string
+    ): Promise<CompactionState> {
+        let finalError = `${errorMessage}；已强制清空旧上下文`;
+        try {
+            const { newSessionId } = await this.deps.sessionResetter!.reset();
+            const failedSession = this.store.getSession(oldSessionId);
+            const providerId = failedSession?.providerId ?? '';
+            const modelId = failedSession?.modelId ?? '';
+            if (failedSession) {
+                failedSession.compact.inProgress = false;
+                failedSession.compact.lastOutcome = 'failed';
+                failedSession.compact.lastError = finalError;
+                failedSession.compact.lastBeforeTokens = beforeTokens;
+                failedSession.compact.lastAfterTokens = 0;
+                this.store.saveSession(failedSession);
+                this.store.archiveSession(oldSessionId);
+            }
+            if (newSessionId) {
+                const newSession = this.ensureSession(
+                    newSessionId,
+                    providerId,
+                    modelId,
+                    { archivedFrom: oldSessionId }
+                );
+                newSession.compact.lastOutcome = 'failed';
+                newSession.compact.lastError = finalError;
+                newSession.compact.lastBeforeTokens = beforeTokens;
+                newSession.compact.lastAfterTokens = newSession.current.totalInputForBudget;
+                this.store.saveSession(newSession);
+            }
+            this.lastRequestBodyBySession.delete(oldSessionId);
+        } catch (resetErr) {
+            const resetMessage = resetErr instanceof Error ? resetErr.message : String(resetErr);
+            finalError = `${errorMessage}；强制清空旧上下文失败：${resetMessage}`;
+            const failedSession = this.store.getSession(oldSessionId);
+            if (failedSession) {
+                failedSession.compact.inProgress = false;
+                failedSession.compact.lastOutcome = 'failed';
+                failedSession.compact.lastError = finalError;
+                this.store.saveSession(failedSession);
+            }
+        }
+        return { kind: 'failed', sessionId: oldSessionId, error: finalError };
+    }
+
+    /**
+     * 手动压缩允许覆盖旧的 inProgress 状态。
+     *
+     * @param session 当前 session 桶。
+     */
+    private forceResetCompactionForManual(session: SessionUsage): void {
+        this.activeCompactionSessions.delete(session.sessionId);
+        this.completedCompactionSessions.delete(session.sessionId);
+        session.compact.inProgress = false;
+        session.compact.lastOutcome = 'failed';
+        session.compact.lastError = '手动压缩已覆盖旧的压缩中状态';
+        this.store.saveSession(session);
+        const failedState: CompactionState = {
+            kind: 'failed',
+            sessionId: session.sessionId,
+            error: session.compact.lastError
+        };
+        this.compactionEmitter.fire(failedState);
+        this.deps.notifier?.notifyCompactionState(failedState);
     }
 
     /**
