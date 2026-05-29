@@ -210,6 +210,21 @@ export class TokenBudgetService implements vscode.Disposable {
         session.compact.lastAfterTokens = session.current.totalInputForBudget;
         this.store.saveSession(session);
         this.usageEmitter.fire(session);
+        // 唤醒 compactNowAndWait 等待者：任务流续推前压缩靠这个事件立即续推，
+        // 否则只能等到 timeout 才往下走。
+        this.compactionEmitter.fire(
+            success
+                ? {
+                    kind: 'finished',
+                    sessionId,
+                    oldSessionId: sessionId,
+                    newSessionId: sessionId,
+                    beforeTokens: 0,
+                    afterTokens: session.current.totalInputForBudget,
+                    summary: ''
+                }
+                : { kind: 'failed', sessionId, error: error || 'compact failed' }
+        );
     }
 
     /**
