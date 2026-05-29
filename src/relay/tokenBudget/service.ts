@@ -82,6 +82,9 @@ export type CompactionState =
     | { kind: 'finished'; sessionId: string; oldSessionId: string; newSessionId: string; beforeTokens: number; afterTokens: number; summary: string }
     | { kind: 'failed'; sessionId: string; error: string };
 
+/** 等待 CLI 原生压缩完成时的结果。 */
+export type CompactionWaitResult = 'success' | 'failed' | 'timeout' | 'skipped';
+
 /** Webview 推送通道契约（最小子集，避免循环依赖整个 ChatViewHost）。 */
 export interface CompactionNotifier {
     /**
@@ -166,6 +169,34 @@ export class TokenBudgetService implements vscode.Disposable {
         this.markCompactionCommandPending(session);
         void this.sendCompactionCommand(session.sessionId);
         return true;
+    }
+
+    /**
+     * 手动触发压缩并等待 CLI 回报压缩结果。
+     *
+     * @param sessionId CLI session_id。
+     * @param options 等待配置。
+     * @returns 压缩等待结果。
+     */
+    public compactNowAndWait(sessionId: string, options: { timeoutMs: number }): Promise<CompactionWaitResult> {
+        if (!this.compactNow(sessionId)) return Promise.resolve('skipped');
+        return new Promise<CompactionWaitResult>((resolve) => {
+            let settled = false;
+            let subscription: vscode.Disposable | undefined;
+            const finish = (result: CompactionWaitResult) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                subscription?.dispose();
+                resolve(result);
+            };
+            const timer = setTimeout(() => finish('timeout'), Math.max(1, options.timeoutMs));
+            subscription = this.onCompactionStateChanged((state) => {
+                if (state.sessionId !== sessionId) return;
+                if (state.kind === 'finished') finish('success');
+                if (state.kind === 'failed') finish('failed');
+            });
+        });
     }
 
     public finishNativeCompaction(sessionId: string, success: boolean, error?: string): void {

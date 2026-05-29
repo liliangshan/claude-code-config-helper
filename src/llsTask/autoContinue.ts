@@ -19,6 +19,15 @@ import type { LlsTaskService } from './service';
 export type AutoContinueSubmitter = (text: string) => Promise<void>;
 
 /**
+ * 自动续推提交前的异步回调。
+ *
+ * 用于在真正提交续推 prompt 前执行前置动作，例如触发 CLI 原生压缩。
+ *
+ * @returns 前置动作完成 Promise。
+ */
+export type AutoContinueBeforeSubmit = () => Promise<void>;
+
+/**
  * 上一轮主对话响应缺失任务流工具调用时的续推延时，单位毫秒。
  *
  * 上游模型（尤其是 OpenAI 兼容侧的国产模型）有时会"幻觉"地用文本声称已经
@@ -86,6 +95,9 @@ export class AutoContinueScheduler {
      */
     private static submitter: AutoContinueSubmitter | undefined;
 
+    /** 外部注入的续推提交前回调。 */
+    private static beforeSubmit: AutoContinueBeforeSubmit | undefined;
+
     /**
      * 创建自动续推调度器。
      *
@@ -104,6 +116,18 @@ export class AutoContinueScheduler {
     public static setSubmitter(submitter: AutoContinueSubmitter | undefined): void {
         AutoContinueScheduler.submitter = submitter;
         Logger.info(`[LlsTask][AutoContinue] submitter 已${submitter ? '注入' : '清空'}`);
+    }
+
+    /**
+     * 注入续推提交前回调。
+     *
+     * 设为 undefined 可清空前置动作。beforeSubmit 是静态字段，整个扩展进程共享。
+     *
+     * @param beforeSubmit 续推提交前回调；传入 undefined 可清空。
+     */
+    public static setBeforeSubmit(beforeSubmit: AutoContinueBeforeSubmit | undefined): void {
+        AutoContinueScheduler.beforeSubmit = beforeSubmit;
+        Logger.info(`[LlsTask][AutoContinue] beforeSubmit 已${beforeSubmit ? '注入' : '清空'}`);
     }
 
     /**
@@ -224,7 +248,12 @@ export class AutoContinueScheduler {
         const prompt = this.resolvePromptForCurrentKind();
         if (!prompt) return;
         const submitter = AutoContinueScheduler.submitter;
+        const beforeSubmit = AutoContinueScheduler.beforeSubmit;
         try {
+            if (beforeSubmit) {
+                Logger.info('[LlsTask][AutoContinue] 执行续推提交前回调');
+                await beforeSubmit();
+            }
             if (submitter) {
                 Logger.info(`[LlsTask][AutoContinue] 通过 submitter 提交续推消息，长度=${prompt.length}`);
                 await submitter(prompt);

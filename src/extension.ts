@@ -4144,6 +4144,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     AutoContinueScheduler.setSubmitter(async (text) => {
         await appendUserMessageAndSend(text);
     });
+    AutoContinueScheduler.setBeforeSubmit(async () => {
+        if (!llsTaskService?.hasActiveWorkflow()) return;
+        const sessionId = getSessionIdForRoute('normal');
+        if (!sessionId || !tokenBudgetServiceRef) {
+            Logger.warn('[LlsTask][AutoContinue] 续推前压缩跳过：normal session 或 tokenBudgetService 不可用');
+            return;
+        }
+        llsTaskService.markPreContinueCompactionPending();
+        const result = await tokenBudgetServiceRef.compactNowAndWait(sessionId, { timeoutMs: 60_000 });
+        Logger.info(`[LlsTask][AutoContinue] 续推前压缩完成：${result}`);
+    });
     configViewProvider = new ConfigWebviewViewProvider(context, configManager);
     settingsWriter = new SettingsWriter();
     relayServer = new RelayServer({ desiredPort: 0 });

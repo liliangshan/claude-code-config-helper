@@ -213,6 +213,55 @@ function writeJsonError(
     res.end(JSON.stringify({ type: 'error', error: { type, message } }));
 }
 
+function writeSseEvent(res: http.ServerResponse, event: string, data: unknown): void {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function writeLocalCompactStream(res: http.ServerResponse, modelId: string, text: string): void {
+    const messageId = `msg_compact_local_${Date.now()}`;
+    res.statusCode = 200;
+    res.setHeader('content-type', 'text/event-stream; charset=utf-8');
+    res.setHeader('cache-control', 'no-cache');
+    res.setHeader('connection', 'keep-alive');
+    writeSseEvent(res, 'message_start', {
+        type: 'message_start',
+        message: {
+            id: messageId,
+            type: 'message',
+            role: 'assistant',
+            model: modelId,
+            content: [],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 0, output_tokens: 0 }
+        }
+    });
+    writeSseEvent(res, 'content_block_start', {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'text', text: '' }
+    });
+    writeSseEvent(res, 'content_block_delta', {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text }
+    });
+    writeSseEvent(res, 'content_block_stop', { type: 'content_block_stop', index: 0 });
+    writeSseEvent(res, 'message_delta', {
+        type: 'message_delta',
+        delta: { stop_reason: 'end_turn', stop_sequence: null },
+        usage: { output_tokens: Math.ceil(text.length / 4) }
+    });
+    writeSseEvent(res, 'message_stop', { type: 'message_stop' });
+    res.end();
+}
+
+function buildTaskFlowCompactSummary(service: LlsTaskService | undefined): string {
+    if (!service?.consumePreContinueCompactionPending()) return '';
+    return '<summary>Task-flow pre-continue compaction completed. Continue with the next user message.</summary>';
+}
+
 interface CompactRequestSnapshotInput {
     req: http.IncomingMessage;
     route: ChatRoute;
@@ -396,6 +445,12 @@ export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
                 rawBody,
                 parsedBody
             });
+            const localTaskFlowSummary = buildTaskFlowCompactSummary(llsTaskService);
+            if (localTaskFlowSummary) {
+                Logger.info('[compact] 任务流本地压缩：直接返回任务流摘要 SSE，不请求上游模型');
+                writeLocalCompactStream(res, modelId, localTaskFlowSummary);
+                return;
+            }
         }
 
         Logger.info(

@@ -29,6 +29,9 @@ export class LlsTaskService implements vscode.Disposable {
     /** 当前任务流快照。 */
     private snapshot: LlsTaskSnapshot = { workflow: null, updatedAt: Date.now() };
 
+    /** 任务流续推前压缩待拦截的过期时间戳；0 表示没有待拦截请求。 */
+    private preContinueCompactionUntil = 0;
+
     /** 是否处于等待主模型创建 workflow 的阶段。 */
     private workflowCreationPending = false;
 
@@ -49,6 +52,31 @@ export class LlsTaskService implements vscode.Disposable {
      */
     public getSnapshot(): LlsTaskSnapshot {
         return JSON.parse(JSON.stringify(this.snapshot)) as LlsTaskSnapshot;
+    }
+
+    /**
+     * 标记下一次任务流续推前压缩请求可由 Relay 本地拦截。
+     *
+     * @param ttlMs 标记有效期，单位毫秒。
+     */
+    public markPreContinueCompactionPending(ttlMs = 120_000): void {
+        if (!this.hasActiveWorkflow()) return;
+        this.preContinueCompactionUntil = Date.now() + ttlMs;
+    }
+
+    /**
+     * 消费任务流续推前压缩拦截标记。
+     *
+     * @returns 标记存在且未过期时返回 true。
+     */
+    public consumePreContinueCompactionPending(): boolean {
+        if (!this.hasActiveWorkflow() || !this.preContinueCompactionUntil) return false;
+        if (Date.now() > this.preContinueCompactionUntil) {
+            this.preContinueCompactionUntil = 0;
+            return false;
+        }
+        this.preContinueCompactionUntil = 0;
+        return true;
     }
 
     /**
