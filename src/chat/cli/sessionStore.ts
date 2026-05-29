@@ -6,8 +6,34 @@ import * as path from 'path';
 /** LLS OAI 项目状态目录名。 */
 const SESSION_DIR_NAME = '.LLSOAI';
 
-/** CLI session 元数据文件名。 */
-const SESSION_FILE_NAME = 'chat-session.json';
+/**
+ * 普通任务模型 CLI 的 session 元数据文件名。
+ *
+ * 双 CLI 路由方案下沿用旧文件名作为 normal CLI 的 session 持久化目标，
+ * 既保持向后兼容（旧版本 .LLSOAI/chat-session.json 直接被识别为 normal session），
+ * 也避免老用户重启 VS Code 后因文件名变更导致 normal 会话丢失。
+ */
+const SESSION_FILE_NAME_NORMAL = 'chat-session.json';
+
+/**
+ * 专家任务模型 CLI 的 session 元数据文件名。
+ *
+ * 与 normal 隔离开，避免两条 CLI 互相覆盖各自的 session_id；
+ * 同时确保 token budget / 自动压缩按 sessionId 分桶时不会串桶。
+ */
+const SESSION_FILE_NAME_EXPERT = 'chat-session.expert.json';
+const SESSION_FILE_NAME_PLAN = 'chat-session.plan.json';
+const SESSION_FILE_NAME_REVIEW = 'chat-session.review.json';
+
+/**
+ * `ChatCliSessionStore` 操作的 CLI 角色。
+ *
+ * - `'normal'`：dispatcher CLI（普通任务模型）
+ * - `'expert'`：被 `@llsExpert` 路由切换激活的专家任务 CLI
+ * - `'plan'`：方案模型 CLI，用于编写技术方案/设计文档
+ * - `'review'`：审查模型 CLI，用于审查方案质量
+ */
+export type ChatCliSessionKind = 'normal' | 'expert' | 'plan' | 'review';
 
 /** 保存到项目 .LLSOAI 目录的 CLI session 元数据。 */
 interface StoredCliSession {
@@ -22,21 +48,25 @@ interface StoredCliSession {
 }
 
 /**
- * 读写项目目录 `.LLSOAI/chat-session.json` 中的 CLI session_id。
+ * 读写项目目录 `.LLSOAI/chat-session*.json` 中的 CLI session_id。
  *
  * 该类不参与 VS Code workspaceState，只把 Claude CLI 协议层的 session_id
  * 保存在 CLI 当前工作目录下，便于下次启动同一项目时恢复原会话。
+ *
+ * 双 CLI 路由方案下，`kind` 参数区分 normal / expert 两条 CLI 各自的 session 文件，
+ * 默认 `'normal'` 保持与旧调用兼容（旧 `chat-session.json` 直接成为 normal session 持久化点）。
  */
 export class ChatCliSessionStore {
     /**
      * 读取指定工作目录保存的 session_id。
      *
      * @param cwd CLI 子进程工作目录。
+     * @param kind 目标 CLI 角色，默认 `'normal'`。
      * @returns 存在且合法时返回 session_id，否则返回 undefined。
      */
-    public async readSessionId(cwd: string): Promise<string | undefined> {
+    public async readSessionId(cwd: string, kind: ChatCliSessionKind = 'normal'): Promise<string | undefined> {
         try {
-            const raw = await fs.readFile(this.resolveSessionFile(cwd), 'utf8');
+            const raw = await fs.readFile(this.resolveSessionFile(cwd, kind), 'utf8');
             const parsed = JSON.parse(raw) as Partial<StoredCliSession>;
             if (parsed.version !== 1 || typeof parsed.sessionId !== 'string') return undefined;
             const sessionId = parsed.sessionId.trim();
@@ -51,8 +81,9 @@ export class ChatCliSessionStore {
      *
      * @param cwd CLI 子进程工作目录。
      * @param sessionId Claude CLI 返回的 session_id。
+     * @param kind 目标 CLI 角色，默认 `'normal'`。
      */
-    public async writeSessionId(cwd: string, sessionId: string): Promise<void> {
+    public async writeSessionId(cwd: string, sessionId: string, kind: ChatCliSessionKind = 'normal'): Promise<void> {
         const normalizedSessionId = sessionId.trim();
         if (!normalizedSessionId) return;
         const dir = this.resolveSessionDir(cwd);
@@ -63,7 +94,7 @@ export class ChatCliSessionStore {
             cwd,
             updatedAt: Date.now()
         };
-        await fs.writeFile(this.resolveSessionFile(cwd), `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+        await fs.writeFile(this.resolveSessionFile(cwd, kind), `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
     }
 
     /**
@@ -74,10 +105,11 @@ export class ChatCliSessionStore {
      * 文件不存在时静默忽略，其它 IO 错误向上抛由调用方决定如何降级。
      *
      * @param cwd CLI 子进程工作目录。
+     * @param kind 目标 CLI 角色，默认 `'normal'`。
      */
-    public async clearSessionId(cwd: string): Promise<void> {
+    public async clearSessionId(cwd: string, kind: ChatCliSessionKind = 'normal'): Promise<void> {
         try {
-            await fs.unlink(this.resolveSessionFile(cwd));
+            await fs.unlink(this.resolveSessionFile(cwd, kind));
         } catch (err: unknown) {
             if (err && typeof err === 'object' && (err as { code?: string }).code === 'ENOENT') return;
             throw err;
@@ -88,7 +120,7 @@ export class ChatCliSessionStore {
      * 解析项目级 LLS OAI 状态目录路径。
      *
      * @param cwd CLI 子进程工作目录。
-     * @returns `.LLSOAI` 目录绝对路径。
+     * @returns `.LLSOAI` 目录绝对���径。
      */
     private resolveSessionDir(cwd: string): string {
         return path.join(cwd, SESSION_DIR_NAME);
@@ -98,9 +130,17 @@ export class ChatCliSessionStore {
      * 解析项目级 CLI session 元数据文件路径。
      *
      * @param cwd CLI 子进程工作目录。
-     * @returns `chat-session.json` 文件绝对路径。
+     * @param kind 目标 CLI 角色。
+     * @returns `chat-session.json` 或 `chat-session.expert.json` 文件绝对路径。
      */
-    private resolveSessionFile(cwd: string): string {
-        return path.join(this.resolveSessionDir(cwd), SESSION_FILE_NAME);
+    private resolveSessionFile(cwd: string, kind: ChatCliSessionKind): string {
+        let fileName: string;
+        switch (kind) {
+            case 'expert': fileName = SESSION_FILE_NAME_EXPERT; break;
+            case 'plan': fileName = SESSION_FILE_NAME_PLAN; break;
+            case 'review': fileName = SESSION_FILE_NAME_REVIEW; break;
+            default: fileName = SESSION_FILE_NAME_NORMAL; break;
+        }
+        return path.join(this.resolveSessionDir(cwd), fileName);
     }
 }

@@ -98,6 +98,26 @@ const tests: TestCase[] = [
         }
     },
     {
+        name: 'OpenAI Chat SSE Write/Edit 对象型 arguments 可转换为 input_json_delta',
+        run: () => {
+            const converter = new OpenAIChatToAnthropicStreamConverter();
+            const writeInput = { file_path: '/tmp/a.txt', content: 'hello' };
+            const editInput = { file_path: '/tmp/a.txt', old_string: 'hello', new_string: 'hi' };
+            const out = converter.feed(sse({
+                id: 'c-write-edit',
+                model: 'm',
+                choices: [{ delta: { tool_calls: [
+                    { index: 0, id: 'call_write', function: { name: 'Write', arguments: writeInput } },
+                    { index: 1, id: 'call_edit', function: { name: 'Edit', arguments: editInput } }
+                ] }, finish_reason: 'tool_calls' }]
+            })) + converter.end();
+            assert.ok(out.includes('"type":"tool_use","id":"call_write","name":"Write"'));
+            assert.ok(out.includes('"type":"tool_use","id":"call_edit","name":"Edit"'));
+            assert.ok(out.includes(JSON.stringify(JSON.stringify(writeInput))));
+            assert.ok(out.includes(JSON.stringify(JSON.stringify(editInput))));
+        }
+    },
+    {
         name: '[DONE] 缺 finish_reason 时可安全收尾',
         run: () => {
             const converter = new OpenAIChatToAnthropicStreamConverter();

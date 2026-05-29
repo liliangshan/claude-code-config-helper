@@ -53,8 +53,20 @@ export class CliProcess implements vscode.Disposable {
         this.currentConfig = config;
         this.setStatus('starting');
         const args = this.buildStreamJsonArgs(config.cliArgs, config.resumeSessionId);
-        Logger.info(`启动 Chat CLI：${config.cliPath} ${args.join(' ')}`);
-        Logger.info('Chat CLI 启动参数数组：' + JSON.stringify(args));
+        const argValue = (name: string) => {
+            const index = args.indexOf(name);
+            return index >= 0 ? args[index + 1] || '' : '';
+        };
+        Logger.info('启动 Chat CLI：' + JSON.stringify({
+            cliPath: config.cliPath,
+            cwd: config.cwd,
+            argsCount: args.length,
+            model: argValue('--model'),
+            permissionMode: argValue('--permission-mode'),
+            hasMcpConfig: args.includes('--mcp-config'),
+            hasAppendSystemPrompt: args.includes('--append-system-prompt'),
+            hasResume: args.includes('--resume')
+        }));
         Logger.info('Chat CLI 环境变量摘要：' + JSON.stringify({
             ANTHROPIC_BASE_URL: config.cliEnv.ANTHROPIC_BASE_URL || '',
             ANTHROPIC_MODEL: config.cliEnv.ANTHROPIC_MODEL || '',
@@ -85,9 +97,7 @@ export class CliProcess implements vscode.Disposable {
             throw new Error('Chat CLI 进程未运行，无法写入 stdin');
         }
         const line = jsonLine.endsWith('\n') ? jsonLine : `${jsonLine}\n`;
-        Logger.info(`写入 Chat CLI stdin：bytes=${Buffer.byteLength(line, 'utf8')}`);
-        const accepted = this.child.stdin.write(line);
-        Logger.info(`Chat CLI stdin 写入已调用：accepted=${accepted}`);
+        this.child.stdin.write(line);
     }
 
     /**
@@ -155,6 +165,19 @@ export class CliProcess implements vscode.Disposable {
     }
 
     /**
+     * 停止 CLI 子进程，但保留事件订阅与最近一次启动配置。
+     *
+     * 与 {@link dispose} 的区别在于：dispose 会同时移除全部监听器并永久退出，
+     * 而 stop 仅终止当前子进程，调用方随后可以再次调用 {@link start}/{@link restart}
+     * 复用既有订阅与配置。聊天区"重启 HTTP+CLI"流程会先调用本方法，再单独
+     * 重启 Relay。
+     */
+    public async stop(): Promise<void> {
+        await this.disposeRunningChild('Chat CLI 显式停止');
+        this.setStatus('idle');
+    }
+
+    /**
      * 判断 CLI 子进程是否处于可写运行状态。
      *
      * @returns 进程存在、未被 kill 且状态为 running 时返回 true。
@@ -204,6 +227,7 @@ export class CliProcess implements vscode.Disposable {
             left.transport === right.transport &&
             (left.model ?? '') === (right.model ?? '') &&
             (left.resumeSessionId ?? '') === (right.resumeSessionId ?? '') &&
+            (left.appendSystemPrompt ?? '') === (right.appendSystemPrompt ?? '') &&
             (left.strictMcpConfig === true) === (right.strictMcpConfig === true) &&
             this.isSameStringArray(left.cliArgs, right.cliArgs) &&
             this.isSameStringRecord(left.cliEnv, right.cliEnv) &&
@@ -339,8 +363,36 @@ export class CliProcess implements vscode.Disposable {
         }
         this.appendMcpArgs(args);
         this.appendSkillArgs(args);
+        this.appendAppendSystemPromptArgs(args);
         if (resumeSessionId) args.push('--resume', resumeSessionId);
         return args;
+    }
+
+    /**
+     * 把 `ChatCliConfig.appendSystemPrompt` 注入为 `--append-system-prompt <text>`。
+     *
+     * 双 CLI 路由方案下，`getDualConfigsWithRelayEnv` 会分别给 normal / expert
+     * 两条 CLI 派生不同的 dispatcher / expert 系统提示词。提示词非空且用户没有
+     * 在 `chat.cliArgs` 里手动写入同名参数时，由本方法以 `--append-system-prompt`
+     * 形式追加到启动参数末尾，让 Claude CLI 把文案合并进默认 system prompt。
+     *
+     * @param args 已构造的启动参数数组（原地修改）。
+     */
+    private appendAppendSystemPromptArgs(args: string[]): void {
+        const text = (this.currentConfig?.appendSystemPrompt ?? '').trim();
+        if (!text) return;
+        if (this.hasAppendSystemPromptArgument(args)) return;
+        args.push('--append-system-prompt', text);
+    }
+
+    /**
+     * 判断启动参数中是否已经包含 `--append-system-prompt`。
+     *
+     * @param args 待检查的启动参数。
+     * @returns 已存在 `--append-system-prompt` 或 `--append-system-prompt=...` 时返回 true。
+     */
+    private hasAppendSystemPromptArgument(args: string[]): boolean {
+        return args.some((arg) => arg === '--append-system-prompt' || arg.startsWith('--append-system-prompt='));
     }
 
     /**

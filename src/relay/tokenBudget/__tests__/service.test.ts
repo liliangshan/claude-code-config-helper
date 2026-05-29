@@ -111,9 +111,7 @@ function buildService(overrides?: any): { service: any; store: any } {
     const service = new TokenBudgetService({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         configManager: makeConfigManager(overrides?.contextLength) as any,
-        compactionClient: overrides?.compactionClient,
-        sessionResetter: overrides?.sessionResetter,
-        seedInjector: overrides?.seedInjector,
+        commandSender: overrides?.commandSender,
         notifier: overrides?.notifier
     });
     // 直接替换内部 store 为内存实例，避免触发 vscode workspace 读盘。
@@ -174,9 +172,7 @@ test('未达阈值时不触发压缩', () => {
     let compactCalled = 0;
     const { service } = buildService({
         contextLength: 200000,
-        compactionClient: { run: async () => { compactCalled += 1; return { ok: true, summaryText: 'x'.repeat(200), wrapped: '<summ>...</summ>' }; } },
-        sessionResetter: { reset: async () => ({ newSessionId: 's2' }) },
-        seedInjector: { sendUserMessage: async () => undefined }
+        commandSender: async () => { compactCalled += 1; }
     });
     service.beforeSend({
         sessionId: 's1', providerId: 'p1', modelId: 'm',
@@ -215,6 +211,32 @@ test('contextLength 配置生效 → threshold = contextLength - 50000', () => {
     const snap = store.getSession('s1');
     assert.equal(snap.contextLimit, 100000);
     assert.equal(snap.threshold, 50000);
+});
+
+test('updateCliUsage 不会用 CLI contextWindow 覆盖用户手填的 contextLength', () => {
+    const { service, store } = buildService({ contextLength: 200000 });
+    service.beforeSend({
+        sessionId: 's1', providerId: 'p1', modelId: 'm',
+        anthropicBody: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] })
+    });
+    service.updateCliUsage('s1', 1000000, 500);
+    const snap = store.getSession('s1');
+    assert.equal(snap.contextLimit, 200000);
+    assert.equal(snap.threshold, 150000);
+    assert.equal(snap.current.outputTokens, 500);
+});
+
+test('updateCliUsage 在用户未配置 contextLength 时仍保留静态上下文上限', () => {
+    const { service, store } = buildService();
+    service.beforeSend({
+        sessionId: 's1', providerId: 'p1', modelId: 'm',
+        anthropicBody: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] })
+    });
+    service.updateCliUsage('s1', 1000000, 500);
+    const snap = store.getSession('s1');
+    assert.equal(snap.contextLimit, 166000);
+    assert.equal(snap.threshold, 116000);
+    assert.equal(snap.current.outputTokens, 500);
 });
 
 test('未知 model 走 DEFAULT_CONTEXT_LIMIT = 166000', () => {

@@ -225,6 +225,100 @@ const tests: TestCase[] = [
         }
     },
     {
+        name: 'Read 工具 pages 非纯数字或非正序数字区间时归一化为 1',
+        run: () => {
+            const chat = convertOpenAIChatJsonToAnthropic({
+                choices: [{
+                    message: { tool_calls: [
+                        { id: 'call_bad', type: 'function', function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/a.pdf', pages: ':' }) } },
+                        { id: 'call_range', type: 'function', function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/b.pdf', pages: '2-4' }) } },
+                        { id: 'call_reverse', type: 'function', function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/c.pdf', pages: '4-2' }) } },
+                        { id: 'call_number', type: 'function', function: { name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/d.pdf', pages: 3 }) } }
+                    ] },
+                    finish_reason: 'tool_calls'
+                }]
+            });
+            assert.deepStrictEqual(chat.body.content[0], { type: 'tool_use', id: 'call_bad', name: 'Read', input: { file_path: '/tmp/a.pdf', pages: '1' } });
+            assert.deepStrictEqual(chat.body.content[1], { type: 'tool_use', id: 'call_range', name: 'Read', input: { file_path: '/tmp/b.pdf', pages: '2-4' } });
+            assert.deepStrictEqual(chat.body.content[2], { type: 'tool_use', id: 'call_reverse', name: 'Read', input: { file_path: '/tmp/c.pdf', pages: '1' } });
+            assert.deepStrictEqual(chat.body.content[3], { type: 'tool_use', id: 'call_number', name: 'Read', input: { file_path: '/tmp/d.pdf', pages: '3' } });
+
+            const responses = convertResponsesJsonToAnthropic({
+                output: [{ type: 'function_call', call_id: 'resp_bad', name: 'Read', arguments: JSON.stringify({ file_path: '/tmp/e.pdf', pages: '0-2' }) }]
+            });
+            assert.deepStrictEqual(responses.body.content[0], { type: 'tool_use', id: 'resp_bad', name: 'Read', input: { file_path: '/tmp/e.pdf', pages: '1' } });
+        }
+    },
+    {
+        name: 'Write/Edit 工具 schema 在 Chat/Responses 请求转换中补齐完整字段',
+        run: () => {
+            const anthropic = {
+                model: 'm',
+                tools: [
+                    { name: 'Write', input_schema: { type: 'object', properties: {} } },
+                    { name: 'Edit', input_schema: { type: 'object', properties: {} } }
+                ],
+                messages: [{ role: 'user', content: 'write file' }]
+            };
+            const chat = convertAnthropicToOpenAIChat(anthropic);
+            const chatWriteParams = chat.body.tools?.[0].function.parameters as any;
+            assert.deepStrictEqual(new Set(chatWriteParams.required), new Set(['file_path', 'content']));
+            assert.strictEqual(chatWriteParams.properties.file_path.type, 'string');
+            assert.strictEqual(chatWriteParams.properties.content.type, 'string');
+            assert.strictEqual(chatWriteParams.additionalProperties, false);
+            const chatEditParams = chat.body.tools?.[1].function.parameters as any;
+            assert.deepStrictEqual(new Set(chatEditParams.required), new Set(['file_path', 'old_string', 'new_string']));
+            assert.strictEqual(chatEditParams.properties.file_path.type, 'string');
+            assert.strictEqual(chatEditParams.properties.old_string.type, 'string');
+            assert.strictEqual(chatEditParams.properties.new_string.type, 'string');
+            assert.strictEqual(chatEditParams.properties.replace_all.type, 'boolean');
+            assert.strictEqual(chatEditParams.properties.replace_all.default, false);
+            assert.strictEqual(chatEditParams.additionalProperties, false);
+
+            const responses = convertAnthropicToOpenAIResponses(anthropic);
+            const responsesWriteParams = responses.body.tools?.[0].parameters as any;
+            assert.deepStrictEqual(new Set(responsesWriteParams.required), new Set(['file_path', 'content']));
+            assert.strictEqual(responsesWriteParams.properties.file_path.type, 'string');
+            assert.strictEqual(responsesWriteParams.properties.content.type, 'string');
+            assert.strictEqual(responsesWriteParams.additionalProperties, false);
+            const responsesEditParams = responses.body.tools?.[1].parameters as any;
+            assert.deepStrictEqual(new Set(responsesEditParams.required), new Set(['file_path', 'old_string', 'new_string']));
+            assert.strictEqual(responsesEditParams.properties.file_path.type, 'string');
+            assert.strictEqual(responsesEditParams.properties.old_string.type, 'string');
+            assert.strictEqual(responsesEditParams.properties.new_string.type, 'string');
+            assert.strictEqual(responsesEditParams.properties.replace_all.type, 'boolean');
+            assert.strictEqual(responsesEditParams.properties.replace_all.default, false);
+            assert.strictEqual(responsesEditParams.additionalProperties, false);
+        }
+    },
+    {
+        name: 'Write/Edit 工具对象型 arguments 在 Chat/Responses 响应转换中不丢 input',
+        run: () => {
+            const writeInput = { file_path: '/tmp/a.txt', content: 'hello', extra: 'kept' };
+            const editInput = { file_path: '/tmp/a.txt', old_string: 'hello', new_string: 'hi', replace_all: true };
+            const chat = convertOpenAIChatJsonToAnthropic({
+                choices: [{
+                    message: { tool_calls: [
+                        { id: 'call_write', type: 'function', function: { name: 'Write', arguments: writeInput } },
+                        { id: 'call_edit', type: 'function', function: { name: 'Edit', arguments: editInput } }
+                    ] },
+                    finish_reason: 'tool_calls'
+                }]
+            });
+            assert.deepStrictEqual(chat.body.content[0], { type: 'tool_use', id: 'call_write', name: 'Write', input: writeInput });
+            assert.deepStrictEqual(chat.body.content[1], { type: 'tool_use', id: 'call_edit', name: 'Edit', input: editInput });
+
+            const responses = convertResponsesJsonToAnthropic({
+                output: [
+                    { type: 'function_call', call_id: 'resp_write', name: 'Write', arguments: writeInput },
+                    { type: 'function_call', call_id: 'resp_edit', name: 'Edit', arguments: editInput }
+                ]
+            });
+            assert.deepStrictEqual(responses.body.content[0], { type: 'tool_use', id: 'resp_write', name: 'Write', input: writeInput });
+            assert.deepStrictEqual(responses.body.content[1], { type: 'tool_use', id: 'resp_edit', name: 'Edit', input: editInput });
+        }
+    },
+    {
         name: 'OpenAI Responses SSE 文本流可转换为 Anthropic SSE 且关闭 block',
         run: () => {
             const converter = new OpenAIResponsesToAnthropicStreamConverter();
@@ -315,6 +409,90 @@ const tests: TestCase[] = [
             assert.ok(!sanitized.includes('def'));
             assert.ok(!sanitized.includes('session'));
             assert.ok(!sanitized.includes('sk-test'));
+        }
+    },
+    {
+        name: 'Chat 响应 Write 工具空参数被拦截并替换为错误占位 input',
+        run: () => {
+            const result = convertOpenAIChatJsonToAnthropic({
+                choices: [{
+                    message: { tool_calls: [
+                        { id: 'call_empty_write', type: 'function', function: { name: 'Write', arguments: '{}' } }
+                    ] },
+                    finish_reason: 'tool_calls'
+                }]
+            });
+            const block = result.body.content[0] as { type: string; name: string; input: Record<string, unknown> };
+            assert.strictEqual(block.type, 'tool_use');
+            assert.strictEqual(block.name, 'Write');
+            assert.strictEqual(block.input.file_path, '__INVALID_WRITE_NO_PATH__');
+            assert.strictEqual(block.input.content, '');
+            assert.ok(typeof block.input.__error__ === 'string' && block.input.__error__.includes('Empty Write call blocked by relay'));
+            assert.ok(result.warnings.some((w) => w.code === 'invalid_write_tool_input'));
+        }
+    },
+    {
+        name: 'Chat 响应 Write 工具缺 content 被拦截并保留 file_path',
+        run: () => {
+            const result = convertOpenAIChatJsonToAnthropic({
+                choices: [{
+                    message: { tool_calls: [
+                        { id: 'call_no_content', type: 'function', function: { name: 'Write', arguments: '{"file_path":"/tmp/a.txt"}' } }
+                    ] },
+                    finish_reason: 'tool_calls'
+                }]
+            });
+            const block = result.body.content[0] as { type: string; input: Record<string, unknown> };
+            assert.strictEqual(block.input.file_path, '/tmp/a.txt');
+            assert.strictEqual(block.input.content, '');
+            assert.ok(typeof block.input.__error__ === 'string' && block.input.__error__.includes('content missing'));
+            assert.ok(result.warnings.some((w) => w.code === 'invalid_write_tool_input'));
+        }
+    },
+    {
+        name: 'Chat 响应 Write 工具非空 file_path/content 不会被改写',
+        run: () => {
+            const writeInput = { file_path: '/tmp/a.txt', content: 'seed' };
+            const result = convertOpenAIChatJsonToAnthropic({
+                choices: [{
+                    message: { tool_calls: [
+                        { id: 'call_ok_write', type: 'function', function: { name: 'Write', arguments: writeInput } }
+                    ] },
+                    finish_reason: 'tool_calls'
+                }]
+            });
+            assert.deepStrictEqual(result.body.content[0], { type: 'tool_use', id: 'call_ok_write', name: 'Write', input: writeInput });
+            assert.strictEqual(result.warnings.some((w) => w.code === 'invalid_write_tool_input'), false);
+        }
+    },
+    {
+        name: 'Responses 响应 Write 工具空参数被拦截并替换为错误占位 input',
+        run: () => {
+            const result = convertResponsesJsonToAnthropic({
+                output: [
+                    { type: 'function_call', call_id: 'resp_empty_write', name: 'Write', arguments: '{}' }
+                ]
+            });
+            const block = result.body.content[0] as { type: string; name: string; input: Record<string, unknown> };
+            assert.strictEqual(block.type, 'tool_use');
+            assert.strictEqual(block.name, 'Write');
+            assert.strictEqual(block.input.file_path, '__INVALID_WRITE_NO_PATH__');
+            assert.strictEqual(block.input.content, '');
+            assert.ok(typeof block.input.__error__ === 'string' && block.input.__error__.includes('Empty Write call blocked by relay'));
+            assert.ok(result.warnings.some((w) => w.code === 'invalid_write_tool_input'));
+        }
+    },
+    {
+        name: 'Responses 响应 Write 工具空 file_path 字符串被视为缺失',
+        run: () => {
+            const result = convertResponsesJsonToAnthropic({
+                output: [
+                    { type: 'function_call', call_id: 'resp_blank_path', name: 'Write', arguments: '{"file_path":"   ","content":"x"}' }
+                ]
+            });
+            const block = result.body.content[0] as { type: string; input: Record<string, unknown> };
+            assert.strictEqual(block.input.file_path, '__INVALID_WRITE_NO_PATH__');
+            assert.ok(typeof block.input.__error__ === 'string' && block.input.__error__.includes('file_path missing or empty'));
         }
     }
 ];

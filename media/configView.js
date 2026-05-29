@@ -77,6 +77,7 @@
             newProvider: '+ New Provider',
             noProviders: 'No providers yet. Click “New Provider” to start.',
             enableProvider: 'Enable provider',
+            enableModel: 'Enable model',
             baseUrlNotConfigured: 'BaseURL not configured',
             savedApiKey: 'Saved key',
             unsavedApiKey: 'No saved key',
@@ -163,6 +164,7 @@
             newProvider: '+ 新建提供商',
             noProviders: '暂无提供商，点击“新建提供商”开始。',
             enableProvider: '启用厂商',
+            enableModel: '启用模型',
             baseUrlNotConfigured: '未配置 BaseURL',
             savedApiKey: '已保存密钥',
             unsavedApiKey: '未保存密钥',
@@ -251,6 +253,7 @@
         newProvider: '+ 新增提供商',
         noProviders: '尚無提供商，點擊「新增提供商」開始。',
         enableProvider: '啟用提供商',
+        enableModel: '啟用模型',
         baseUrlNotConfigured: '未設定 BaseURL',
         savedApiKey: '已儲存金鑰',
         unsavedApiKey: '未儲存金鑰',
@@ -327,6 +330,7 @@
         newProvider: '+ 새 공급자',
         noProviders: '아직 공급자가 없습니다. “새 공급자”를 클릭하여 시작하세요.',
         enableProvider: '공급자 활성화',
+        enableModel: '모델 활성화',
         baseUrlNotConfigured: 'BaseURL이 구성되지 않음',
         savedApiKey: '저장된 키',
         unsavedApiKey: '저장된 키 없음',
@@ -403,6 +407,7 @@
         newProvider: '+ 新しいプロバイダー',
         noProviders: 'プロバイダーはまだありません。「新しいプロバイダー」をクリックして開始してください。',
         enableProvider: 'プロバイダーを有効化',
+        enableModel: 'モデルを有効化',
         baseUrlNotConfigured: 'BaseURL が未設定',
         savedApiKey: '保存済みキー',
         unsavedApiKey: '保存済みキーなし',
@@ -479,6 +484,7 @@
         newProvider: '+ Nouveau fournisseur',
         noProviders: 'Aucun fournisseur pour le moment. Cliquez sur « Nouveau fournisseur » pour commencer.',
         enableProvider: 'Activer le fournisseur',
+        enableModel: 'Activer le modèle',
         baseUrlNotConfigured: 'BaseURL non configurée',
         savedApiKey: 'Clé enregistrée',
         unsavedApiKey: 'Aucune clé enregistrée',
@@ -555,6 +561,7 @@
         newProvider: '+ Neuer Anbieter',
         noProviders: 'Noch keine Anbieter. Klicken Sie auf „Neuer Anbieter“, um zu beginnen.',
         enableProvider: 'Anbieter aktivieren',
+        enableModel: 'Modell aktivieren',
         baseUrlNotConfigured: 'BaseURL nicht konfiguriert',
         savedApiKey: 'Gespeicherter Schlüssel',
         unsavedApiKey: 'Kein gespeicherter Schlüssel',
@@ -949,11 +956,12 @@
         }
         return `
             <table class="model-table">
-                <thead><tr><th>${t('displayName')}</th><th>${t('operation')}</th></tr></thead>
+                <thead><tr><th>${t('displayName')}</th><th>${t('enableModel')}</th><th>${t('operation')}</th></tr></thead>
                 <tbody>
                     ${provider.models.map((model) => `
                         <tr data-model-id="${text(model.modelId)}">
                             <td>${text(model.displayName || model.modelId)}</td>
+                            <td>${renderSwitch('js-model-enabled', model.enabled !== false, t('enableModel'))}</td>
                             <td class="row-actions">
                                 <button class="secondary js-edit-model">${t('edit')}</button>
                                 <button class="danger js-delete-model">${t('delete')}</button>
@@ -1033,6 +1041,7 @@
                                 ['none', 'None (do not pass)']
                             ].map(([value, label]) => `<option value="${value}" ${model.samplingMode === value ? 'selected' : ''}>${label}</option>`).join('')}
                         </select></div>
+                        <div class="checkbox-row"><input id="model-enabled" type="checkbox" ${model.enabled !== false ? 'checked' : ''} /><label for="model-enabled">${t('enableModel')}</label></div>
                         <div class="checkbox-row"><input id="model-user-selectable" type="checkbox" ${model.isUserSelectable !== false ? 'checked' : ''} /><label for="model-user-selectable">${t('showInModelDropdown')}</label></div>
                         <div class="checkbox-row"><input id="model-vision" type="checkbox" ${model.vision ? 'checked' : ''} /><label for="model-vision">${t('vision')}</label></div>
                         <div class="checkbox-row"><input id="model-tool" type="checkbox" ${model.toolCalling !== false ? 'checked' : ''} /><label for="model-tool">${t('toolCalling')}</label></div>
@@ -1083,6 +1092,7 @@
                 const modelId = row.getAttribute('data-model-id');
                 row.querySelector('.js-edit-model')?.addEventListener('click', () => openModelModal(providerId, findModel(providerId, modelId)));
                 row.querySelector('.js-delete-model')?.addEventListener('click', () => deleteModel(providerId, modelId));
+                row.querySelector('.js-model-enabled')?.addEventListener('change', () => toggleModel(providerId, modelId));
             });
         });
     }
@@ -1207,6 +1217,7 @@
         model.topP = Number(document.getElementById('model-top-p').value || 1);
         model.samplingMode = document.getElementById('model-sampling-mode').value;
         model.isUserSelectable = document.getElementById('model-user-selectable').checked;
+        model.enabled = document.getElementById('model-enabled').checked;
         model.vision = document.getElementById('model-vision').checked;
         model.toolCalling = document.getElementById('model-tool').checked;
         model.transformThink = document.getElementById('model-transform-think').checked;
@@ -1222,6 +1233,15 @@
         const providers = clone(state.providers);
         const provider = providers.find((item) => item.id === providerId);
         if (provider) provider.enabled = !provider.enabled;
+        post('saveProviders', providers);
+    }
+
+    /** 切换某个模型的启用状态。 */
+    function toggleModel(providerId, modelId) {
+        const providers = clone(state.providers);
+        const provider = providers.find((item) => item.id === providerId);
+        const model = provider?.models?.find((item) => item.modelId === modelId);
+        if (model) model.enabled = model.enabled === false;
         post('saveProviders', providers);
     }
 
@@ -1299,6 +1319,7 @@
             topP: 1,
             samplingMode: 'temperature',
             isUserSelectable: true,
+            enabled: true,
             transformThink: false,
             preserveReasoningContent: false
         };

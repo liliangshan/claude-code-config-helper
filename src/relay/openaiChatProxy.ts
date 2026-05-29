@@ -21,7 +21,6 @@ import type { DebugRecorder } from './debugRecorder';
 import { buildOpenAIForwardHeaders, describeOpenAIAuthHeaders } from './openAIHeaders';
 import { buildForwardHeaders, redactHeaders } from './forwardHeadersCommon';
 import type { UpstreamAdapter, UpstreamRequestContext } from './router';
-import { handleLlsCcaiSummCommand, isLlsCcaiSummCommandRequest } from './summCommand';
 import { injectLlsTaskRequestBody, type LlsTaskRequestInjectionDeps } from './taskRequestInjection';
 import type { TokenBudgetService } from './tokenBudget/service';
 import { joinUpstreamUrl } from './upstreamUrl';
@@ -115,17 +114,6 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
             this.taskDeps,
             { createTriggered: ctx.llsTaskCreateTriggered === true, modelName: modelId }
         ).bodyText;
-        if (isLlsCcaiSummCommandRequest(this.parseJson(injectedBodyText))) {
-            handleLlsCcaiSummCommand({
-                res,
-                tokenBudget: this.tokenBudget,
-                sessionId: this.extractSessionId(parsedBody),
-                providerId: provider.id,
-                modelId,
-                anthropicBody: injectedBodyText
-            });
-            return;
-        }
         // token 预算登记（在 Anthropic 形态下估算，不改写 body）
         try {
             const sessionId = this.extractSessionId(parsedBody);
@@ -339,6 +327,7 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
                 ctx.res.end();
             }
             captureBody(chunks.join(''));
+            usageReporter.end();
             upstreamRes.destroy(new Error(message));
             resolve();
         });
@@ -372,6 +361,7 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
                 ctx.res.end();
             }
             captureBody(chunks.join(''));
+            usageReporter.end();
             resolve();
         });
     }

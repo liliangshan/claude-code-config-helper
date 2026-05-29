@@ -24,7 +24,7 @@ import type { ApiType, ProviderConfig } from '../types';
 import type { DebugRecorder } from './debugRecorder';
 import { buildForwardHeaders, redactHeaders } from './forwardHeadersCommon';
 import type { UpstreamAdapter, UpstreamRequestContext } from './router';
-import { extractAnthropicSessionId, handleLlsCcaiSummCommand, isLlsCcaiSummCommandRequest } from './summCommand';
+import { extractAnthropicSessionId } from './summCommand';
 import { injectLlsTaskRequestBody, type LlsTaskRequestInjectionDeps } from './taskRequestInjection';
 import type { TokenBudgetService } from './tokenBudget/service';
 import { UPSTREAM_FIRST_BYTE_TIMEOUT_MS, UPSTREAM_STREAM_IDLE_TIMEOUT_MS } from './upstreamTimeouts';
@@ -284,17 +284,6 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
             { createTriggered: ctx.llsTaskCreateTriggered === true, modelName: modelId }
         );
         const bodyText = requestAnthropicUsageStats(injectedRequest.bodyText);
-        if (isLlsCcaiSummCommandRequest(JSON.parse(bodyText) as unknown)) {
-            handleLlsCcaiSummCommand({
-                res,
-                tokenBudget: this.tokenBudget,
-                sessionId: extractAnthropicSessionId(parsedBody),
-                providerId: provider.id,
-                modelId,
-                anthropicBody: bodyText
-            });
-            return;
-        }
         // token 预算登记（仅估算 + 登记，不改写 body；阈值触发的压缩走响应侧 afterRecv）
         try {
             const sessionId = extractSessionId(parsedBody);
@@ -359,6 +348,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                     // ignore
                 }
                 this.writeErrorJson(res, 504, 'timeout', errorMessage);
+                usageReporter.end();
                 finish();
             }, UPSTREAM_FIRST_BYTE_TIMEOUT_MS);
             const upstreamReq = transport.request(options, (upstreamRes) => {
@@ -381,6 +371,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                         if (!res.writableEnded) {
                             res.end();
                         }
+                        usageReporter.end();
                         finish();
                     });
                 }
@@ -423,6 +414,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                     if (!res.writableEnded) {
                         res.end();
                     }
+                    usageReporter.end();
                     finish();
                 });
                 upstreamRes.on('end', () => {
@@ -465,6 +457,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                 errorMessage = err.message;
                 Logger.error(`上游请求错误：${err.message}`);
                 this.writeErrorJson(res, 502, 'bad_gateway', `上游请求失败：${err.message}`);
+                usageReporter.end();
                 finish();
             });
 

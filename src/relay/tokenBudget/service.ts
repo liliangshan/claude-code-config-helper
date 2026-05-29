@@ -15,9 +15,7 @@ import * as vscode from 'vscode';
 
 import { Logger } from '../../logger';
 import type { ConfigManager } from '../../configManager';
-import type { ProviderConfig } from '../../types';
 import type { UsageReport } from '../usageReporter';
-import { CompactionClient } from './compactor';
 import { estimateAnthropicInputTokens } from './estimator';
 import {
     createEmptySession,
@@ -35,19 +33,11 @@ const THRESHOLD_RESERVE = 50_000;
 /** 自动压缩防抖窗口（毫秒）。 */
 const COMPACT_DEBOUNCE_MS = 60_000;
 
-/** 手动压缩卡住后的自动复位超时（毫秒）。 */
-const COMPACT_IN_PROGRESS_STALE_MS = 120_000;
+/** 压缩状态最长允许在途时间（毫秒），超过后视为上次压缩已丢失事件。 */
+const COMPACT_STALE_MS = 5 * 60_000;
 
-/** relay 拦截的上下文压缩指令。 */
-export const LLSCCAI_SUMM_COMMAND = '@llsccai-summ';
-
-/** 触发压缩指令后给当前 CLI 的即时响应。 */
-export const LLSCCAI_SUMM_ACK_TEXT = '已开始压缩上下文，完成后会自动切换到压缩后的新会话。';
-
-/** 摘要成功后等待 CLI 消费即时响应的延迟。 */
-const COMPACTION_RESET_DELAY_MS = 1000;
-
-/** 模型上下文上限静态表（fallback 链第二级）。 */
+/** 发送给 Claude CLI 的原生上下文压缩指令。 */
+export const CLAUDE_COMPACT_COMMAND = '/compact';
 const MODEL_CONTEXT_LIMITS: Record<string, number> = {
     'claude-opus-4-7': 200_000,
     'claude-sonnet-4-6': 200_000,
@@ -59,9 +49,6 @@ const MODEL_CONTEXT_LIMITS: Record<string, number> = {
     'gpt-4o-mini': 128_000,
     'gpt-4-turbo': 128_000
 };
-
-/** lastSummary 字段截断长度。 */
-const SUMMARY_PERSIST_MAX = 500;
 
 /** 请求侧登记的入参。 */
 export interface BeforeSendInput {
@@ -92,50 +79,8 @@ export interface AfterRecvInput {
 /** 自动压缩状态机事件。 */
 export type CompactionState =
     | { kind: 'started'; sessionId: string; beforeTokens: number }
-    | {
-          kind: 'finished';
-          sessionId: string;
-          oldSessionId: string;
-          newSessionId: string;
-          beforeTokens: number;
-          afterTokens: number;
-          summary: string;
-      }
+    | { kind: 'finished'; sessionId: string; oldSessionId: string; newSessionId: string; beforeTokens: number; afterTokens: number; summary: string }
     | { kind: 'failed'; sessionId: string; error: string };
-
-/** 复用"清空上下文 + 重启 CLI"链路的接口契约。 */
-export interface SessionResetter {
-    /**
-     * 执行 session 重置：删除 .LLSOAI/chat-session.json + 重启 CLI。
-     *
-     * 部分 CLI 实现需要先收到一条 user 消息才会触发 init 事件并写入新
-     * sessionId，因此此接口允许返回空 newSessionId，由调用方在 seed
-     * 注入完成后再通过 {@link awaitNewSessionId} 等待落盘。
-     *
-     * @returns 新 CLI session id；尚未落盘时返回空字符串。
-     */
-    reset(): Promise<{ newSessionId: string }>;
-
-    /**
-     * seed 注入触发 CLI init 之后，再次等待新 sessionId 落盘。
-     *
-     * @param previousSessionId 旧的 sessionId，用于规避读到尚未替换的旧值。
-     * @returns 新 CLI session id；超时抛错。
-     */
-    awaitNewSessionId?(previousSessionId: string): Promise<string>;
-}
-
-/** 注入"假对话对"到新 session 的能力契约。 */
-export interface SeedInjector {
-    /**
-     * 把摘要内容作为首条 user 消息注入新 session，等到 assistant 回复后 resolve。
-     *
-     * 复用 extension.ts 中 `appendUserMessageAndSend` 的语义，保证消息正常显示。
-     *
-     * @param text 待注入的 user 消息文本（含 `<CONTEXT>...</CONTEXT>` 与提示语）。
-     */
-    sendUserMessage(text: string): Promise<void>;
-}
 
 /** Webview 推送通道契约（最小子集，避免循环依赖整个 ChatViewHost）。 */
 export interface CompactionNotifier {
@@ -151,14 +96,8 @@ export interface CompactionNotifier {
 export interface TokenBudgetServiceDeps {
     /** 配置管理器；用于读取 provider/model 的 contextLength。 */
     configManager: ConfigManager;
-    /** 用于发起压缩请求的客户端。 */
-    compactionClient?: CompactionClient;
-    /** 用于请求 CLI 带完整上下文发送压缩指令；未注入时自动压缩直接走本地请求体。 */
+    /** 用于请求 CLI 执行原生 /compact。 */
     commandSender?: (command: string) => Promise<void>;
-    /** 用于切 session 的 resetter；未注入时压缩流程会失败收尾。 */
-    sessionResetter?: SessionResetter;
-    /** 用于把摘要发为新 session 首条消息；未注入时压缩流程会失败收尾。 */
-    seedInjector?: SeedInjector;
     /** webview 推送通道；未注入时仅写日志，不发事件。 */
     notifier?: CompactionNotifier;
 }
@@ -188,12 +127,8 @@ export class TokenBudgetService implements vscode.Disposable {
     /** 压缩状态机事件订阅入口。 */
     public readonly onCompactionStateChanged = this.compactionEmitter.event;
 
-    /** 记录每轮请求最近一次的 anthropicBody，afterRecv 触发压缩时拿来做摘要输入。 */
+    /** 记录每轮请求最近一次的 anthropicBody。 */
     private readonly lastRequestBodyBySession = new Map<string, string>();
-
-    private readonly activeCompactionSessions = new Set<string>();
-
-    private readonly completedCompactionSessions = new Set<string>();
 
     /**
      * 创建服务实例。
@@ -221,68 +156,40 @@ export class TokenBudgetService implements vscode.Disposable {
             return false;
         }
         if (session.compact.inProgress) {
-            Logger.warn(`[tokenBudget] 手动压缩强制复位旧状态：session=${sessionId}`);
-            this.forceResetCompactionForManual(session);
+            Logger.warn(`[tokenBudget] 手动压缩复位在途状态并重新发送：session=${sessionId}`);
+            this.resetCompactionState(session, 'manual compact retry');
         }
-        if (!this.deps.compactionClient || !this.deps.sessionResetter || !this.deps.seedInjector) {
-            Logger.warn('[tokenBudget] 手动压缩失败：依赖未注入');
+        if (!this.deps.commandSender) {
+            Logger.warn('[tokenBudget] 手动压缩失败：commandSender 未注入');
             return false;
         }
-        if (this.deps.commandSender) {
-            Logger.info(`[tokenBudget] 手动压缩通过内部指令发送：${LLSCCAI_SUMM_COMMAND}`);
-            this.markCompactionCommandPending(session);
-            void this.sendCompactionCommand(session.sessionId);
-            return true;
-        }
-        const bodyText = this.lastRequestBodyBySession.get(sessionId);
-        if (!bodyText) {
-            Logger.warn(`[tokenBudget] 手动压缩失败：session=${sessionId} 没有最近请求体`);
-            return false;
-        }
-        Logger.info('[tokenBudget] 手动压缩直接使用最近请求体启动');
-        void this.runCompactionFlow(session, bodyText);
+        this.markCompactionCommandPending(session);
+        void this.sendCompactionCommand(session.sessionId);
         return true;
     }
 
-    /**
-     * 处理 relay 拦截到的 `@llsccai-summ` 压缩指令。
-     *
-     * @param input 当前 CLI 发出的完整 Anthropic 请求体上下文。
-     * @returns 是否成功启动异步压缩流程。
-     */
-    public handleSummCommand(input: BeforeSendInput): boolean {
-        if (!input.sessionId) return false;
+    public finishNativeCompaction(sessionId: string, success: boolean, error?: string): void {
+        if (!sessionId) return;
         void this.ensureLoaded();
-        const session = this.ensureSession(input.sessionId, input.providerId, input.modelId);
-        if (this.completedCompactionSessions.has(session.sessionId)) {
-            Logger.warn(`[tokenBudget] 压缩指令忽略：session=${session.sessionId} 已完成压缩`);
-            return true;
-        }
-        if (!this.deps.compactionClient || !this.deps.sessionResetter || !this.deps.seedInjector) {
-            Logger.warn('[tokenBudget] 压缩指令失败：依赖未注入');
-            return false;
-        }
-        if (session.compact.inProgress) {
-            if (this.activeCompactionSessions.has(session.sessionId)) {
-                Logger.warn(`[tokenBudget] 压缩指令忽略：session=${session.sessionId} 已有压缩流程运行中`);
-                return true;
-            }
-            void this.runCompactionFlow(session, input.anthropicBody);
-            return true;
-        }
-        this.lastRequestBodyBySession.set(input.sessionId, input.anthropicBody);
-        void this.runCompactionFlow(session, input.anthropicBody);
-        return true;
+        const session = this.store.getSession(sessionId);
+        if (!session) return;
+        session.compact.inProgress = false;
+        session.compact.lastOutcome = success ? 'success' : 'failed';
+        session.compact.lastError = success ? null : (error || 'compact failed');
+        session.compact.lastAfterTokens = session.current.totalInputForBudget;
+        this.store.saveSession(session);
+        this.usageEmitter.fire(session);
     }
 
     /**
-     * 用 CLI result.modelUsage 回填上下文上限与本轮输出 token。
+     * 用 CLI result.modelUsage 回填本轮输出 token。
      *
-     * - contextWindow 用于把 token-meter 上限从 DEFAULT 166k 修正为 CLI 已知的真实值；
-     * - outputTokens 用于让 token-meter 的 used 显示「input + 本轮 assistant 回复」。
+     * 注意：CLI 上游报告的 `contextWindow` 不再用来覆盖 session.contextLimit。
+     * 上下文上限以 {@link resolveContextLimit}（用户配置 → 静态表 → DEFAULT）
+     * 为唯一来源，避免上游错误地报 1M 等值把用户的 200k 配置覆盖掉。
      *
      * @param sessionId     CLI session_id。
-     * @param contextLimit  可选上下文上限。
+     * @param contextLimit  历史参数，已忽略；保留签名以兼容调用方。
      * @param outputTokens  可选本轮输出 token；上游返回 0 时调用方可传本地估算值。
      */
     public updateCliUsage(sessionId: string, contextLimit?: number, outputTokens?: number): void {
@@ -290,12 +197,13 @@ export class TokenBudgetService implements vscode.Disposable {
         void this.ensureLoaded();
         const session = this.store.getSession(sessionId);
         if (!session) return;
-        let changed = false;
         if (typeof contextLimit === 'number' && Number.isFinite(contextLimit) && contextLimit > 0) {
-            session.contextLimit = Math.floor(contextLimit);
-            session.threshold = Math.max(0, session.contextLimit - THRESHOLD_RESERVE);
-            changed = true;
+            Logger.info(
+                `[tokenBudget] 忽略 CLI contextWindow=${contextLimit}：`
+                + `保留 ${session.providerId}/${session.modelId} 当前 contextLimit=${session.contextLimit}`
+            );
         }
+        let changed = false;
         if (typeof outputTokens === 'number' && Number.isFinite(outputTokens) && outputTokens > 0) {
             session.current.outputTokens = Math.floor(outputTokens);
             changed = true;
@@ -340,12 +248,7 @@ export class TokenBudgetService implements vscode.Disposable {
             this.lastRequestBodyBySession.set(input.sessionId, input.anthropicBody);
             this.usageEmitter.fire(session);
             if (this.shouldTriggerCompaction(session)) {
-                if (this.deps.commandSender) {
-                    this.markCompactionCommandPending(session);
-                    void this.sendCompactionCommand(session.sessionId);
-                } else {
-                    void this.runCompactionFlow(session, input.anthropicBody);
-                }
+                this.triggerCompactionCommand(session);
             }
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -375,15 +278,7 @@ export class TokenBudgetService implements vscode.Disposable {
             this.usageEmitter.fire(session);
 
             if (this.shouldTriggerCompaction(session)) {
-                const bodyAtSend = input.requestBodyAtSend
-                    || this.lastRequestBodyBySession.get(input.sessionId)
-                    || '';
-                if (this.deps.commandSender) {
-                    this.markCompactionCommandPending(session);
-                    void this.sendCompactionCommand(session.sessionId);
-                } else {
-                    void this.runCompactionFlow(session, bodyAtSend);
-                }
+                this.triggerCompactionCommand(session);
             }
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -434,229 +329,23 @@ export class TokenBudgetService implements vscode.Disposable {
      * @returns 满足全部触发条件则返回 true。
      */
     private shouldTriggerCompaction(session: SessionUsage): boolean {
+        if (this.resetStaleCompactionIfNeeded(session)) return true;
         if (session.current.totalInputForBudget < session.threshold) return false;
         if (session.compact.inProgress) return false;
         if (session.compact.lastTriggeredAt) {
             const last = Date.parse(session.compact.lastTriggeredAt);
             if (Number.isFinite(last) && Date.now() - last < COMPACT_DEBOUNCE_MS) return false;
         }
-        if (!this.deps.compactionClient || !this.deps.sessionResetter || !this.deps.seedInjector) {
-            Logger.warn('[tokenBudget] 触发条件已满足但依赖未注入，跳过自动压缩。');
+        if (!this.deps.commandSender) {
+            Logger.warn('[tokenBudget] 触发条件已满足但 commandSender 未注入，跳过自动压缩。');
             return false;
         }
         return true;
     }
 
-    /**
-     * 执行完整的自动压缩状态机。
-     *
-     * @param session  触发时的会话桶（旧 session）。
-     * @param bodyText 本轮上行 Anthropic 请求体（含 messages 历史）。
-     */
-    private async runCompactionFlow(session: SessionUsage, bodyText: string): Promise<void> {
-        const oldSessionId = session.sessionId;
-        if (this.activeCompactionSessions.has(oldSessionId)) {
-            Logger.warn(`[tokenBudget] 压缩流程忽略：session=${oldSessionId} 已在运行中`);
-            return;
-        }
-        this.activeCompactionSessions.add(oldSessionId);
-        const beforeTokens = session.current.totalInputForBudget;
-
-        session.compact.inProgress = true;
-        session.compact.lastTriggeredAt = new Date().toISOString();
-        session.compact.lastTriggeredAtInput = beforeTokens;
-        session.compact.triggerCount += 1;
-        this.store.saveSession(session);
-
-        const startedState: CompactionState = { kind: 'started', sessionId: oldSessionId, beforeTokens };
-        this.compactionEmitter.fire(startedState);
-        this.deps.notifier?.notifyCompactionState(startedState);
-
-        try {
-            const provider = await this.deps.configManager.getProviderWithSecret(session.providerId);
-            if (!provider) throw new Error(`provider 不存在：${session.providerId}`);
-
-            const { messages, system } = this.extractMessagesAndSystem(bodyText);
-            if (messages.length === 0) throw new Error('请求体中没有可压缩的 messages');
-
-            const compactionResult = await this.deps.compactionClient!.run({
-                provider,
-                modelId: session.modelId,
-                messages,
-                originalSystem: system
-            });
-            if (!compactionResult.ok) throw new Error(compactionResult.error);
-
-            if (this.deps.commandSender) {
-                await new Promise<void>((resolve) => setTimeout(resolve, COMPACTION_RESET_DELAY_MS));
-            }
-            const { newSessionId: resetSessionId } = await this.deps.sessionResetter!.reset();
-
-            const seedText =
-                `<CONTEXT>\n${compactionResult.wrapped}\n</CONTEXT>\n\n` +
-                `上文是之前对话的压缩摘要，仅供参考。请回复"上下文已就绪"。`;
-            try {
-                await this.deps.seedInjector!.sendUserMessage(seedText);
-            } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
-                throw new Error(`摘要注入失败（旧 session 已重置）：${message}`);
-            }
-
-            let newSessionId = resetSessionId;
-            if (!newSessionId && this.deps.sessionResetter?.awaitNewSessionId) {
-                try {
-                    newSessionId = await this.deps.sessionResetter.awaitNewSessionId(oldSessionId);
-                } catch (err) {
-                    const message = err instanceof Error ? err.message : String(err);
-                    throw new Error(`CLI 重启后未拿到新 sessionId：${message}`);
-                }
-            }
-            if (!newSessionId) {
-                throw new Error('CLI 重启后未拿到新 sessionId');
-            }
-
-            const newSession = this.ensureSession(
-                newSessionId,
-                session.providerId,
-                session.modelId,
-                { archivedFrom: oldSessionId }
-            );
-            newSession.compact.lastOutcome = 'success';
-            newSession.compact.lastError = null;
-            newSession.compact.lastSummary = compactionResult.summaryText.slice(0, SUMMARY_PERSIST_MAX);
-            newSession.compact.lastBeforeTokens = beforeTokens;
-            newSession.compact.lastAfterTokens = newSession.current.totalInputForBudget;
-            this.store.saveSession(newSession);
-            this.store.archiveSession(oldSessionId);
-            this.lastRequestBodyBySession.delete(oldSessionId);
-
-            const afterTokens = newSession.current.totalInputForBudget;
-            const finishedState: CompactionState = {
-                kind: 'finished',
-                sessionId: newSessionId,
-                oldSessionId,
-                newSessionId,
-                beforeTokens,
-                afterTokens,
-                summary: compactionResult.summaryText
-            };
-            this.compactionEmitter.fire(finishedState);
-            this.deps.notifier?.notifyCompactionState(finishedState);
-            this.completedCompactionSessions.add(oldSessionId);
-            this.activeCompactionSessions.delete(oldSessionId);
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            Logger.warn(`[tokenBudget] 自动压缩失败：${message}`);
-            const failedState = await this.resetSessionAfterCompactionFailure(oldSessionId, beforeTokens, message);
-            this.compactionEmitter.fire(failedState);
-            this.deps.notifier?.notifyCompactionState(failedState);
-            this.activeCompactionSessions.delete(oldSessionId);
-            return;
-        }
-
-        // 成功分支：旧桶已归档，inProgress 在新桶里默认 false。
-    }
-
-    /**
-     * 压缩失败后也强制清空旧上下文，避免继续保留超大 session。
-     *
-     * @param oldSessionId 旧 session id。
-     * @param beforeTokens 失败前 token 数。
-     * @param errorMessage 压缩失败原因。
-     * @returns 需要广播给 UI 的失败状态。
-     */
-    private async resetSessionAfterCompactionFailure(
-        oldSessionId: string,
-        beforeTokens: number,
-        errorMessage: string
-    ): Promise<CompactionState> {
-        let finalError = `${errorMessage}；已强制清空旧上下文`;
-        try {
-            const { newSessionId } = await this.deps.sessionResetter!.reset();
-            const failedSession = this.store.getSession(oldSessionId);
-            const providerId = failedSession?.providerId ?? '';
-            const modelId = failedSession?.modelId ?? '';
-            if (failedSession) {
-                failedSession.compact.inProgress = false;
-                failedSession.compact.lastOutcome = 'failed';
-                failedSession.compact.lastError = finalError;
-                failedSession.compact.lastBeforeTokens = beforeTokens;
-                failedSession.compact.lastAfterTokens = 0;
-                this.store.saveSession(failedSession);
-                this.store.archiveSession(oldSessionId);
-            }
-            if (newSessionId) {
-                const newSession = this.ensureSession(
-                    newSessionId,
-                    providerId,
-                    modelId,
-                    { archivedFrom: oldSessionId }
-                );
-                newSession.compact.lastOutcome = 'failed';
-                newSession.compact.lastError = finalError;
-                newSession.compact.lastBeforeTokens = beforeTokens;
-                newSession.compact.lastAfterTokens = newSession.current.totalInputForBudget;
-                this.store.saveSession(newSession);
-            }
-            this.lastRequestBodyBySession.delete(oldSessionId);
-        } catch (resetErr) {
-            const resetMessage = resetErr instanceof Error ? resetErr.message : String(resetErr);
-            finalError = `${errorMessage}；强制清空旧上下文失败：${resetMessage}`;
-            const failedSession = this.store.getSession(oldSessionId);
-            if (failedSession) {
-                failedSession.compact.inProgress = false;
-                failedSession.compact.lastOutcome = 'failed';
-                failedSession.compact.lastError = finalError;
-                this.store.saveSession(failedSession);
-            }
-        }
-        return { kind: 'failed', sessionId: oldSessionId, error: finalError };
-    }
-
-    /**
-     * 手动压缩允许覆盖旧的 inProgress 状态。
-     *
-     * @param session 当前 session 桶。
-     */
-    private forceResetCompactionForManual(session: SessionUsage): void {
-        this.activeCompactionSessions.delete(session.sessionId);
-        this.completedCompactionSessions.delete(session.sessionId);
-        session.compact.inProgress = false;
-        session.compact.lastOutcome = 'failed';
-        session.compact.lastError = '手动压缩已覆盖旧的压缩中状态';
-        this.store.saveSession(session);
-        const failedState: CompactionState = {
-            kind: 'failed',
-            sessionId: session.sessionId,
-            error: session.compact.lastError
-        };
-        this.compactionEmitter.fire(failedState);
-        this.deps.notifier?.notifyCompactionState(failedState);
-    }
-
-    /**
-     * 检查并复位卡住的压缩状态。
-     *
-     * @param session 当前 session 桶。
-     * @returns 发生复位时返回 true；仍应视为压缩中时返回 false。
-     */
-    private resetStaleCompactionIfNeeded(session: SessionUsage): boolean {
-        const triggeredAt = session.compact.lastTriggeredAt ? Date.parse(session.compact.lastTriggeredAt) : 0;
-        const age = triggeredAt > 0 ? Date.now() - triggeredAt : Number.POSITIVE_INFINITY;
-        if (age < COMPACT_IN_PROGRESS_STALE_MS) return false;
-        Logger.warn(`[tokenBudget] 检测到陈旧压缩状态，自动复位：session=${session.sessionId}, ageMs=${Number.isFinite(age) ? age : 'unknown'}`);
-        session.compact.inProgress = false;
-        session.compact.lastOutcome = 'failed';
-        session.compact.lastError = '压缩状态超时未完成，已自动复位';
-        this.store.saveSession(session);
-        const failedState: CompactionState = {
-            kind: 'failed',
-            sessionId: session.sessionId,
-            error: session.compact.lastError
-        };
-        this.compactionEmitter.fire(failedState);
-        this.deps.notifier?.notifyCompactionState(failedState);
-        return true;
+    private triggerCompactionCommand(session: SessionUsage): void {
+        this.markCompactionCommandPending(session);
+        void this.sendCompactionCommand(session.sessionId);
     }
 
     /**
@@ -678,8 +367,8 @@ export class TokenBudgetService implements vscode.Disposable {
      */
     private async sendCompactionCommand(sessionId: string): Promise<void> {
         try {
-            Logger.info(`[tokenBudget] 正在向 Chat CLI 发送压缩指令：${LLSCCAI_SUMM_COMMAND}`);
-            await this.deps.commandSender?.(LLSCCAI_SUMM_COMMAND);
+            Logger.info(`[tokenBudget] 正在向 Chat CLI 发送压缩指令：${CLAUDE_COMPACT_COMMAND}`);
+            await this.deps.commandSender?.(CLAUDE_COMPACT_COMMAND);
             Logger.info('[tokenBudget] 压缩指令已发送到 Chat CLI');
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -697,25 +386,31 @@ export class TokenBudgetService implements vscode.Disposable {
         }
     }
 
-    /**
-     * 从 Anthropic 请求体字符串里解出 messages / system。
-     *
-     * @param bodyText 请求体字符串。
-     * @returns 解析结果（失败时返回空 messages）。
-     */
-    private extractMessagesAndSystem(bodyText: string): { messages: unknown[]; system?: unknown } {
-        try {
-            const parsed = JSON.parse(bodyText) as { messages?: unknown; system?: unknown };
-            const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
-            return { messages, system: parsed.system };
-        } catch {
-            return { messages: [] };
-        }
+    private resetStaleCompactionIfNeeded(session: SessionUsage): boolean {
+        if (!session.compact.inProgress || !session.compact.lastTriggeredAt) return false;
+        const triggeredAt = Date.parse(session.compact.lastTriggeredAt);
+        if (!Number.isFinite(triggeredAt) || Date.now() - triggeredAt < COMPACT_STALE_MS) return false;
+        this.resetCompactionState(session, 'previous compact timed out without status event');
+        const failedState: CompactionState = {
+            kind: 'failed',
+            sessionId: session.sessionId,
+            error: session.compact.lastError || 'previous compact timed out without status event'
+        };
+        this.compactionEmitter.fire(failedState);
+        this.deps.notifier?.notifyCompactionState(failedState);
+        return true;
+    }
+
+    private resetCompactionState(session: SessionUsage, error: string): void {
+        session.compact.inProgress = false;
+        session.compact.lastOutcome = 'failed';
+        session.compact.lastError = error;
+        this.store.saveSession(session);
+        this.usageEmitter.fire(session);
     }
 
     /**
      * 保证某 sessionId 存在对应桶；不存在则按当前模型创建。
-     *
      * @param sessionId   会话 id。
      * @param providerId  提供商 id。
      * @param modelId     模型 id。
@@ -812,13 +507,6 @@ export class TokenBudgetService implements vscode.Disposable {
         }
     }
 }
-
-/**
- * 给 token 预算暴露的 ProviderConfig 类型重导出，避免外部需要额外 import。
- *
- * @returns ProviderConfig 类型别名。
- */
-export type CompactionProviderConfig = ProviderConfig;
 
 /**
  * 读取 ModelConfig 上的上下文长度配置（取 contextLength）。

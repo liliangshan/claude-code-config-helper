@@ -1,6 +1,6 @@
 # Claude Code Config Helper
 
-**Version:** 2.0.13
+**Version:** 2.0.23
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
 
@@ -23,6 +23,19 @@ Claude Code Config Helper is a VS Code extension for enhancing Claude Code workf
 - Task workflow support for planning, progress tracking, and automatic continuation.
 - Import/export of provider configuration and shared prompts.
 - Multi-language UI support.
+
+## On-Demand Expert (v2.1.0+)
+
+The built-in Chat now runs a **single** long-lived Claude CLI that handles everything by default. A separate expert model is only invoked **on demand**, with no expert CLI kept resident:
+
+- When an expert task model is configured, the main CLI is given an `ask_expert` MCP tool. The main model decides on its own whether to delegate — typically for a non-trivial architecture trade-off, an unfamiliar high-blast-radius subsystem, or when the user explicitly asks for the expert.
+- The expert sub-turn starts a **fresh request with no conversation history**: it receives only the self-contained `question` plus a read-only tool whitelist (`read_file`, `grep_search`, `get_errors`). Its result is returned to the main model as a `tool_result`, so the dispatcher writes the final reply.
+- Users can force the expert directly by prefixing a message with `@llsExpert …` or `/expert …`; the prefix is stripped before the question is sent. `chat.expert.userTriggerMode` controls whether that answer is shown directly (`direct`) or written back to the main CLI as a `tool_result`.
+- The whole expert sub-turn (its tool calls and final conclusion) streams into the Chat panel as an expert card, but never enters the main conversation context.
+
+The Chat header shows `Normal: <main model> · Expert: <expert model / Not configured>`. There is **no route badge** anymore — routing decisions are made by the model via `ask_expert`, not by an in-extension route state.
+
+Pick both models from the header model bar's gear button. User-overridable system prompts are exposed as `claudeCodeConfigHelper.chat.dispatcher.appendSystemPrompt` and `claudeCodeConfigHelper.chat.expert.appendSystemPrompt`; leaving either blank uses the built-in default. Sub-turn limits are tunable via `chat.expert.maxSteps`, `chat.expert.stepTimeoutMs`, `chat.expert.totalTimeoutMs`, and `chat.expert.maxCallsPerTurn`. Design and migration notes live in [`EXPERT_ON_DEMAND_PLAN.md`](./EXPERT_ON_DEMAND_PLAN.md).
 
 ## Built-in Chat and Claude CLI Transport
 

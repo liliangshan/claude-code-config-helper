@@ -14,8 +14,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { CliProcess } from '../cli/cliProcess';
-import type { ChatCliConfig } from '../cli/types';
+// CliProcess 顶层 `import * as vscode from 'vscode'`，必须先装好 stub 再 require。
+import { installVscodeStub } from './testUtils/vscodeStub';
+installVscodeStub({ values: { claudeCodeConfigHelper: {} } });
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { CliProcess } = require('../cli/cliProcess') as typeof import('../cli/cliProcess');
+type ChatCliConfig = import('../cli/types').ChatCliConfig;
 
 /**
  * 构造一份可注入到 CliProcess 内部状态的最小化 ChatCliConfig。
@@ -137,4 +142,95 @@ test('skills 与 mcpServers 同时存在并保留 resume sessionId', () => {
     assert.equal(args[tIdx + 1], 'Skill(code)');
     const rIdx = args.indexOf('--resume');
     assert.equal(args[rIdx + 1], 'sess-1');
+});
+test('appendSystemPrompt 非空时启动参数应包含 --append-system-prompt', () => {
+    const args = buildArgs(makeConfig({ appendSystemPrompt: 'dispatcher prompt' }));
+    const idx = args.indexOf('--append-system-prompt');
+    assert.notEqual(idx, -1);
+    assert.equal(args[idx + 1], 'dispatcher prompt');
+});
+
+test('route-specific ANTHROPIC_BASE_URL 不一致时配置比较应判定为不同', () => {
+    const proc = new CliProcess();
+    const left = makeConfig({
+        cliEnv: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:12345/normal' }
+    });
+    const right = makeConfig({
+        cliEnv: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:12345/expert' }
+    });
+    const same = (proc as unknown as {
+        isSameConfig(leftConfig: ChatCliConfig, rightConfig: ChatCliConfig): boolean;
+    }).isSameConfig(left, right);
+    proc.dispose();
+    assert.equal(same, false);
+});
+
+test('route-specific ANTHROPIC_BASE_URL 相同时配置比较应保持一致', () => {
+    const proc = new CliProcess();
+    const left = makeConfig({
+        cliEnv: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:12345/plan' }
+    });
+    const right = makeConfig({
+        cliEnv: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:12345/plan' }
+    });
+    const same = (proc as unknown as {
+        isSameConfig(leftConfig: ChatCliConfig, rightConfig: ChatCliConfig): boolean;
+    }).isSameConfig(left, right);
+    proc.dispose();
+    assert.equal(same, true);
+});
+
+// ---------------------------------------------------------------------------
+// 按需专家：ask_expert 经 MCP 注入时的权限流回归
+// ---------------------------------------------------------------------------
+
+const ASK_EXPERT_MCP = {
+    askExpert: { type: 'stdio' as const, command: 'node', args: ['ask-expert-mcp.js'] }
+};
+
+test('plan 权限模式下注入 ask_expert MCP，仍走 stdio 权限流（仅 bypass 才跳过）', () => {
+    // 回归：plan/default/acceptEdits 等非 bypass 模式下，ask_expert MCP server 被
+    // 注入到 --mcp-config，同时 --permission-prompt-tool stdio 仍然存在——这是
+    // 非交互模式下让需要确认的工具能弹授权的通道，不应因 ask_expert 而被关闭。
+    const args = buildArgs(makeConfig({
+        permissionMode: 'plan',
+        mcpServers: ASK_EXPERT_MCP,
+        strictMcpConfig: true
+    }));
+    // ask_expert MCP 已注入。
+    const mcpIdx = args.indexOf('--mcp-config');
+    assert.notEqual(mcpIdx, -1);
+    assert.match(args[mcpIdx + 1], /askExpert/);
+    assert.ok(args.includes('--strict-mcp-config'));
+    // plan 模式仍保留 stdio 权限流。
+    const permIdx = args.indexOf('--permission-prompt-tool');
+    assert.notEqual(permIdx, -1, 'plan 模式应保留 --permission-prompt-tool');
+    assert.equal(args[permIdx + 1], 'stdio');
+    assert.equal(args.indexOf('--permission-mode') !== -1 && args[args.indexOf('--permission-mode') + 1], 'plan');
+});
+
+test('bypassPermissions 模式下注入 ask_expert MCP，不追加 --permission-prompt-tool stdio', () => {
+    // 回归：bypassPermissions 表示完全放行，注入 ask_expert MCP 后不应再追加 stdio
+    // 权限流，避免某些 CLI/provider 组合仍弹权限交互破坏非交互体验。
+    const args = buildArgs(makeConfig({
+        permissionMode: 'bypassPermissions',
+        mcpServers: ASK_EXPERT_MCP,
+        strictMcpConfig: true
+    }));
+    const mcpIdx = args.indexOf('--mcp-config');
+    assert.notEqual(mcpIdx, -1);
+    assert.match(args[mcpIdx + 1], /askExpert/);
+    assert.equal(args.includes('--permission-prompt-tool'), false, 'bypass 模式不应注入 --permission-prompt-tool');
+});
+
+test('用户已在 cliArgs 指定 --permission-prompt-tool 时不因 ask_expert 注入重复', () => {
+    const args = buildArgs(makeConfig({
+        permissionMode: 'plan',
+        mcpServers: ASK_EXPERT_MCP,
+        cliArgs: ['--permission-prompt-tool', 'mcp__custom__ask']
+    }));
+    const occurrences = args.filter((arg) => arg === '--permission-prompt-tool' || arg.startsWith('--permission-prompt-tool='));
+    assert.equal(occurrences.length, 1, '应尊重用户自定义的 --permission-prompt-tool，不重复追加');
+    const idx = args.indexOf('--permission-prompt-tool');
+    assert.equal(args[idx + 1], 'mcp__custom__ask');
 });

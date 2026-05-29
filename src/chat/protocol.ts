@@ -1,5 +1,8 @@
 /** @file 内置 Chat Webview 与扩展宿主之间的基础消息协议。 */
 
+/** Chat 消息路由来源。 */
+export type ChatRoute = 'normal' | 'expert' | 'plan' | 'review';
+
 /** Chat 消息角色。 */
 export type ChatRole = 'user' | 'assistant' | 'system' | 'tool';
 
@@ -152,6 +155,10 @@ export interface ChatMessage {
     text?: string;
     /** 是否仍在流式生成中。 */
     pending?: boolean;
+    /** 消息路由来源，用于区分普通模型与专家模型输出。 */
+    route?: ChatRoute;
+    /** 生成该 assistant 消息时使用的模型展示名。 */
+    modelLabel?: string;
     /** 创建时间戳。 */
     createdAt: number;
 }
@@ -199,6 +206,14 @@ export interface ChatExpertModelSelection {
     modelId: string;
 }
 
+/** Chat 路由模型（方案/审查）下拉框的当前选择状态。 */
+export interface ChatRoutedModelSelection {
+    /** 是否启用；false 表示关闭。 */
+    enabled: boolean;
+    /** 模型 ID；关闭或未设置时为空字符串。 */
+    modelId: string;
+}
+
 /** Chat Webview 当前支持的界面语言。 */
 export type ChatUiLanguage = 'en' | 'zh-cn' | 'zh-tw' | 'ko' | 'ja' | 'fr' | 'de';
 
@@ -230,6 +245,39 @@ export type ExtensionToWebview =
           fromIndex: number;
       }
     | { type: 'message/error'; id?: string; error: string; detail?: string }
+    /**
+     * 兼容保留：按需专家方案下 route/changed 协议已退役，但 webview 可能仍订阅
+     * 该消息。扩展宿主不再 post 此消息；旧 webview 收到时按 noop 处理。
+     */
+    | { type: 'route/changed'; route: ChatRoute }
+    | { type: 'chat/running'; running: boolean; route?: ChatRoute }
+    /**
+     * 通知 Webview 专家是否可用，触发 header 「Expert: <name> / 未配置」展示。
+     */
+    | { type: 'expert/availability'; available: boolean; modelName?: string }
+    /**
+     * 主 CLI 触发了一次 ask_expert MCP 工具调用，专家 sub-turn 已开始。
+     * webview 可在此时展示「专家分析中…」面板占位。
+     */
+    | { type: 'expert/subturn/started'; sessionId: string; toolUseId?: string; question: string; modelName?: string }
+    /**
+     * 专家 sub-turn 流式进展（mini-agent loop 中的工具调用 / 文本片段）。
+     */
+    | {
+          type: 'expert/subturn/progress';
+          sessionId: string;
+          stage: 'tool_use' | 'tool_result' | 'text';
+          toolUseId?: string;
+          name?: string;
+          input?: unknown;
+          content?: string;
+          text?: string;
+          isError?: boolean;
+      }
+    /** 专家 sub-turn 成功结束。 */
+    | { type: 'expert/subturn/done'; sessionId: string; finalText: string; steps: number }
+    /** 专家 sub-turn 失败结束。 */
+    | { type: 'expert/subturn/failed'; sessionId: string; reason: string; message: string }
     | { type: 'cli/status'; status: 'idle' | 'running' | 'exited' | 'error'; detail?: string }
     | { type: 'toast'; level: 'info' | 'success' | 'warn' | 'error'; text: string }
     | { type: 'composer/fill'; text: string; focus?: boolean }
@@ -237,7 +285,21 @@ export type ExtensionToWebview =
     | { type: 'composer/addAttachments'; attachments: ChatComposerAttachment[]; focus?: boolean }
     | { type: 'composer/replaceAttachment'; clientId: string; attachment: ChatComposerAttachment; focus?: boolean }
     | { type: 'permissionMode/current'; mode: ChatQuickPermissionMode }
-    | { type: 'model/options'; models: ChatModelOption[]; current?: { providerId: string; modelId: string } | null }
+    | {
+          /**
+           * 推送 Chat 输入框上方「当前模型」下拉框可选项与已选状态。
+           *
+           * 模型列表由扩展宿主在 {@link ConfigViewState.providers} 基础上做了
+           * 三重过滤：跳过 provider.enabled === false、model.enabled === false
+           * 与 model.isUserSelectable === false 的条目，避免用户在此下拉中
+           * 看到任何「已禁用」或「不可见」模型。
+           */
+          type: 'model/options';
+          /** 已经过 enabled / selectable 过滤的可选模型列表。 */
+          models: ChatModelOption[];
+          /** 当前选中的模型，未选中或被清空时为 null。 */
+          current?: { providerId: string; modelId: string } | null;
+      }
     | {
           /** 推送当前 LLS CCAI / CC 任务流快照，用于 Chat 顶部 Todo 状态卡片实时刷新。 */
           type: 'taskFlow/status';
@@ -245,28 +307,42 @@ export type ExtensionToWebview =
           snapshot: LlsTaskSnapshotPayload;
       }
         | {
-                    /** 推送专家模型下拉框可选项与当前有效选择。 */
+                    /**
+                     * 推送专家模型下拉框可选项与当前有效选择。
+                     *
+                     * 与 `model/options` 一致，列表已过滤被禁用的 provider/model
+                     * 与 isUserSelectable === false 的条目。
+                     */
                     type: 'expert/model/options';
-                    /** 可作为专家模型的模型列表。 */
+                    /** 可作为专家模型的模型列表（已过滤禁用 provider/model）。 */
                     models: ChatModelOption[];
                     /** 当前按照「项目 > 全局 > 关闭」规则解析出的专家选择。 */
                     current: ChatExpertModelSelection;
             }
     | {
-          /**
-           * 推送一条专家模式事件（{@link ExpertEventPayload}）。
-           *
-           * Webview 收到后将事件按 `parentMessageId` 聚合到 `ExpertPanel`
-           * 折叠面板中渲染。`start` 事件创建面板（默认展开），`final` /
-           * `error` / `cancelled` 事件会触发自动折叠（用户可手动展开）。
-           *
-           * 专家事件**不进入** `chatMessages` 数组，也不会持久化到 sessionStore，
-           * 因此 webview 关闭后丢失是预期行为。
-           */
-          type: 'expert/event';
-          /** 事件 payload（详见 `src/expertMode/expertEvents.ts`）。 */
-          event: ExpertEventPayload;
-      }
+                /**
+                 * 推送方案模型下拉框可选项与当前有效选择。
+                 *
+                 * 列表与 `model/options` 共用过滤策略，不会出现已禁用条目。
+                 */
+                type: 'plan/model/options';
+                /** 可作为方案模型的模型列表（已过滤禁用 provider/model）。 */
+                models: ChatModelOption[];
+                /** 当前按照「项目 > 全局 > 关闭」规则解析出的方案选择。 */
+                current: ChatRoutedModelSelection;
+            }
+    | {
+                /**
+                 * 推送审查模型下拉框可选项与当前有效选择。
+                 *
+                 * 列表与 `model/options` 共用过滤策略，不会出现已禁用条目。
+                 */
+                type: 'review/model/options';
+                /** 可作为审查模型的模型列表（已过滤禁用 provider/model）。 */
+                models: ChatModelOption[];
+                /** 当前按照「项目 > 全局 > 关闭」规则解析出的审查选择。 */
+                current: ChatRoutedModelSelection;
+            }
     | {
           /**
            * 推送当前会话的 token 用量与上下文上限，用于 bypass 下拉右侧的
@@ -330,6 +406,42 @@ export type ExtensionToWebview =
           sessionId: string;
           /** 失败原因描述（已脱敏可直接展示）。 */
           error: string;
+      }
+    | {
+          /**
+           * 推送当前普通 / 专家两栏模型可选项与已选状态，供「模型选择弹窗」一次性渲染。
+           *
+           * 用于替代分别推送的 `model/options` 与 `expert/model/options`，避免弹窗
+           * 打开时出现两次刷新闪动；旧两条协议保留兼容。
+           *
+           * 四个列表（normalModels / expertModels / planModels / reviewModels）均已
+           * 在扩展宿主侧通过 isSelectableModel(provider, model) 统一过滤：跳过
+           * provider.enabled === false、model.enabled === false 与
+           * model.isUserSelectable === false 的条目。Webview 收到后可直接渲染，
+           * 不需要再做禁用过滤。
+           */
+          type: 'models/snapshot';
+          /** 普通任务模型可选项（已过滤禁用 provider/model）。 */
+          normalModels: ChatModelOption[];
+          /** 专家任务模型可选项（不含「关闭专家」，已过滤禁用 provider/model）。 */
+          expertModels: ChatModelOption[];
+          /** 方案任务模型可选项（不含「关闭方案」，已过滤禁用 provider/model）。 */
+          planModels: ChatModelOption[];
+          /** 审查任务模型可选项（不含「关闭审查」，已过滤禁用 provider/model）。 */
+          reviewModels: ChatModelOption[];
+          /** 压缩请求专用模型可选项（不含「关闭压缩模型」）。 */
+          compactionModels: ChatModelOption[];
+          /** 当前生效的压缩模型选择，含 enabled 与 modelId。 */
+          currentCompaction: ChatRoutedModelSelection;
+
+          /** 当前选中的普通任务模型；未选中时为 null。 */
+          currentNormal: { providerId: string; modelId: string } | null;
+          /** 当前生效的专家选择，含 enabled 与 modelId。 */
+          currentExpert: ChatExpertModelSelection;
+          /** 当前生效的方案选择，含 enabled 与 modelId。 */
+          currentPlan: ChatRoutedModelSelection;
+          /** 当前生效的审查选择，含 enabled 与 modelId。 */
+          currentReview: ChatRoutedModelSelection;
       };
 
 /** Chat Webview 可渲染的任务流任务状态。 */
@@ -365,44 +477,6 @@ export interface LlsTaskSnapshotPayload {
     lastError?: string;
     /** 最近一次更新时间戳。 */
     updatedAt: number;
-}
-
-/**
- * 专家事件 webview 透传 payload。
- *
- * 这是 `ExpertEvent` 的 webview 协议视图（字段集与 `expertMode/expertEvents.ts`
- * 中的 `ExpertEvent` 一致；之所以在此重新声明，是为了让 `protocol.ts` 不依赖
- * `src/expertMode/*`，保持协议层零内部依赖）。
- */
-export interface ExpertEventPayload {
-    /** 当前专家 run 的稳定 id。 */
-    runId: string;
-    /** 关联的主对话 assistant 消息 id（用于挂载面板位置）。 */
-    parentMessageId: string;
-    /** 关联的 ask_expert tool_use_id。 */
-    callId: string;
-    /** 主聊天区 ask_expert 工具卡片的 ChatSegment.id，用于实时追加专家 Output。 */
-    toolSegmentId?: string;
-    /** 事件产生时间戳（毫秒）。 */
-    ts: number;
-    /** 事件种类。 */
-    kind: 'start' | 'analysis' | 'tool_call' | 'tool_result' | 'final' | 'error' | 'cancelled';
-    /** `kind='start'` 时：自包含的用户问题。 */
-    question?: string;
-    /** `kind='start'` 时：实际使用的专家模型 id。 */
-    expertModel?: string;
-    /** `kind='analysis' | 'final' | 'error' | 'cancelled'` 时的文本内容。 */
-    text?: string;
-    /** `kind='tool_call' | 'tool_result'` 时的工具名。 */
-    toolName?: string;
-    /** `kind='tool_call'` 时的工具入参。 */
-    toolArgs?: unknown;
-    /** `kind='tool_result'` 时的结果摘要（已截断）。 */
-    toolResultSummary?: string;
-    /** `kind='tool_result'` 时：该工具结果是否为错误。 */
-    toolIsError?: boolean;
-    /** `kind='final' | 'error' | 'cancelled'` 时：本次 run 总耗时（毫秒）。 */
-    durationMs?: number;
 }
 
 /** Webview 发送给扩展宿主的消息。 */
@@ -443,6 +517,26 @@ export type WebviewToExtension =
           modelId: string;
       }
     | {
+          /**
+           * 保存方案模型下拉框选择。
+           *
+           * `modelId` 为空字符串表示关闭方案；非空时会同时写入项目配置和全局配置。
+           */
+          type: 'plan/model/select';
+          /** 选择的方案模型 ID；空字符串表示「关闭方案」。 */
+          modelId: string;
+      }
+    | {
+          /**
+           * 保存审查模型下拉框选择。
+           *
+           * `modelId` 为空字符串表示关闭审查；非空时会同时写入项目配置和全局配置。
+           */
+          type: 'review/model/select';
+          /** 选择的审查模型 ID；空字符串表示「关闭审查」。 */
+          modelId: string;
+      }
+    | {
           /** 打开 LLS CCAI / CC 任务流菜单，用于替代原状态栏中的 CC 任务流按钮。 */
           type: 'taskFlow/open';
       }
@@ -450,4 +544,39 @@ export type WebviewToExtension =
     | { type: 'cli/restart' }
     | { type: 'cli/selectPath' }
     | { type: 'tokenBudget/compactNow' }
+    | {
+          /**
+           * 用户在路由徽章上手动切换 Chat CLI 路由。
+           *
+           * 第一版仅支持 `'normal'`（手动切回）；后续若实现「expert → normal 自动回退」
+           * 也共用本协议消息。
+           */
+          type: 'route/select';
+          /** 目标路由。 */
+          route: ChatRoute;
+      }
+    | {
+          /**
+           * 模型选择弹窗一次性下发普通 / 专家 / 方案 / 审查四个选择，避免多重重启 CLI。
+           *
+           * 扩展宿主收到后串行执行：
+           *   1. configManager.setCurrentModel(normal)
+           *   2. saveExpertModelSelection(expert ? `${providerId}/${modelId}` : '')
+           *   3. savePlanModelSelection(plan ? `${providerId}/${modelId}` : '')
+           *   4. saveReviewModelSelection(review ? `${providerId}/${modelId}` : '')
+           *   5. postModelsSnapshot()
+           *   6. restartChatCliPair({ silent: true })
+           */
+          type: 'models/applyPair';
+          /** 普通任务模型；null 表示未选。 */
+          normal: { providerId: string; modelId: string } | null;
+          /** 专家任务模型；null 表示「关闭专家」。 */
+          expert: { providerId: string; modelId: string } | null;
+          /** 方案任务模型；null 表示「关闭方案」。 */
+          plan: { providerId: string; modelId: string } | null;
+          /** 审查任务模型；null 表示「关闭审查」。 */
+          review: { providerId: string; modelId: string } | null;
+          /** 压缩请求专用模型；null 表示「关闭压缩模型」。 */
+          compaction: { providerId: string; modelId: string } | null;
+      }
     | { type: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; message: string };

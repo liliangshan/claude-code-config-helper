@@ -2,6 +2,22 @@
 
 All notable changes to this extension are documented in this file.
 
+## [2.0.23] - 2026-05-28
+
+### Added
+
+- Introduced **dual CLI routing**: the built-in Chat now keeps a long-lived **normal (dispatcher)** CLI and an **expert** CLI side by side, picked per user message by an in-extension `activeRoute` state. The dispatcher emitting `@llsExpert` (word-boundary match) auto-switches the next message to the expert CLI; users can force a one-shot handoff by prefixing their message with `@llsExpert`.
+- Added a unified **model-picker dialog** in the Chat header (gear button on the new model bar): pick the normal and expert task models in one round-trip, save both with a single CLI pair restart via the new `models/applyPair` protocol message, and see both selections in the always-visible top bar.
+- Added a composer **route badge** showing `NORMAL` / `EXPERT`; clicking it manually switches the route back to `normal`.
+- Added user-overridable system prompts for each role: `claudeCodeConfigHelper.chat.dispatcher.appendSystemPrompt` and `claudeCodeConfigHelper.chat.expert.appendSystemPrompt`. Blank values fall back to built-in defaults.
+- Added per-route session persistence: `.LLSOAI/chat-session.json` continues to hold the **normal** session for backward compatibility, and `.LLSOAI/chat-session.expert.json` is the new file for the **expert** session, so token-budget compaction buckets and `--resume` are isolated per route.
+- Added new webview ↔ extension protocol messages: `route/changed`, `route/select`, `models/snapshot`, `models/applyPair`.
+
+### Removed
+
+- Removed the legacy expert MCP server (`mcp__llsExpert__ask_expert`), the corresponding `/__expert/run` relay route, the `ExpertRunnerService` state machine, the stdio MCP subprocess script, and the webview `expert/event` panel. Routing now flows entirely through `@llsExpert` text handoff between the two long-lived CLIs.
+- Removed the composer expert model dropdown and the old model selector inside the composer toolbar; both are replaced by the header model bar + picker dialog described above.
+
 ## [2.0.20] - 2026-05-26
 
 ### Changed

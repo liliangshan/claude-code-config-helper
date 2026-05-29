@@ -13,18 +13,23 @@ import {
     CHAT_CLI_PERMISSION_MODE_KEY,
     CHAT_CLI_SKILLS_KEY,
     CHAT_CLI_STRICT_MCP_CONFIG_KEY,
+    CHAT_DISPATCHER_APPEND_SYSTEM_PROMPT_KEY,
     CHAT_ENABLED_KEY,
+    CHAT_EXPERT_APPEND_SYSTEM_PROMPT_KEY,
+    CHAT_PLAN_APPEND_SYSTEM_PROMPT_KEY,
+    CHAT_REVIEW_APPEND_SYSTEM_PROMPT_KEY,
     CHAT_TRANSPORT_KEY,
     CONFIG_NAMESPACE
 } from '../../constants';
 import { ConfigManager } from '../../configManager';
-import { readExpertConfigFromVscode, maybeInjectExpertMcpServer } from '../../expertMode/expertConfig';
+import { readCompactionConfigFromVscode, readExpertConfigFromVscode, readPlanConfigFromVscode, readReviewConfigFromVscode } from '../../expertMode/expertConfig';
+import { ASK_EXPERT_MCP_SERVER_NAME } from '../../expertMode/askExpertMcpServer';
 import {
     loadAllVscodeMcpJsons,
-    logMcpJsonLoadResults,
     mergeMcpServers,
     workspaceFolderResolver
 } from './mcpJsonLoader';
+import type { ChatRoute } from '../protocol';
 import type { ChatCliConfig, ChatCliPermissionMode, ChatCliTransport, McpServerConfig } from './types';
 
 /** 内置 Chat 默认通信通道。 */
@@ -57,6 +62,199 @@ const DEFAULT_STREAM_JSON_ENV: Record<string, string> = {
 };
 
 /**
+ * Write 工具调用纪律：所有 CLI 角色共用的硬约束。
+ *
+ * 强制点：
+ * - Write 调用必须同时带非空 file_path 与非空 content，禁止用空参数尝试 Write；
+ * - 新建文件时只先 Write 一小段（头部/首段），剩余内容必须通过多次 Edit 追加；
+ * - 若 tool_result 命中 "Empty Write call blocked by relay" 错误，立刻按规则重试。
+ */
+const WRITE_TOOL_USAGE_RULE = [
+    'Write tool discipline (mandatory, applies whenever you can edit files):',
+    '- Every Write call MUST include BOTH a non-empty `file_path` AND a non-empty',
+    '  `content`. Never call Write with empty arguments, with `content` omitted, or',
+    '  with an empty/whitespace-only `content`.',
+    '- When creating a NEW file, do NOT dump the entire file body into a single Write',
+    '  call. First call Write with `file_path` plus a SHORT seed segment (the file',
+    '  header / first section / first few lines). Then keep extending the file by',
+    '  repeated Edit calls that append the remaining content in chunks.',
+    '- If a tool_result contains "Empty Write call blocked by relay", the relay layer',
+    '  has rejected an invalid Write. Do NOT retry the same empty Write. Retry with a',
+    '  small seed Write followed by Edit appends as described above.'
+].join('\n');
+
+/**
+ * dispatcher（normal）CLI 默认追加的 system prompt 文案。
+ *
+ * 双 CLI 路由方案下，普通 CLI 承担轻量任务、简单问答与低风险工程操作；遇到复杂任务
+ * 必须以 `@llsExpert <一句任务复述>` 文本切路由。提示文案在
+ * `getDualConfigsWithRelayEnv` 里通过 `appendSystemPrompt` 字段注入到 normal CLI
+ * 启动参数 `--append-system-prompt`；用户可通过 `chat.dispatcher.appendSystemPrompt`
+ * 完全替换该默认文案（非空时不再使用此默认值）。
+ */
+const DEFAULT_DISPATCHER_APPEND_SYSTEM_PROMPT = [
+    'You are the primary engineering assistant. Handle requests directly by default —',
+    'including writing, editing, refactoring code, running shell/git commands,',
+    'inspecting diffs, and making ordinary engineering decisions.',
+    '',
+    'An optional `ask_expert` tool may appear in your tool list. Treat it as a rare',
+    'escalation path, not a normal step. Use it ONLY when:',
+    '  1. the user explicitly asks for the expert ("用专家", "ask the expert", /expert), OR',
+    '  2. after reading the relevant files, you still cannot make a confident decision',
+    '     and a wrong choice would have high blast radius.',
+    '',
+    'Do NOT call `ask_expert` for:',
+    '  - implementation work you can perform yourself;',
+    '  - simple, local edits;',
+    '  - normal debugging, test failures, compile errors, or refactors;',
+    '  - questions you can answer from the files you can already read;',
+    '  - speculative "let me double-check" calls.',
+    '',
+    'Before calling `ask_expert`, first inspect the relevant local context yourself.',
+    'When calling `ask_expert`, pass `{ "question": "<one self-contained paragraph>" }`.',
+    'The expert receives NO conversation history — your question must be self-contained.',
+    'Treat the returned `tool_result` as advisory and integrate it into your final reply.',
+    '',
+    'If `ask_expert` is not in your tool list, expert mode is disabled — just answer',
+    'directly and never mention the expert.',
+    '',
+    WRITE_TOOL_USAGE_RULE
+].join('\n');
+
+/**
+ * Plan routing 优先级片段，仅在方案模型已配置时追加到 dispatcher 提示词。
+ *
+ * 单独抽出是为了避免「未启用方案模型时 dispatcher 仍被告知必须用 `@llsPlanTask`」
+ * 的硬编码诱导——历史上这一段被写死在 {@link DEFAULT_DISPATCHER_APPEND_SYSTEM_PROMPT}
+ * 里，无论 `planAvailable` 与否都会注入，导致普通模型在没有方案模型的环境下也尝试
+ * 触发不存在的 `@llsPlanTask` 路由。
+ *
+ * 注入位置：在 {@link DEFAULT_DISPATCHER_APPEND_SYSTEM_PROMPT} 主体与
+ * {@link DISPATCHER_PLAN_REVIEW_PROMPT} 详细编排之间，作为中间桥接段。
+ */
+const DISPATCHER_PLAN_ROUTING_PRIORITY = [
+    '',
+    'Routing priority (the plan model is available):',
+    '1. If the user asks for a design, architecture proposal, implementation plan,',
+    '   technical方案, 方案设计, planning work, or a plan/review workflow, you MUST',
+    '   use `@llsPlanTask`. This rule overrides all generic expert-tool guidance.',
+    '2. For non-planning work, continue handling the task yourself unless the strict',
+    '   `ask_expert` escalation conditions above are met.'
+].join('\n');
+
+/**
+ * Plan/review 编排提示词片段，当方案模型已配置时追加到 dispatcher 提示词末尾。
+ *
+ * 在 {@link ChatCliConfigService.getRoutedConfigsWithRelayEnv} 中根据
+ * `planMode.enabled && planMode.model` 判断是否追加本段。
+ */
+const DISPATCHER_PLAN_REVIEW_PROMPT = [
+    '',
+    'HIGHEST PRIORITY plan/review orchestration (the plan/review model is available):',
+    '- Planning/design requests MUST go to the plan model, not the expert model.',
+    '- Planning/design requests include: design docs, architecture proposals, technical',
+    ' 方案, 方案设计, implementation plans, structured planning work, or any request',
+    '  asking to produce/review a plan before implementation.',
+    '- For those requests, reply only with `@llsPlanTask` followed by the full planning',
+    '  request. Do NOT reply with `@llsExpert` for planning/design requests.',
+    '- Include in the `@llsPlanTask` prompt that the plan model must write the result',
+    '  into a Markdown (.md) file and output the file path when done.',
+    '- Example: user asks "请出一份获取当前时间的Go应用的方案设计" → respond with:',
+    '  "@llsPlanTask 请出一份获取当前时间的Go应用的方案设计，包含技术选型、项目结构、',
+    '  代码实现方案。同时将方案写入 Markdown 文件并输出文件路径。"',
+    '- When the plan model result is returned to you, decide the next step by replying',
+    '  only with `@llsPlanReview` when review is needed, or `@llsPlanDone` followed',
+    '  by a concise user-facing summary when review is unnecessary.',
+    '- When the review model result is returned to you, reply only with',
+    '  `@llsPlanRevise` plus the required changes if the verdict requests changes;',
+    '  reply with `@llsPlanApproved` plus a concise user-facing summary if approved.',
+    '- Do not expose internal plan/review prompts or token mechanics to the user.'
+].join('\n');
+
+/**
+ * expert CLI 默认追加的 system prompt 文案。
+ *
+ * 双 CLI 路由方案下，专家 CLI 由 dispatcher 通过 `@llsExpert` 文本切路由后激活，
+ * 承担复杂分析、重构、调试、设计提案等高强度任务。用户可通过
+ * `chat.expert.appendSystemPrompt` 完全替换该默认文案（非空时不再使用此默认值）。
+ */
+const DEFAULT_EXPERT_APPEND_SYSTEM_PROMPT = [
+    'You are the **expert model**, activated by the dispatcher routing layer when the',
+    'user asks for tasks beyond lightweight chores. You receive each user message',
+    'directly through the routed CLI; the dispatcher is NOT in the loop on your turn.',
+    '',
+    'Your scope:',
+    '- deep code analysis, refactoring, multi-step implementations, debugging',
+    '- design proposals, architecture trade-off discussions',
+    '- any task that requires reading large amounts of context or making non-trivial edits',
+    '',
+    'Do NOT echo `@llsExpert` markers back to the user — that token is only used by the',
+    'dispatcher to hand off control to you, never the other way around. Reply with',
+    'real engineering work; the routing layer takes care of staying on the expert CLI',
+    'until the user manually switches back.',
+    '',
+    WRITE_TOOL_USAGE_RULE
+].join('\n');
+
+/**
+ * @deprecated 按需专家方案下 expert CLI 已退役。该常量保留仅为兼容历史
+ * `getRoutedConfigsWithRelayEnv` 调用链中 `buildRoutedModeConfig` 的 fallback。
+ * 当 expertMode.enabled=true 时，专家不再常驻 CLI，而是通过 `ask_expert` MCP
+ * 工具按需启动 ExpertSubturnService。
+ */
+const LEGACY_EXPERT_APPEND_SYSTEM_PROMPT = DEFAULT_EXPERT_APPEND_SYSTEM_PROMPT;
+
+/** 方案 CLI 默认追加的 system prompt 文案。 */
+const DEFAULT_PLAN_APPEND_SYSTEM_PROMPT = [
+    'You are the **plan model** in a multi-model orchestration system. Your job is to',
+    'produce clear, structured plans, designs, and technical proposals.',
+    '',
+    'You receive a fresh task from the normal dispatcher. You do not have reliable',
+    'access to prior conversation history unless it is included in the prompt.',
+    '',
+    'Output a well-structured plan covering:',
+    '- Requirements and assumptions',
+    '- Architecture / design decisions',
+    '- Implementation steps',
+    '- Validation and test strategy',
+    '- Risks, tradeoffs, and alternatives',
+    '',
+    'Write the plan into a Markdown (.md) file in the current workspace. After writing',
+    'the file, output the absolute path to the generated file so the dispatcher knows',
+    'where to find it.',
+    '',
+    'Do not execute implementation steps. Do not use routing tokens such as',
+    '@llsExpert, @llsPlanReview, @llsPlanRevise, @llsPlanDone, or @llsPlanApproved.',
+    '',
+    WRITE_TOOL_USAGE_RULE
+].join('\n');
+
+/** 审查 CLI 默认追加的 system prompt 文案。 */
+const DEFAULT_REVIEW_APPEND_SYSTEM_PROMPT = [
+    'You are the **review model** in a multi-model orchestration system. Your job is',
+    'to review plans produced by the plan model for quality, correctness, and',
+    'completeness.',
+    '',
+    'You receive the plan content from the normal dispatcher. You do not have reliable',
+    'access to prior conversation history unless it is included in the prompt.',
+    '',
+    'Evaluate the plan against:',
+    '- Completeness: Are all requirements addressed?',
+    '- Correctness: Are the technical decisions sound and consistent with the repo?',
+    '- Clarity: Is the plan easy to understand and implement?',
+    '- Validation: Are tests and manual verification covered?',
+    '- Risks: Are potential issues identified and mitigated?',
+    '',
+    'Start with exactly one verdict line:',
+    'VERDICT: APPROVED',
+    'or',
+    'VERDICT: CHANGES_REQUESTED',
+    '',
+    'Then provide concise findings. If changes are requested, list specific required',
+    'fixes. Do not use routing tokens and do not implement the plan.'
+].join('\n');
+
+/**
  * 管理 Chat CLI 配置读取、默认值解析与持久化更新。
  *
  * 该类只访问 VS Code configuration，不启动进程；典型调用方为
@@ -69,41 +267,6 @@ export class ChatCliConfigService {
      * @param configManager 可选的模型配置管理器，用于把当前模型转换成 --model 参数。
      */
     public constructor(private readonly configManager?: ConfigManager) {}
-
-    /**
-     * 当前 Relay 的回环 URL（如 `http://127.0.0.1:3210`）。
-     *
-     * 由 `extension.ts` 在 RelayServer.start() 完成后通过
-     * {@link setExpertRelayEnv} 注入。专家模式启用时会被写入 llsExpert
-     * stdio MCP 子进程的环境变量 `LLS_EXPERT_RELAY_URL`，供其回调扩展宿主。
-     */
-    private expertRelayBaseUrl: string | undefined;
-
-    /**
-     * 当前会话的一次性鉴权 token，与 {@link expertRelayBaseUrl} 配套。
-     *
-     * 写入 expertMcpServer 子进程的 `LLS_EXPERT_RELAY_TOKEN` 环境变量；
-     * 扩展宿主侧 `/__expert/run` 路由会校验 `Authorization: Bearer <token>`，
-     * 阻止外部进程伪造请求触发 spawn 专家 CLI。
-     */
-    private expertRelayAuthToken: string | undefined;
-
-    /**
-     * 注入「专家模式回环 Relay」运行时参数。
-     *
-     * 通常在扩展激活流程的 `ensureRelayServerStarted()` 之后调用一次。如果
-     * 之后 Relay 重启换了端口，应当再次调用该方法刷新。
-     *
-     * @param relayBaseUrl 形如 `http://127.0.0.1:PORT`，传 undefined 表示清除。
-     * @param authToken    本次会话的随机鉴权 token，传 undefined 表示清除。
-     */
-    public setExpertRelayEnv(
-        relayBaseUrl: string | undefined,
-        authToken: string | undefined
-    ): void {
-        this.expertRelayBaseUrl = relayBaseUrl;
-        this.expertRelayAuthToken = authToken;
-    }
 
     /**
      * 读取当前生效的 Chat CLI 配置快照。
@@ -124,16 +287,14 @@ export class ChatCliConfigService {
         const includeVscodeMcpJson = config.get<boolean>(CHAT_CLI_INCLUDE_VSCODE_MCP_JSON_KEY, true) !== false;
         const mergedMcpServers = this.mergeWithVscodeMcpJson(mcpServers, includeVscodeMcpJson);
         const skills = this.normalizeSkills(config.get<unknown>(CHAT_CLI_SKILLS_KEY, undefined));
-        // 读取并合并出最终生效的专家模式配置；若启用，则把内置 llsExpert MCP server
-        // 自动追加进 mcpServers 字典，让 Claude CLI 通过 --mcp-config 拉起我们的
-        // stdio 子进程并把 ask_expert 工具暴露给主模型。
+        // 双 CLI 路由方案下，旧 llsExpert MCP server 已被废弃；这里仅在用户
+        // 历史 settings.json / mcp.json 残留同名条目时兜底剥除，防止 Claude CLI
+        // 试图启动一条已不存在的 stdio 子进程。
         const expertMode = readExpertConfigFromVscode();
-        const finalMcpServers = maybeInjectExpertMcpServer(
-            mergedMcpServers,
-            expertMode,
-            this.expertRelayBaseUrl,
-            this.expertRelayAuthToken
-        );
+        const compactionMode = readCompactionConfigFromVscode();
+        const planMode = readPlanConfigFromVscode();
+        const reviewMode = readReviewConfigFromVscode();
+        const finalMcpServers = stripExpertServerFromMcp(mergedMcpServers);
         return {
             enabled: config.get<boolean>(CHAT_ENABLED_KEY, false),
             cliPath: config.get<string>(CHAT_CLI_PATH_KEY, '').trim(),
@@ -147,8 +308,11 @@ export class ChatCliConfigService {
             permissionMode,
             mcpServers: finalMcpServers && Object.keys(finalMcpServers).length > 0 ? finalMcpServers : undefined,
             strictMcpConfig: strictMcpConfig || undefined,
-                skills,
-                expertMode
+            skills,
+            expertMode,
+            compactionMode,
+            planMode,
+            reviewMode
         };
     }
 
@@ -160,7 +324,7 @@ export class ChatCliConfigService {
      */
     public async getConfigWithRelayEnv(relayPort: number): Promise<ChatCliConfig> {
         const config = this.getConfig();
-        const relayEnv = this.resolveRelayEnv(relayPort);
+        const relayEnv = this.resolveRelayEnv(relayPort, 'normal');
         return {
             ...config,
             cliEnv: {
@@ -171,40 +335,114 @@ export class ChatCliConfigService {
     }
 
     /**
-     * 同步读取当前 Chat CLI 配置，并注入已缓存的本地 Relay 环境变量。
+     * 派生「四 CLI 路由」方案下可能启动的 Chat CLI 配置。
      *
-     * 与 {@link getConfigWithRelayEnv} 的区别：本方法不需要调用方再次传入端口，
-     * 而是复用 {@link setExpertRelayEnv} 记录下来的 `expertRelayBaseUrl`。
-     * 它专门服务于 ExpertRunnerService：专家 CLI 是在 `/__expert/run` 请求中
-     * 临时启动的，此时 Relay 已经在扩展宿主中运行，且 baseUrl/token 已被同步
-     * 到本服务；直接复用即可。
-     *
-     * 如果尚未缓存 relay baseUrl，则返回普通 {@link getConfig} 结果，调用方可
-     * 继续走原有失败路径（例如专家 CLI 返回未登录错误）。
-     *
-     * @returns 已尽可能合并本地 Relay ANTHROPIC_* 环境变量的配置快照。
+     * @param relayPort 本地 HTTP 中转服务实际监听端口。
+     * @returns 已派生好的 normal / expert / plan / review 配置。
      */
-    public getConfigWithCachedRelayEnv(): ChatCliConfig {
-        const config = this.getConfig();
-        if (!this.expertRelayBaseUrl) {
-            return config;
-        }
-        const relayEnv: Record<string, string> = {
-            CLAUDE_CODE_SKIP_AUTH_LOGIN: '1',
-            CLAUDE_CODE_SKIP_MODEL_VALIDATION: '1',
-            ANTHROPIC_BASE_URL: this.expertRelayBaseUrl,
-            ANTHROPIC_AUTH_TOKEN: 'claude-code-relay',
-            ANTHROPIC_API_KEY: 'claude-code-relay'
+    public async getRoutedConfigsWithRelayEnv(relayPort: number): Promise<{
+        normal: ChatCliConfig;
+        expert: ChatCliConfig | undefined;
+        plan: ChatCliConfig | undefined;
+        review: ChatCliConfig | undefined;
+    }> {
+        const baseConfig = await this.getConfigWithRelayEnv(relayPort);
+        const vsCfg = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+        const dispatcherPromptOverride = (vsCfg.get<string>(CHAT_DISPATCHER_APPEND_SYSTEM_PROMPT_KEY, '') || '').trim();
+        const expertPromptOverride = (vsCfg.get<string>(CHAT_EXPERT_APPEND_SYSTEM_PROMPT_KEY, '') || '').trim();
+        const planPromptOverride = (vsCfg.get<string>(CHAT_PLAN_APPEND_SYSTEM_PROMPT_KEY, '') || '').trim();
+        const reviewPromptOverride = (vsCfg.get<string>(CHAT_REVIEW_APPEND_SYSTEM_PROMPT_KEY, '') || '').trim();
+
+        const planAvailable = !!(baseConfig.planMode?.enabled && baseConfig.planMode?.model);
+        const expertAvailable = !!(baseConfig.expertMode?.enabled && baseConfig.expertMode?.model);
+        const dispatcherPrompt = dispatcherPromptOverride.length > 0
+            ? dispatcherPromptOverride
+            : DEFAULT_DISPATCHER_APPEND_SYSTEM_PROMPT;
+        const planSuffix = planAvailable
+            ? DISPATCHER_PLAN_ROUTING_PRIORITY + '\n' + DISPATCHER_PLAN_REVIEW_PROMPT
+            : '';
+        const normal: ChatCliConfig = {
+            ...baseConfig,
+            mcpServers: injectAskExpertMcpServer(baseConfig.mcpServers, expertAvailable),
+            appendSystemPrompt: dispatcherPrompt + planSuffix
         };
-        if (config.model) {
-            relayEnv.ANTHROPIC_MODEL = config.model;
+
+        // 按需专家方案：expert 不再常驻 CLI，按需通过 ask_expert MCP 工具触发。
+        // 这里保留旧 buildRoutedModeConfig 调用路径以便兼容历史 caller，但 normal CLI
+        // 才是唯一会被启动的常驻进程。
+        const expert = expertPromptOverride.length > 0
+            ? this.buildRoutedModeConfig(
+                baseConfig,
+                baseConfig.expertMode,
+                'expert',
+                expertPromptOverride,
+                LEGACY_EXPERT_APPEND_SYSTEM_PROMPT
+            )
+            : undefined;
+        const plan = this.buildRoutedModeConfig(
+            baseConfig,
+            baseConfig.planMode,
+            'plan',
+            planPromptOverride,
+            DEFAULT_PLAN_APPEND_SYSTEM_PROMPT
+        );
+        const review = this.buildRoutedModeConfig(
+            baseConfig,
+            baseConfig.reviewMode,
+            'review',
+            reviewPromptOverride,
+            DEFAULT_REVIEW_APPEND_SYSTEM_PROMPT
+        );
+
+        return { normal, expert, plan, review };
+    }
+
+    /**
+     * 派生「双 CLI 路由」兼容配置。
+     *
+     * @param relayPort 本地 HTTP 中转服务实际监听端口。
+     * @returns 已派生好的 normal / expert 配置，附带 plan / review 兼容字段。
+     */
+    public async getDualConfigsWithRelayEnv(relayPort: number): Promise<{
+        normal: ChatCliConfig;
+        expert: ChatCliConfig | undefined;
+        plan: ChatCliConfig | undefined;
+        review: ChatCliConfig | undefined;
+    }> {
+        return this.getRoutedConfigsWithRelayEnv(relayPort);
+    }
+
+    /**
+     * 构造单个非 normal 路由模型的 CLI 配置。
+     *
+     * @param baseConfig 已注入 relay env 的基础配置。
+     * @param selection 路由模型配置。
+     * @param roleEnvValue 注入给 relay 的角色值。
+     * @param promptOverride 用户配置的 system prompt 覆盖。
+     * @param defaultPrompt 默认 system prompt。
+     * @returns 路由 CLI 配置；未启用或模型为空时返回 undefined。
+     */
+    private buildRoutedModeConfig(
+        baseConfig: ChatCliConfig,
+        selection: ChatCliConfig['expertMode'],
+        route: ChatRoute,
+        promptOverride: string,
+        defaultPrompt: string
+    ): ChatCliConfig | undefined {
+        if (!selection?.enabled || !selection.model) {
+            return undefined;
         }
+        const modelId = selection.model;
         return {
-            ...config,
+            ...baseConfig,
+            model: modelId,
             cliEnv: {
-                ...config.cliEnv,
-                ...relayEnv
-            }
+                ...this.withRelayRoute(baseConfig.cliEnv, route),
+                ANTHROPIC_MODEL: modelId
+            },
+            mcpServers: stripExpertServerFromMcp(baseConfig.mcpServers),
+            strictMcpConfig: true,
+            appendSystemPrompt: promptOverride.length > 0 ? promptOverride : defaultPrompt
         };
     }
 
@@ -351,14 +589,15 @@ export class ChatCliConfigService {
      * 由 Relay 根据 `providerId/modelId` 在服务端读取并转发。
      *
      * @param relayPort 本地 HTTP 中转服务实际监听端口。
+     * @param route 当前 CLI 路由。
      * @returns 适合合并进 child_process.spawn env 的环境变量字典。
      */
-    private resolveRelayEnv(relayPort: number): Record<string, string> {
+    private resolveRelayEnv(relayPort: number, route: ChatRoute): Record<string, string> {
         const current = this.configManager?.getCurrentModel();
         const modelId = current?.providerId && current.modelId
             ? this.buildRoutedModelId(current.providerId, current.modelId)
             : undefined;
-        return this.buildRelayEnv(relayPort, modelId);
+        return this.buildRelayEnv(relayPort, modelId, route);
     }
 
     /**
@@ -379,11 +618,11 @@ export class ChatCliConfigService {
      * @param modelId 当前中转模型 ID，格式为 `providerId/modelId`。
      * @returns 环境变量字典。
      */
-    private buildRelayEnv(relayPort: number, modelId: string | undefined): Record<string, string> {
+    private buildRelayEnv(relayPort: number, modelId: string | undefined, route: ChatRoute): Record<string, string> {
         const env: Record<string, string> = {
             CLAUDE_CODE_SKIP_AUTH_LOGIN: '1',
             CLAUDE_CODE_SKIP_MODEL_VALIDATION: '1',
-            ANTHROPIC_BASE_URL: `http://127.0.0.1:${relayPort}`,
+            ANTHROPIC_BASE_URL: `http://127.0.0.1:${relayPort}/${route}`,
             ANTHROPIC_AUTH_TOKEN: 'claude-code-relay',
             ANTHROPIC_API_KEY: 'claude-code-relay'
         };
@@ -391,6 +630,22 @@ export class ChatCliConfigService {
             env.ANTHROPIC_MODEL = modelId;
         }
         return env;
+    }
+
+    /**
+     * 将已注入的 Relay 环境变量重新绑定到指定 CLI route path。
+     *
+     * @param env 基础 CLI 环境变量。
+     * @param route 目标 CLI 路由。
+     * @returns 带 route-specific `ANTHROPIC_BASE_URL` 的环境变量。
+     */
+    private withRelayRoute(env: Record<string, string>, route: ChatRoute): Record<string, string> {
+        const baseUrl = env.ANTHROPIC_BASE_URL || '';
+        const routedBaseUrl = baseUrl.replace(/\/(normal|expert|plan|review)$/, '');
+        return {
+            ...env,
+            ANTHROPIC_BASE_URL: `${routedBaseUrl}/${route}`
+        };
     }
 
     /**
@@ -544,9 +799,69 @@ export class ChatCliConfigService {
         if (!includeVscodeMcpJson) return extensionServers;
         const workspaceFolder = workspaceFolderResolver.resolve();
         const results = loadAllVscodeMcpJsons(workspaceFolder);
-        logMcpJsonLoadResults(results);
         const workspaceServers = results.find((item) => item.source === 'workspace')?.servers;
         const userServers = results.find((item) => item.source === 'user')?.servers;
         return mergeMcpServers(extensionServers, workspaceServers, userServers);
     }
+}
+
+/**
+ * 从 mcpServers 字典中剥除内置 `llsExpert` server。
+ *
+ * 双 CLI 路由方案下旧 expert MCP 链路已废弃，但用户的 settings.json /
+ * .vscode/mcp.json 中可能仍残留同名条目。本函数兜底剥除，防止 Claude CLI
+ * 试图启动一条已不存在的 stdio 子进程。
+ *
+ * 若结果为空对象则返回 `undefined`，保持 `ChatCliConfig.mcpServers` 字段
+ * 「空即省略」的语义（避免下游 cliProcess 拼出 `--mcp-config '{"mcpServers":{}}'`）。
+ *
+ * @param mcpServers 原始 mcpServers 字典（可能为 undefined）。
+ * @returns 已剥除 `llsExpert` 的新字典；为空时返回 undefined。
+ */
+function stripExpertServerFromMcp(
+    mcpServers: ChatCliConfig['mcpServers']
+): ChatCliConfig['mcpServers'] {
+    if (!mcpServers) {
+        return undefined;
+    }
+    const next: NonNullable<ChatCliConfig['mcpServers']> = {};
+    for (const [name, server] of Object.entries(mcpServers)) {
+        if (name === 'llsExpert') continue;
+        next[name] = server;
+    }
+    return Object.keys(next).length > 0 ? next : undefined;
+}
+
+/**
+ * 按需专家方案下，根据专家配置是否可用，向 mcpServers 字典注入 askExpert MCP server。
+ *
+ * 注入策略：
+ * - `expertAvailable=true`：增加一个 stdio 类型的 server，命令由扩展宿主进程通过
+ *   `process.execPath`（Node 可执行路径） + 一段内嵌脚本启动；实际的 MCP server
+ *   实现位于 `src/expertMode/askExpertMcpServer.ts`，由 extension.ts 在
+ *   activate 时通过另一个机制（如直接 ChildProcess.fork）启动并接管 stdio。
+ * - `expertAvailable=false`：不注入，主模型也就看不到 `ask_expert` 工具，提示词中
+ *   关于专家的段落会被自然忽略。
+ *
+ * 该函数同时会先调用 {@link stripExpertServerFromMcp} 兜底剥除历史残留。
+ */
+function injectAskExpertMcpServer(
+    mcpServers: ChatCliConfig['mcpServers'],
+    expertAvailable: boolean
+): ChatCliConfig['mcpServers'] {
+    const cleaned = stripExpertServerFromMcp(mcpServers);
+    if (!expertAvailable) {
+        return cleaned;
+    }
+    const next: NonNullable<ChatCliConfig['mcpServers']> = { ...(cleaned ?? {}) };
+    if (!next[ASK_EXPERT_MCP_SERVER_NAME]) {
+        // 由 extension.ts 在创建子进程时填充真实 command / args / env；
+        // 这里只占位以便 Claude CLI 能在 tools/list 阶段感知到该 server。
+        next[ASK_EXPERT_MCP_SERVER_NAME] = {
+            type: 'stdio',
+            command: process.execPath,
+            args: ['__LLS_ASK_EXPERT_PLACEHOLDER__']
+        };
+    }
+    return next;
 }

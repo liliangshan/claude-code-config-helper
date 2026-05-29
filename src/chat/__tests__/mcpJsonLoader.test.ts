@@ -16,12 +16,18 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import {
+// mcpJsonLoader 顶层 `import * as vscode from 'vscode'`，必须先装好 stub 再 require。
+import { installVscodeStub } from './testUtils/vscodeStub';
+installVscodeStub({ values: { claudeCodeConfigHelper: {} } });
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const mcpJsonLoaderModule = require('../cli/mcpJsonLoader') as typeof import('../cli/mcpJsonLoader');
+const {
     loadMcpJsonFile,
     mergeMcpServers,
     resolveUserMcpJsonPath,
     resolveWorkspaceMcpJsonPath
-} from '../cli/mcpJsonLoader';
+} = mcpJsonLoaderModule;
 
 /**
  * 在系统临时目录里创建一个用例隔离子目录。

@@ -265,7 +265,14 @@ export class ConfigManager implements vscode.Disposable {
         const providers = this.listProviders();
         const provider = providers.find((item) => item.id === providerId);
         if (!provider) throw new Error(`提供商不存在：${providerId}`);
-        provider.models = models.map((model) => this.normalizeModel(model));
+        const previousById = new Map(provider.models.map((model) => [model.modelId, model]));
+        provider.models = models.map((model) => {
+            const previous = previousById.get(model.modelId);
+            return this.normalizeModel({
+                ...model,
+                enabled: previous?.enabled ?? model.enabled
+            });
+        });
         provider.updatedAt = Date.now();
         await this.updateProviders(providers);
     }
@@ -489,9 +496,23 @@ export class ConfigManager implements vscode.Disposable {
             topP: model.topP ?? 1,
             samplingMode: model.samplingMode || 'temperature',
             isUserSelectable: model.isUserSelectable !== false,
+            enabled: model.enabled !== false,
             transformThink: !!model.transformThink,
             preserveReasoningContent: !!model.preserveReasoningContent
         };
+    }
+
+    /**
+     * 判断指定模型是否处于启用状态。
+     *
+     * 兼容旧数据：未显式设置 enabled 字段时视为启用。
+     *
+     * @param model 模型配置。
+     * @returns 模型启用返回 true，被禁用返回 false。
+     */
+    public isModelEnabled(model: ModelConfig | undefined | null): boolean {
+        if (!model) return false;
+        return model.enabled !== false;
     }
 
     /**

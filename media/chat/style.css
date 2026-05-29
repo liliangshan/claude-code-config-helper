@@ -672,6 +672,23 @@ select:focus-visible {
     box-sizing: border-box;
 }
 
+/* Assistant 来源前缀：显示在文本或工具块上方 */
+.assistantSourcePrefix_07S1Yg {
+    display: block;
+    width: fit-content;
+    margin: 0 0 var(--lls-space-1);
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    color: var(--lls-fg-subtle);
+    background: transparent;
+    font-family: var(--lls-mono);
+    font-size: 9px;
+    line-height: 1.25;
+    letter-spacing: 0.02em;
+    user-select: text;
+}
+
 /* Assistant 普通 Markdown 块：单独 class 控制，避免沿用代码块边框造成额外空行感 */
 .assistantMessage_07S1Yg > .markdownRoot_07S1Yg {
     margin: 0 0 var(--lls-space-3);
@@ -1335,33 +1352,6 @@ select:focus-visible {
 
 .toolResultMarkdown_ZUQaOA > .markdownRoot_07S1Yg > :last-child {
     margin-bottom: 0;
-}
-
-.expertToolStreamWrap_07S1Yg {
-    border-color: color-mix(in srgb, var(--lls-accent) 35%, var(--lls-border));
-}
-
-.expertToolStream_07S1Yg {
-    max-height: 520px;
-}
-
-.expertToolStreamLine_07S1Yg {
-    margin: 0 0 var(--lls-space-2) 0;
-}
-
-.expertToolStreamLine_07S1Yg:last-child {
-    margin-bottom: 0;
-}
-
-.expertToolStreamLine_tool_call_07S1Yg,
-.expertToolStreamLine_tool_result_07S1Yg {
-    color: var(--lls-fg-muted);
-    font-size: var(--lls-font-sm);
-}
-
-.expertToolStreamLine_error_07S1Yg,
-.expertToolStreamLine_cancelled_07S1Yg {
-    color: var(--vscode-errorForeground, #f85149);
 }
 
 /* Diff 块 */
@@ -2730,137 +2720,6 @@ body.vscode-high-contrast .ask-modal__custom-input {
 }
 
 /* ========================================================================
- * Expert mode 折叠面板（ExpertPanel）
- * 详见 media/chat/main.js 中 handleExpertEvent / ensureExpertPanel。
- * ====================================================================== */
-.expertPanel_07S1Yg {
-    border: 1px solid var(--lls-border, rgba(128, 128, 128, 0.3));
-    border-radius: 6px;
-    margin: 6px 0 12px 0;
-    background: var(--vscode-editorWidget-background, rgba(127, 127, 127, 0.05));
-    overflow: hidden;
-    font-size: 0.92em;
-}
-.expertPanelRunning_07S1Yg {
-    border-color: var(--vscode-charts-blue, #3794ff);
-}
-.expertPanelDone_07S1Yg {
-    border-color: var(--vscode-charts-green, #4caf50);
-}
-.expertPanelError_07S1Yg {
-    border-color: var(--vscode-charts-red, #f44336);
-}
-.expertPanelCancelled_07S1Yg {
-    border-color: var(--vscode-charts-orange, #ff9800);
-}
-.expertPanelHeader_07S1Yg {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    cursor: pointer;
-    user-select: none;
-    background: var(--vscode-editorHoverWidget-background, rgba(127, 127, 127, 0.08));
-    border-bottom: 1px solid var(--lls-border, rgba(128, 128, 128, 0.2));
-}
-.expertPanelTitle_07S1Yg {
-    font-weight: 600;
-}
-.expertPanelModel_07S1Yg {
-    color: var(--vscode-descriptionForeground, #888);
-    font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 0.85em;
-}
-.expertPanelStatus_07S1Yg {
-    margin-left: auto;
-    color: var(--vscode-descriptionForeground, #888);
-    font-style: italic;
-}
-.expertPanelToggle_07S1Yg {
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    color: inherit;
-    padding: 0 4px;
-    font-size: 1.1em;
-}
-.expertPanelBody_07S1Yg {
-    padding: 8px 10px;
-    max-height: 480px;
-    overflow-y: auto;
-}
-.expertPanelCollapsed_07S1Yg .expertPanelBody_07S1Yg {
-    display: none;
-    border-top: none;
-}
-.expertPanelCollapsed_07S1Yg .expertPanelHeader_07S1Yg {
-    border-bottom: none;
-}
-.expertPanelQuestion_07S1Yg {
-    padding: 6px 8px;
-    margin-bottom: 8px;
-    background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.1));
-    border-left: 3px solid var(--vscode-textLink-foreground, #3794ff);
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-size: 0.95em;
-}
-.expertPanelEvents_07S1Yg {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-.expertEvent_07S1Yg {
-    padding: 4px 6px;
-    border-left: 2px solid transparent;
-}
-.expertEventCompact_07S1Yg {
-    padding: 2px 6px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.expertEvent_analysis_07S1Yg {
-    border-left-color: var(--vscode-charts-blue, #3794ff);
-}
-.expertEvent_tool_call_07S1Yg {
-    border-left-color: var(--vscode-charts-purple, #b48ead);
-}
-.expertEvent_tool_result_07S1Yg {
-    border-left-color: var(--vscode-charts-yellow, #d7ba7d);
-}
-.expertEvent_final_07S1Yg {
-    border-left-color: var(--vscode-charts-green, #4caf50);
-}
-.expertEvent_error_07S1Yg {
-    border-left-color: var(--vscode-charts-red, #f44336);
-}
-.expertEvent_cancelled_07S1Yg {
-    border-left-color: var(--vscode-charts-orange, #ff9800);
-}
-.expertEventLabel_07S1Yg {
-    display: inline-block;
-    font-weight: 600;
-    font-size: 0.85em;
-    color: var(--vscode-descriptionForeground, #888);
-    margin-bottom: 2px;
-}
-.expertEventCompact_07S1Yg .expertEventLabel_07S1Yg {
-    display: block;
-    margin-bottom: 0;
-    color: var(--vscode-foreground, inherit);
-    font-family: var(--vscode-editor-font-family, monospace);
-    font-weight: 500;
-}
-.expertEventDetail_07S1Yg {
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-family: var(--vscode-editor-font-family, monospace);
-    font-size: 0.88em;
-    line-height: 1.45;
-}
-
-/* ===========================================================================
  * 2.0.11 视觉刷新：聊天显示区美化（不影响 footer / 输入区）
  *
  * 布局：每一条助手消息 = 左侧伪元素时间线轴（100%高） + 右侧内容
@@ -3126,3 +2985,211 @@ body.vscode-high-contrast .ask-modal__custom-input {
     border-bottom-color: color-mix(in srgb, var(--lls-border) 70%, transparent);
 }
 .chat-header h1 { font-weight: 500; letter-spacing: 0.4px; opacity: 0.9; }
+
+/* ---------- 顶部模型条（普通 · 专家 + 齿轮）---------- */
+.chat-models {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--lls-space-2);
+    margin-top: var(--lls-space-1);
+    font-size: var(--lls-font-xs);
+    color: var(--lls-fg-muted);
+    flex-wrap: wrap;
+}
+.chat-models__item { display: inline-flex; align-items: baseline; gap: 4px; }
+.chat-models__label { color: var(--lls-fg-subtle); }
+.chat-models__name {
+    color: var(--lls-fg);
+    font-weight: 500;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+}
+.chat-models__name--off { color: var(--lls-fg-subtle); font-weight: 400; }
+.chat-models__sep { color: var(--lls-fg-subtle); }
+.chat-models__edit {
+    margin-left: var(--lls-space-1);
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+    border-radius: var(--lls-radius-sm);
+    background: transparent;
+    color: var(--lls-fg-muted);
+    cursor: pointer;
+    transition: background var(--lls-transition-fast), color var(--lls-transition-fast), border-color var(--lls-transition-fast);
+}
+.chat-models__edit:hover {
+    background: var(--lls-bg-hover);
+    color: var(--lls-fg);
+    border-color: var(--lls-border);
+}
+
+/* ---------- 模型选择弹窗（原生 <dialog>） ---------- */
+.model-picker {
+    width: min(520px, 92vw);
+    max-height: 80vh;
+    padding: 0;
+    border: 1px solid var(--lls-border-strong, var(--vscode-focusBorder, #3794ff));
+    border-radius: 12px;
+    background: var(--lls-bg-elevated, #252526);
+    color: var(--lls-fg);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+.model-picker::backdrop {
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(2px);
+}
+.model-picker__form {
+    display: flex;
+    flex-direction: column;
+    max-height: 80vh;
+}
+.model-picker__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--lls-space-3);
+    padding: var(--lls-space-3) var(--lls-space-4);
+    border-bottom: 1px solid var(--lls-border);
+}
+.model-picker__header h2 {
+    margin: 0;
+    font-size: var(--lls-font-md);
+    font-weight: 600;
+    color: var(--lls-fg);
+}
+.model-picker__close {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--lls-fg-muted);
+    border: none;
+    font-size: var(--lls-font-lg);
+    cursor: pointer;
+}
+.model-picker__close:hover {
+    background: var(--lls-bg-hover);
+    color: var(--lls-fg);
+}
+.model-picker__section {
+    padding: var(--lls-space-3) var(--lls-space-4);
+    border-bottom: 1px solid color-mix(in srgb, var(--lls-border) 60%, transparent);
+}
+.model-picker__section:last-of-type { border-bottom: none; }
+.model-picker__section h3 {
+    margin: 0 0 var(--lls-space-2);
+    font-size: var(--lls-font-sm);
+    font-weight: 500;
+    color: var(--lls-fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.model-picker__list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 220px;
+    overflow-y: auto;
+}
+.model-picker__select {
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: var(--lls-radius-sm);
+    border: 1px solid var(--lls-border);
+    background: var(--vscode-dropdown-background, var(--lls-bg));
+    color: var(--vscode-dropdown-foreground, var(--lls-fg));
+    font-size: var(--lls-font-sm);
+}
+.model-picker__select:focus {
+    outline: 1px solid var(--vscode-focusBorder, #3794ff);
+    outline-offset: -1px;
+}
+.model-picker__option {
+    display: flex;
+    align-items: center;
+    gap: var(--lls-space-2);
+    padding: 6px 8px;
+    border-radius: var(--lls-radius-sm);
+    cursor: pointer;
+    color: var(--lls-fg);
+    transition: background var(--lls-transition-fast);
+}
+.model-picker__option:hover { background: var(--lls-bg-hover); }
+.model-picker__option input[type="radio"] {
+    flex: 0 0 auto;
+    accent-color: var(--vscode-focusBorder, #3794ff);
+}
+.model-picker__option-text {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--lls-font-sm);
+}
+.model-picker__option--close .model-picker__option-text { color: var(--lls-fg-muted); }
+.model-picker__empty {
+    padding: var(--lls-space-2);
+    color: var(--lls-fg-subtle);
+    font-size: var(--lls-font-sm);
+    font-style: italic;
+}
+.model-picker__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--lls-space-2);
+    padding: var(--lls-space-3) var(--lls-space-4);
+    border-top: 1px solid var(--lls-border);
+    background: color-mix(in srgb, var(--lls-bg-elevated, #252526) 92%, black);
+}
+.model-picker__cancel,
+.model-picker__save {
+    height: 30px;
+    padding: 0 var(--lls-space-3);
+    border-radius: var(--lls-radius-sm);
+    border: 1px solid var(--lls-border);
+    background: transparent;
+    color: var(--lls-fg);
+    font-size: var(--lls-font-sm);
+    cursor: pointer;
+    transition: background var(--lls-transition-fast), border-color var(--lls-transition-fast);
+}
+.model-picker__cancel:hover { background: var(--lls-bg-hover); }
+.model-picker__save {
+    background: var(--vscode-button-background, #0e639c);
+    border-color: transparent;
+    color: var(--vscode-button-foreground, #ffffff);
+}
+.model-picker__save:hover { filter: brightness(1.08); }
+
+.composer-model-chip {
+    height: 22px;
+    padding: 0 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: 11px;
+    border: 1px solid var(--lls-border);
+    background: transparent;
+    color: var(--lls-fg-muted);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    max-width: 200px;
+    transition: background var(--lls-transition-fast), color var(--lls-transition-fast), border-color var(--lls-transition-fast);
+}
+.composer-model-chip__label { color: var(--lls-fg-subtle); }
+.composer-model-chip__name {
+    color: var(--lls-fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 140px;
+}
+.composer-model-chip__name--off { color: var(--lls-fg-subtle); }
+.composer-model-chip:hover { background: var(--lls-bg-hover); color: var(--lls-fg); border-color: var(--lls-border-strong, var(--vscode-focusBorder, #3794ff)); }

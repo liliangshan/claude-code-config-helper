@@ -6,22 +6,43 @@ import * as os from 'os';
 
 import { StreamJsonCliAdapter, type ParsedCliEvent, type ToolPermissionRequestEvent } from './chat/cli/cliAdapter';
 import { ChatCliConfigService } from './chat/cli/cliConfig';
+import type { ChatCliConfig } from './chat/cli/types';
 import { CliProcess } from './chat/cli/cliProcess';
 import { CliResolver } from './chat/cli/cliResolver';
 import { ChatCliSessionStore } from './chat/cli/sessionStore';
 import { ChatViewHost } from './chat/chatViewHost';
-import type { ChatComposerAttachment, ChatMessage, ChatModelOption, ChatQuickPermissionMode, ChatSegment, ChatUiLanguage, LlsTaskSnapshotPayload, WebviewToExtension } from './chat/protocol';
+import {
+    startsWithExpertPrefix,
+    stripExpertPrefix
+} from './expertMode/expertTriggers';
+import { resolvePlanDoneRoutingAction } from './chat/routing/planReviewWorkflow';
+import { parsePlanReviewToken } from './chat/routing/planReviewHandoff';
+import type { ChatComposerAttachment, ChatMessage, ChatModelOption, ChatQuickPermissionMode, ChatRoutedModelSelection, ChatRoute, ChatSegment, ChatUiLanguage, LlsTaskSnapshotPayload, WebviewToExtension } from './chat/protocol';
 import { ConfigManager } from './configManager';
 import {
+    CHAT_COMPACTION_MODE_GLOBAL_ENABLED_KEY,
+    CHAT_COMPACTION_MODE_GLOBAL_MODEL_KEY,
+    CHAT_COMPACTION_MODE_PROJECT_ENABLED_KEY,
+    CHAT_COMPACTION_MODE_PROJECT_MODEL_KEY,
     CHAT_EXPERT_MODE_GLOBAL_ENABLED_KEY,
     CHAT_EXPERT_MODE_GLOBAL_MODEL_KEY,
     CHAT_EXPERT_MODE_PROJECT_ENABLED_KEY,
     CHAT_EXPERT_MODE_PROJECT_MODEL_KEY,
+    CHAT_PLAN_MODE_GLOBAL_ENABLED_KEY,
+    CHAT_PLAN_MODE_GLOBAL_MODEL_KEY,
+    CHAT_PLAN_MODE_PROJECT_ENABLED_KEY,
+    CHAT_PLAN_MODE_PROJECT_MODEL_KEY,
+    CHAT_REVIEW_MODE_GLOBAL_ENABLED_KEY,
+    CHAT_REVIEW_MODE_GLOBAL_MODEL_KEY,
+    CHAT_REVIEW_MODE_PROJECT_ENABLED_KEY,
+    CHAT_REVIEW_MODE_PROJECT_MODEL_KEY,
     CHAT_SECONDARY_VIEW_ID,
     COMMANDS,
     CONFIG_NAMESPACE,
     PROVIDERS_VIEW_ID
 } from './constants';
+import { readCompactionConfigFromVscode, readPlanConfigFromVscode, readReviewConfigFromVscode, readExpertSubturnOptions } from './expertMode/expertConfig';
+import { ExpertSubturnService } from './expertMode/expertSubturnService';
 import { Logger } from './logger';
 import { AutoContinueScheduler } from './llsTask/autoContinue';
 import { getLlsCcaiTaskTexts } from './llsTask/messages';
@@ -34,13 +55,11 @@ import { OpenAIChatProxyAdapter } from './relay/openaiChatProxy';
 import { OpenAIResponsesProxyAdapter } from './relay/openaiResponsesProxy';
 import { createRelayRouter } from './relay/router';
 import { RelayServer } from './relay/server';
-import { CompactionClient } from './relay/tokenBudget/compactor';
-import { TokenBudgetService, type CompactionState, type SeedInjector, type SessionResetter } from './relay/tokenBudget/service';
+import { TokenBudgetService, type CompactionState } from './relay/tokenBudget/service';
 import type { UpstreamTimeoutKind } from './relay/upstreamTimeouts';
 import type { UsageSink } from './relay/usageReporter';
-import { ExpertRunnerService } from './expertMode/expertRunnerService';
 import { SettingsWriter } from './settingsWriter';
-import type { ResolvedAppLanguage } from './types';
+import type { ResolvedAppLanguage, ProviderConfigWithoutSecrets, ModelConfig } from './types';
 import { ConfigWebviewViewProvider } from './views/configView';
 import { SharedOpenApiCopilotSettingsPanel } from './views/sharedSettingsView';
 
@@ -62,15 +81,8 @@ let autoContinueScheduler: AutoContinueScheduler | undefined;
 /** 模块级本地 HTTP 中转服务实例，一个扩展宿主/工作区使用一个随机空闲端口。 */
 let relayServer: RelayServer | undefined;
 
-/**
- * 模块级 ExpertRunnerService 实例引用。
- *
- * 由 activate 阶段在 RelayRouter 装配时同步创建，并保存到此处，便于
- * {@link syncExpertRelayEnvIfPossible} 在 Relay 启动后读取它的 authToken
- * 同步给 ChatCliConfigService。deactivate 时不需要单独释放（其内部不持
- * 有长期资源）。
- */
-let expertRunnerServiceRef: ExpertRunnerService | undefined;
+/** 模块级 ExpertSubturnService 实例（按需专家方案）。 */
+let expertSubturnService: ExpertSubturnService | undefined;
 
 /** 模块级 Chat CLI 配置服务实例。 */
 let chatCliConfigService: ChatCliConfigService | undefined;
@@ -78,17 +90,104 @@ let chatCliConfigService: ChatCliConfigService | undefined;
 /** 模块级 Chat CLI 路径解析器实例。 */
 let cliResolver: CliResolver | undefined;
 
-/** 模块级 Chat CLI 长连接进程实例。 */
-let cliProcess: CliProcess | undefined;
+/**
+ * 模块级 Chat CLI 长连接进程实例（普通任务模型 / dispatcher）。
+ *
+ * 双 CLI 路由方案下，dispatcher 承担轻量工程操作（编译、打包、git、PR、上下文压缩），
+ * 遇到复杂任务必须以 `@llsExpert` 文本切路由触发 expertCliProcess。
+ */
+let normalCliProcess: CliProcess | undefined;
+
+/**
+ * 模块级 Chat CLI 长连接进程实例（专家任务模型）。
+ *
+ * 仅在 `expertMode.enabled === true` 且选中了具体专家模型时启动；
+ * 由 `activeRoute` 切到 `'expert'` 后承接真正的复杂任务。未配置时为 undefined，
+ * 用户主动以 `@llsExpert` 触发时会被识别为「专家未配置」并提示。
+ */
+let expertCliProcess: CliProcess | undefined;
+
+/** 模块级 Chat CLI 长连接进程实例（方案任务模型，按需启动）。 */
+let planCliProcess: CliProcess | undefined;
+
+/** 模块级 Chat CLI 长连接进程实例（审查任务模型，按需启动）。 */
+let reviewCliProcess: CliProcess | undefined;
 
 /** 模块级 Chat CLI session_id 项目持久化存储。 */
 let chatCliSessionStore: ChatCliSessionStore | undefined;
 
-/** 模块级 Chat CLI stream-json 协议适配器实例。 */
-let streamJsonCliAdapter: StreamJsonCliAdapter | undefined;
+/**
+ * 模块级 Chat CLI stream-json 协议适配器实例（normal CLI 对应）。
+ *
+ * 由 `rebuildNormalAdapter` 在每次 normal CLI 启动 / 重启后重建；
+ * 其上的 ParsedCliEvent 流是 `@llsExpert` 自动路由检测的输入源。
+ */
+let normalStreamJsonAdapter: StreamJsonCliAdapter | undefined;
 
-/** 模块级 Chat CLI 适配器事件订阅。 */
+/**
+ * 模块级 Chat CLI stream-json 协议适配器实例（expert CLI 对应）。
+ *
+ * 由 `rebuildExpertAdapter` 在 expert CLI 启动 / 重启后重建；
+ * 其上的事件不参与 `@llsExpert` 路由检测，避免循环触发。
+ */
+let expertStreamJsonAdapter: StreamJsonCliAdapter | undefined;
+
+/** 模块级 Chat CLI stream-json 协议适配器实例（plan CLI 对应）。 */
+let planStreamJsonAdapter: StreamJsonCliAdapter | undefined;
+
+/** 模块级 Chat CLI stream-json 协议适配器实例（review CLI 对应）。 */
+let reviewStreamJsonAdapter: StreamJsonCliAdapter | undefined;
+
+/** normal CLI 适配器事件订阅。 */
 let streamJsonCliAdapterSubscription: vscode.Disposable | undefined;
+
+/** expert CLI 适配器事件订阅。 */
+let expertStreamJsonAdapterSubscription: vscode.Disposable | undefined;
+
+/** plan CLI 适配器事件订阅。 */
+let planStreamJsonAdapterSubscription: vscode.Disposable | undefined;
+
+/** review CLI 适配器事件订阅。 */
+let reviewStreamJsonAdapterSubscription: vscode.Disposable | undefined;
+
+/** normal CLI 进程状态订阅。 */
+let normalCliStatusSubscription: vscode.Disposable | undefined;
+
+/** normal CLI 进程退出订阅。 */
+let normalCliExitSubscription: vscode.Disposable | undefined;
+
+/** expert CLI 进程状态订阅。 */
+let expertCliStatusSubscription: vscode.Disposable | undefined;
+
+/** expert CLI 进程退出订阅。 */
+let expertCliExitSubscription: vscode.Disposable | undefined;
+
+/** plan CLI 进程状态订阅。 */
+let planCliStatusSubscription: vscode.Disposable | undefined;
+
+/** plan CLI 进程退出订阅。 */
+let planCliExitSubscription: vscode.Disposable | undefined;
+
+/** review CLI 进程状态订阅。 */
+let reviewCliStatusSubscription: vscode.Disposable | undefined;
+
+/** review CLI 进程退出订阅。 */
+let reviewCliExitSubscription: vscode.Disposable | undefined;
+
+/** plan CLI 按需启动配置缓存。 */
+let planLaunchConfigCache: ChatCliConfig | undefined;
+
+/** review CLI 按需启动配置缓存。 */
+let reviewLaunchConfigCache: ChatCliConfig | undefined;
+
+/** plan CLI 闲置释放计时器。 */
+let planIdleDisposeTimer: NodeJS.Timeout | undefined;
+
+/** review CLI 闲置释放计时器。 */
+let reviewIdleDisposeTimer: NodeJS.Timeout | undefined;
+
+/** plan/review workflow 结束后保留进程的闲置窗口。 */
+const PLAN_REVIEW_IDLE_DISPOSE_MS = 10 * 60 * 1000;
 
 /** 模块级 Chat WebviewPanel 宿主实例。 */
 let chatViewHost: ChatViewHost | undefined;
@@ -152,11 +251,28 @@ let chatSessionPersistTimer: NodeJS.Timeout | undefined;
 /** 当前正在接收流式输出的 assistant 消息 ID。 */
 let activeAssistantMessageId: string | undefined;
 
-/** 最近一次主对话 ask_expert 工具调用的上下文，用于专家实时事件挂载。 */
-let pendingExpertToolContext: { parentMessageId: string; callId: string; toolSegmentId: string } | undefined;
-
 /** 最近一次 Chat CLI 是否由用户主动取消，用于避免误报异常退出。 */
 let chatCliCancelRequested = false;
+
+/**
+ * expert CLI 是否正在执行任务（已发起 user 消息且尚未收到本轮 done/error）。
+ *
+ * 自动交棒后置为 true；expert 本轮结束后置为 false。下一条用户消息抵达时如果
+ * expert 已闲置，则把 activeRoute 自动回退到 normal，避免长期锁定在专家。
+ */
+let expertBusy = false;
+let planBusy = false;
+let reviewBusy = false;
+
+/** normal CLI 是否正在执行任务（已发起 user 消息且尚未收到本轮 done/error）。 */
+let normalBusy = false;
+let normalRelayActiveCount = 0;
+let expertRelayActiveCount = 0;
+let planRelayActiveCount = 0;
+let reviewRelayActiveCount = 0;
+
+/** 按 CLI 来源累计当前一轮 assistant 文本，用于 done 时记录最终回复与检测专家交棒。 */
+const assistantTurnTextBySource: Record<ChatRoute, string> = { normal: '', expert: '', plan: '', review: '' };
 
 /** 最近一次有效的 Chat 当前编辑器上下文，焦点进入 Webview 时用于保留默认文件。 */
 let lastChatEditorAttachment: ChatComposerAttachment | undefined;
@@ -276,34 +392,76 @@ async function ensureRelayServerStarted(): Promise<number> {
     if (!relayServer) throw new Error('本地中转服务尚未初始化');
     const existing = relayServer.getActualPort();
     if (existing) {
-        syncExpertRelayEnvIfPossible(existing);
         return existing;
     }
-    const port = await relayServer.start();
-    syncExpertRelayEnvIfPossible(port);
-    return port;
+    return relayServer.start();
 }
 
 /**
- * 把当前 Relay 实际端口 + 鉴权 token 同步到 `ChatCliConfigService`。
+ * 获取（或惰性创建）模块级 ExpertSubturnService 单例。
  *
- * 这是「专家模式回环链路」拼接的关键一步：只有当 ChatCliConfigService
- * 持有相同的 baseUrl + token，下一次 `getConfig()` 才会把它们写入
- * expertMcpServer 子进程的 env，让其能反向 fetch 回 `/__expert/run`。
- *
- * 任何环节缺失（chatCliConfigService 未初始化、expertRunnerService 未创建）
- * 都静默忽略——专家模式只是「增强」，不应阻断主对话。
- *
- * @param port Relay 实际监听端口。
+ * 该服务在第一次需要时按需创建，并把 Relay 端口、专家模型 id 与 sub-turn 配置
+ * 作为闭包依赖项注入。后续 dispose 在 deactivate 中统一处理。
  */
-function syncExpertRelayEnvIfPossible(port: number): void {
-    try {
-        if (!chatCliConfigService || !expertRunnerServiceRef) return;
-        const baseUrl = `http://127.0.0.1:${port}`;
-        chatCliConfigService.setExpertRelayEnv(baseUrl, expertRunnerServiceRef.getAuthToken());
-    } catch (err) {
-        Logger.warn(
-            `同步专家 Relay 环境变量失败：${err instanceof Error ? err.message : String(err)}`
+function getOrCreateExpertSubturnService(): ExpertSubturnService {
+    if (!expertSubturnService) {
+        expertSubturnService = new ExpertSubturnService({
+            getRelayPort: () => relayServer?.getActualPort(),
+            getExpertModel: () => readEffectiveExpertModelSelection().modelId,
+            getOptions: () => readExpertSubturnOptions(),
+            getAuthToken: () => 'claude-code-relay'
+        });
+    }
+    return expertSubturnService;
+}
+
+/**
+ * 处理用户级 @llsExpert / /expert 前缀触发的专家 sub-turn。
+ *
+ * 按需专家方案下，用户主动触发的专家请求不再走常驻 expert CLI，而是直接调用
+ * {@link ExpertSubturnService.run}：
+ *
+ * - 失败 / 专家未配置：渲染一段错误说明，并提示用户回到 normal 路由继续。
+ * - 成功：根据 `chat.expert.userTriggerMode` 决定是否回写主 CLI（tool_result 模式）
+ *   或直接以 assistant segments 展示给用户（direct 模式）。
+ *
+ * @param question 已剥除前缀的纯净问题文本。
+ * @param options.hidden 是否抑制 assistant 区域创建（保持沉默执行）。
+ */
+async function runUserTriggeredExpertSubturn(
+    question: string,
+    options: { hidden?: boolean }
+): Promise<void> {
+    await ensureRelayServerStarted();
+    const service = getOrCreateExpertSubturnService();
+    const triggerMode = readExpertSubturnOptions().userTriggerMode;
+    const result = await service.run({ question });
+
+    if (!result.ok) {
+        if (!options.hidden) {
+            await appendAssistantSegments(
+                [{ kind: 'error', text: `\n专家请求失败（${result.failureReason ?? 'error'}）：${result.text}\n` }],
+                true
+            );
+        }
+        return;
+    }
+
+    if (triggerMode === 'tool_result' && normalStreamJsonAdapter) {
+        // tool_result 模式：把专家回答以 user role 的 tool_result 注入主 CLI，
+        // 让主模型自行整合并续写最终答复。
+        const toolUseId = `expert-user-${Date.now()}`;
+        await normalStreamJsonAdapter.sendUserMessage(
+            `[expert advisory] ${result.text}`
+        );
+        void toolUseId;
+        return;
+    }
+
+    if (!options.hidden) {
+        await appendAssistantSegments(
+            [{ kind: 'markdown', text: result.text }],
+            true
         );
     }
 }
@@ -357,6 +515,60 @@ function readEffectiveExpertModelSelection(): EffectiveExpertModelSelection {
 }
 
 /**
+ * 按「项目 > 全局 > 关闭」规则读取方案模型下拉框当前值。
+ */
+function readEffectiveCompactionModelSelection(): ChatRoutedModelSelection {
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    const projectEnabled = getInspectedWorkspaceValue(config.inspect<boolean>(CHAT_COMPACTION_MODE_PROJECT_ENABLED_KEY));
+    const projectModel = (getInspectedWorkspaceValue(config.inspect<string>(CHAT_COMPACTION_MODE_PROJECT_MODEL_KEY)) ?? '').trim();
+    if (projectEnabled === false) return { enabled: false, modelId: '' };
+    if (projectEnabled === true && projectModel.length > 0) return { enabled: true, modelId: projectModel };
+    if (projectModel.length > 0) return { enabled: true, modelId: projectModel };
+
+    const globalEnabled = getInspectedGlobalValue(config.inspect<boolean>(CHAT_COMPACTION_MODE_GLOBAL_ENABLED_KEY));
+    const globalModel = (getInspectedGlobalValue(config.inspect<string>(CHAT_COMPACTION_MODE_GLOBAL_MODEL_KEY)) ?? '').trim();
+    if (globalEnabled === false) return { enabled: false, modelId: '' };
+    if (globalEnabled === true && globalModel.length > 0) return { enabled: true, modelId: globalModel };
+    if (globalModel.length > 0) return { enabled: true, modelId: globalModel };
+    return { enabled: false, modelId: '' };
+}
+
+function readEffectivePlanModelSelection(): ChatRoutedModelSelection {
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    const projectEnabled = getInspectedWorkspaceValue(config.inspect<boolean>(CHAT_PLAN_MODE_PROJECT_ENABLED_KEY));
+    const projectModel = (getInspectedWorkspaceValue(config.inspect<string>(CHAT_PLAN_MODE_PROJECT_MODEL_KEY)) ?? '').trim();
+    if (projectEnabled === false) return { enabled: false, modelId: '' };
+    if (projectEnabled === true && projectModel.length > 0) return { enabled: true, modelId: projectModel };
+    if (projectModel.length > 0) return { enabled: true, modelId: projectModel };
+
+    const globalEnabled = getInspectedGlobalValue(config.inspect<boolean>(CHAT_PLAN_MODE_GLOBAL_ENABLED_KEY));
+    const globalModel = (getInspectedGlobalValue(config.inspect<string>(CHAT_PLAN_MODE_GLOBAL_MODEL_KEY)) ?? '').trim();
+    if (globalEnabled === false) return { enabled: false, modelId: '' };
+    if (globalEnabled === true && globalModel.length > 0) return { enabled: true, modelId: globalModel };
+    if (globalModel.length > 0) return { enabled: true, modelId: globalModel };
+    return { enabled: false, modelId: '' };
+}
+
+/**
+ * 按「项目 > 全局 > 关闭」规则读取审查模型下拉框当前值。
+ */
+function readEffectiveReviewModelSelection(): ChatRoutedModelSelection {
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    const projectEnabled = getInspectedWorkspaceValue(config.inspect<boolean>(CHAT_REVIEW_MODE_PROJECT_ENABLED_KEY));
+    const projectModel = (getInspectedWorkspaceValue(config.inspect<string>(CHAT_REVIEW_MODE_PROJECT_MODEL_KEY)) ?? '').trim();
+    if (projectEnabled === false) return { enabled: false, modelId: '' };
+    if (projectEnabled === true && projectModel.length > 0) return { enabled: true, modelId: projectModel };
+    if (projectModel.length > 0) return { enabled: true, modelId: projectModel };
+
+    const globalEnabled = getInspectedGlobalValue(config.inspect<boolean>(CHAT_REVIEW_MODE_GLOBAL_ENABLED_KEY));
+    const globalModel = (getInspectedGlobalValue(config.inspect<string>(CHAT_REVIEW_MODE_GLOBAL_MODEL_KEY)) ?? '').trim();
+    if (globalEnabled === false) return { enabled: false, modelId: '' };
+    if (globalEnabled === true && globalModel.length > 0) return { enabled: true, modelId: globalModel };
+    if (globalModel.length > 0) return { enabled: true, modelId: globalModel };
+    return { enabled: false, modelId: '' };
+}
+
+/**
  * 保存专家模型下拉框选择，并同步写入项目配置与全局配置。
  *
  * @param modelId 专家模型 ID；空字符串表示关闭专家。
@@ -369,6 +581,49 @@ async function saveExpertModelSelection(modelId: string): Promise<void> {
     await config.update(CHAT_EXPERT_MODE_PROJECT_MODEL_KEY, normalizedModelId, vscode.ConfigurationTarget.Workspace);
     await config.update(CHAT_EXPERT_MODE_GLOBAL_ENABLED_KEY, enabled, vscode.ConfigurationTarget.Global);
     await config.update(CHAT_EXPERT_MODE_GLOBAL_MODEL_KEY, normalizedModelId, vscode.ConfigurationTarget.Global);
+    configManager?.notifyChanged();
+}
+
+/**
+ * 保存方案模型下拉框选择，并同步写入项目配置与全局配置。
+ *
+ * @param modelId 方案模型 ID；空字符串表示关闭方案。
+ */
+async function savePlanModelSelection(modelId: string): Promise<void> {
+    const normalizedModelId = modelId.trim();
+    const enabled = normalizedModelId.length > 0;
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    await config.update(CHAT_PLAN_MODE_PROJECT_ENABLED_KEY, enabled, vscode.ConfigurationTarget.Workspace);
+    await config.update(CHAT_PLAN_MODE_PROJECT_MODEL_KEY, normalizedModelId, vscode.ConfigurationTarget.Workspace);
+    await config.update(CHAT_PLAN_MODE_GLOBAL_ENABLED_KEY, enabled, vscode.ConfigurationTarget.Global);
+    await config.update(CHAT_PLAN_MODE_GLOBAL_MODEL_KEY, normalizedModelId, vscode.ConfigurationTarget.Global);
+    configManager?.notifyChanged();
+}
+
+async function saveCompactionModelSelection(modelId: string): Promise<void> {
+    const normalizedModelId = modelId.trim();
+    const enabled = normalizedModelId.length > 0;
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    await config.update(CHAT_COMPACTION_MODE_PROJECT_ENABLED_KEY, enabled, vscode.ConfigurationTarget.Workspace);
+    await config.update(CHAT_COMPACTION_MODE_PROJECT_MODEL_KEY, normalizedModelId, vscode.ConfigurationTarget.Workspace);
+    await config.update(CHAT_COMPACTION_MODE_GLOBAL_ENABLED_KEY, enabled, vscode.ConfigurationTarget.Global);
+    await config.update(CHAT_COMPACTION_MODE_GLOBAL_MODEL_KEY, normalizedModelId, vscode.ConfigurationTarget.Global);
+    configManager?.notifyChanged();
+}
+
+/**
+ * 保存审查模型下拉框选择，并同步写入项目配置与全局配置。
+ *
+ * @param modelId 审查模型 ID；空字符串表示关闭审查。
+ */
+async function saveReviewModelSelection(modelId: string): Promise<void> {
+    const normalizedModelId = modelId.trim();
+    const enabled = normalizedModelId.length > 0;
+    const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    await config.update(CHAT_REVIEW_MODE_PROJECT_ENABLED_KEY, enabled, vscode.ConfigurationTarget.Workspace);
+    await config.update(CHAT_REVIEW_MODE_PROJECT_MODEL_KEY, normalizedModelId, vscode.ConfigurationTarget.Workspace);
+    await config.update(CHAT_REVIEW_MODE_GLOBAL_ENABLED_KEY, enabled, vscode.ConfigurationTarget.Global);
+    await config.update(CHAT_REVIEW_MODE_GLOBAL_MODEL_KEY, normalizedModelId, vscode.ConfigurationTarget.Global);
     configManager?.notifyChanged();
 }
 
@@ -564,7 +819,10 @@ function sanitizePersistedChatMessages(messages: ChatMessage[]): ChatMessage[] {
             id: message.id,
             role: message.role,
             segments: message.segments,
+            text: message.text,
             pending: !!message.pending,
+            route: message.route === 'expert' || message.route === 'normal' || message.route === 'plan' || message.route === 'review' ? message.route : undefined,
+            modelLabel: typeof message.modelLabel === 'string' && message.modelLabel.trim() ? message.modelLabel : undefined,
             createdAt: typeof message.createdAt === 'number' ? message.createdAt : Date.now()
         }));
 }
@@ -628,7 +886,7 @@ async function showChatSessionPrivacyNoticeIfNeeded(): Promise<void> {
  * 方便用户尽早发现路径或权限问题。
  */
 async function selectChatCli(): Promise<void> {
-    if (!cliResolver || !chatCliConfigService || !cliProcess) return;
+    if (!cliResolver || !chatCliConfigService || !normalCliProcess) return;
     const cliPath = await cliResolver.selectCliPath();
     if (!cliPath) return;
     await startChatCliFromCurrentConfig();
@@ -641,11 +899,102 @@ async function selectChatCli(): Promise<void> {
  * 如果进程尚未启动，则按当前配置和路径选择逻辑启动一个新进程。
  */
 async function restartChatCli(options: { silent?: boolean } = {}): Promise<void> {
-    if (!cliProcess || !chatCliConfigService) return;
+    if (!normalCliProcess || !chatCliConfigService) return;
     chatCliCancelRequested = false;
     await startChatCliFromCurrentConfig({ forceRestart: true });
     if (!options.silent) {
         await showChatToast('success', 'Chat CLI 长连接已重启。');
+    }
+}
+
+async function restartChatRelayAndCli(options: { silent?: boolean } = {}): Promise<void> {
+    if (!normalCliProcess || !chatCliConfigService || !relayServer) return;
+    chatCliCancelRequested = false;
+    clearHttpExpectation('manual_restart');
+    cancelPendingResend('manual_restart');
+
+    const oldPort = relayServer.getActualPort();
+    void appendAssistantSegments(
+        [{
+            kind: 'markdown',
+            text: `\n> 正在停止本地中转 HTTP 服务${typeof oldPort === 'number' ? `（旧端口 ${oldPort}）` : ''}…\n`
+        }],
+        false
+    );
+    try {
+        await relayServer.stop();
+        Logger.info(`手动重启：Relay 已停止${typeof oldPort === 'number' ? `（旧端口 ${oldPort}）` : ''}`);
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        Logger.error(`手动重启：Relay 停止失败：${message}`);
+        void appendAssistantSegments(
+            [{ kind: 'error', text: `\n本地中转 HTTP 服务停止失败：${message}\n` }],
+            false
+        );
+        throw err;
+    }
+
+    void appendAssistantSegments(
+        [{ kind: 'markdown', text: '\n> 正在停止 Claude CLI 子进程…\n' }],
+        false
+    );
+    try {
+        await stopChatCliPair();
+        Logger.info('手动重启：Chat CLI pair 已停止');
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        Logger.error(`手动重启：Chat CLI 停止失败：${message}`);
+        void appendAssistantSegments(
+            [{ kind: 'error', text: `\nClaude CLI 停止失败：${message}\n` }],
+            false
+        );
+        throw err;
+    }
+
+    void appendAssistantSegments(
+        [{ kind: 'markdown', text: '\n> 正在启动本地中转 HTTP 服务…\n' }],
+        false
+    );
+    try {
+        const newPort = await ensureRelayServerStarted();
+        Logger.info(`手动重启：Relay 已启动，新端口=${newPort}`);
+        void appendAssistantSegments(
+            [{ kind: 'markdown', text: `\n> 本地中转 HTTP 服务已启动：http://127.0.0.1:${newPort}\n` }],
+            false
+        );
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        Logger.error(`手动重启：Relay 启动失败：${message}`);
+        void appendAssistantSegments(
+            [{ kind: 'error', text: `\n本地中转 HTTP 服务启动失败：${message}\n` }],
+            false
+        );
+        throw err;
+    }
+
+    void appendAssistantSegments(
+        [{ kind: 'markdown', text: '\n> 正在启动 Claude CLI 子进程…\n' }],
+        false
+    );
+    try {
+        await startChatCliFromCurrentConfig({ forceRestart: true });
+        Logger.info('手动重启：Chat CLI 已启动完成');
+        void appendAssistantSegments(
+            [{ kind: 'markdown', text: '\n> Claude CLI 已重启完成\n' }],
+            false
+        );
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        Logger.error(`手动重启：Chat CLI 启动失败：${message}`);
+        void appendAssistantSegments(
+            [{ kind: 'error', text: `\nClaude CLI 启动失败：${message}\n` }],
+            false
+        );
+        throw err;
+    }
+
+    if (!options.silent) {
+        await showChatToast('success', '本地中转与 Chat CLI 已重启。');
     }
 }
 
@@ -655,7 +1004,7 @@ async function restartChatCli(options: { silent?: boolean } = {}): Promise<void>
  * @throws 用户取消选择、路径无效或启动失败时抛出错误。
  */
 async function ensureChatCliStarted(): Promise<void> {
-    if (!cliResolver || !chatCliConfigService || !cliProcess) {
+    if (!cliResolver || !chatCliConfigService || !normalCliProcess) {
         throw new Error('Chat CLI 组件尚未初始化');
     }
     const cliPath = await cliResolver.resolveOrPrompt();
@@ -674,116 +1023,852 @@ async function ensureChatCliStarted(): Promise<void> {
  * @returns sessionId 字符串；未知时返回空串。
  */
 function currentChatCliSessionIdSync(): string {
-    return lastKnownChatCliSessionId;
+    return getSessionIdForRoute(activeRoute);
 }
 
-/** 模块级缓存：最近一次 CLI session/init 拿到的 session_id，供 usageSink 同步读取。 */
+/** 模块级缓存：最近一次 normal CLI session/init 拿到的 session_id，供 usageSink 同步读取。 */
 let lastKnownChatCliSessionId = '';
 
-/** 需要静默吞掉的内部 CLI 响应轮数。 */
-let hiddenCliResponseTurns = 0;
+/** 模块级缓存：最近一次 expert CLI session/init 拿到的 session_id，供 usageSink 同步读取。 */
+let lastKnownExpertChatCliSessionId = '';
 
-/**
- * 创建一个 SessionResetter，复用现有"清空上下文 + 重启 CLI"链路。
- *
- * 与 `session/clear` webview 消息分支等价：
- *   1. 删除 `.LLSOAI/chat-session.json` 中保存的 sessionId；
- *   2. 后台重启 CLI；
- *   3. 等待新 sessionId 落盘后返回。
- *
- * 由 TokenBudgetService 在自动压缩流程中调用。
- *
- * @returns SessionResetter 实例。
- */
-function createSessionResetter(): import('./relay/tokenBudget/service').SessionResetter {
-    return {
-        reset: async () => {
-            const cwd = chatCliConfigService?.getConfig().cwd;
-            if (cwd) {
-                try {
-                    await chatCliSessionStore?.clearSessionId(cwd);
-                    Logger.info(`[tokenBudget.reset] 已删除 CLI sessionId 文件：cwd=${cwd}`);
-                } catch (err) {
-                    Logger.warn('[tokenBudget.reset] 删除 CLI sessionId 失败：'
-                        + (err instanceof Error ? err.message : String(err)));
-                }
-            }
-            autoContinueScheduler?.cancel('tokenBudget/compact');
-            autoContinueScheduler?.resetMissingToolCounter('tokenBudget/compact');
-            await restartChatCli({ silent: true });
-            // 部分 CLI 实现必须等收到首条 user 消息后才会触发 init 写入新
-            // sessionId；这里短暂尝试一次，拿不到就先返回空字符串，由 service
-            // 在 seed 注入之后调用 awaitNewSessionId 再次等待。
-            const newSessionId = cwd ? await waitForChatCliSessionId(cwd, 3_000) : undefined;
-            return { newSessionId: newSessionId ?? '' };
-        },
-        awaitNewSessionId: async (_previousSessionId: string) => {
-            const cwd = chatCliConfigService?.getConfig().cwd;
-            if (!cwd) {
-                throw new Error('Chat CLI cwd 未配置');
-            }
-            const sessionId = await waitForChatCliSessionId(cwd, 15_000);
-            if (!sessionId) {
-                throw new Error('等待 CLI 写入新 sessionId 超时');
-            }
-            return sessionId;
-        }
-    };
+/** 模块级缓存：最近一次 plan CLI session/init 拿到的 session_id，供 usageSink 同步读取。 */
+let lastKnownPlanChatCliSessionId = '';
+
+/** 模块级缓存：最近一次 review CLI session/init 拿到的 session_id，供 usageSink 同步读取。 */
+let lastKnownReviewChatCliSessionId = '';
+
+function isAnyRouteBusy(): boolean {
+    return normalBusy || expertBusy || planBusy || reviewBusy;
 }
 
-/**
- * 等待 Chat CLI init 事件把新 session_id 写入 `.LLSOAI/chat-session.json`。
- *
- * @param cwd CLI 工作目录。
- * @returns 新 session_id；超时返回 undefined。
- */
-async function waitForChatCliSessionId(cwd: string, timeoutMs: number = 15_000): Promise<string | undefined> {
-    const deadline = Date.now() + Math.max(0, timeoutMs);
-    while (Date.now() < deadline) {
-        const sessionId = await chatCliSessionStore?.readSessionId(cwd);
-        if (sessionId) return sessionId;
-        await new Promise<void>((resolve) => setTimeout(resolve, 200));
+function setRelayRouteBusy(route: ChatRoute, busy: boolean, reason: string): void {
+    let activeCount: number;
+    let currentBusy: boolean;
+    if (route === 'expert') {
+        expertRelayActiveCount = Math.max(0, expertRelayActiveCount + (busy ? 1 : -1));
+        expertBusy = expertRelayActiveCount > 0;
+        activeCount = expertRelayActiveCount;
+        currentBusy = expertBusy;
+    } else if (route === 'plan') {
+        planRelayActiveCount = Math.max(0, planRelayActiveCount + (busy ? 1 : -1));
+        planBusy = planRelayActiveCount > 0;
+        activeCount = planRelayActiveCount;
+        currentBusy = planBusy;
+    } else if (route === 'review') {
+        reviewRelayActiveCount = Math.max(0, reviewRelayActiveCount + (busy ? 1 : -1));
+        reviewBusy = reviewRelayActiveCount > 0;
+        activeCount = reviewRelayActiveCount;
+        currentBusy = reviewBusy;
+    } else {
+        normalRelayActiveCount = Math.max(0, normalRelayActiveCount + (busy ? 1 : -1));
+        normalBusy = normalRelayActiveCount > 0;
+        activeCount = normalRelayActiveCount;
+        currentBusy = normalBusy;
     }
-    return undefined;
+    Logger.info(`Chat CLI 执行状态(${route})：${currentBusy ? '执行中' : '空闲'}，reason=${reason}, active=${activeCount}`);
+    void chatViewHost?.postMessage({ type: 'chat/running', running: isAnyRouteBusy(), route });
+}
+
+function getCliProcessForRoute(route: ChatRoute): CliProcess | undefined {
+    switch (route) {
+        case 'expert': return expertCliProcess;
+        case 'plan': return planCliProcess;
+        case 'review': return reviewCliProcess;
+        case 'normal':
+        default: return normalCliProcess;
+    }
+}
+
+function getStreamAdapterForRoute(route: ChatRoute): StreamJsonCliAdapter | undefined {
+    switch (route) {
+        case 'expert': return expertStreamJsonAdapter;
+        case 'plan': return planStreamJsonAdapter;
+        case 'review': return reviewStreamJsonAdapter;
+        case 'normal':
+        default: return normalStreamJsonAdapter;
+    }
+}
+
+function getSessionIdForRoute(route: ChatRoute): string {
+    switch (route) {
+        case 'expert': return lastKnownExpertChatCliSessionId;
+        case 'plan': return lastKnownPlanChatCliSessionId;
+        case 'review': return lastKnownReviewChatCliSessionId;
+        case 'normal':
+        default: return lastKnownChatCliSessionId;
+    }
+}
+
+function isRouteBusy(route: ChatRoute): boolean {
+    switch (route) {
+        case 'expert': return expertBusy;
+        case 'plan': return planBusy;
+        case 'review': return reviewBusy;
+        case 'normal':
+        default: return normalBusy;
+    }
+}
+
+function resetRouteBusy(route: ChatRoute): void {
+    if (route === 'expert') {
+        expertRelayActiveCount = 0;
+        expertBusy = false;
+    } else if (route === 'plan') {
+        planRelayActiveCount = 0;
+        planBusy = false;
+    } else if (route === 'review') {
+        reviewRelayActiveCount = 0;
+        reviewBusy = false;
+    } else {
+        normalRelayActiveCount = 0;
+        normalBusy = false;
+    }
+    void chatViewHost?.postMessage({ type: 'chat/running', running: isAnyRouteBusy(), route });
+}
+
+function resetAllRouteBusy(): void {
+    resetRouteBusy('normal');
+    resetRouteBusy('expert');
+    resetRouteBusy('plan');
+    resetRouteBusy('review');
+}
+
+function cancelRouteProcess(route: ChatRoute): void {
+    getCliProcessForRoute(route)?.cancel();
+    resetRouteBusy(route);
+}
+
+/** session_id 到 CLI 路由的内存映射，用于 token budget 压缩时选中正确 resetter。 */
+const chatSessionRouteById = new Map<string, ChatRoute>();
+
+/** 需要静默吞掉的内部 CLI 响应轮数，按路由分别统计。 */
+const hiddenCliResponseTurnsByRoute: Record<ChatRoute, number> = { normal: 0, expert: 0, plan: 0, review: 0 };
+
+/** 当前用户消息应发送到的 Chat CLI 路由。 */
+let activeRoute: ChatRoute = 'normal';
+
+/** plan/review 自动编排状态。 */
+interface PlanReviewWorkflowState {
+    /** 当前是否存在正在进行的 plan/review workflow。 */
+    active: boolean;
+    /** 用户最初要求规划/设计的任务。 */
+    originalUserTask: string;
+    /** 最近一次 plan CLI 输出。 */
+    latestPlanText: string;
+    /** 最近一次 review CLI 输出。 */
+    latestReviewText: string;
+    /** 已执行的修订次数。 */
+    revisionCount: number;
+    /** 自动修订最大次数。 */
+    maxRevisions: number;
+}
+
+/** 当前 plan/review 自动编排状态。 */
+let planReviewWorkflowState: PlanReviewWorkflowState | undefined;
+
+/** plan/review 自动修订最大轮次。 */
+const PLAN_REVIEW_MAX_REVISIONS = 3;
+
+// 按需专家方案下，用户级 @llsExpert / /expert 触发前缀的识别 / 剥除函数集中在
+// src/expertMode/expertTriggers.ts；这里仅复用导入。
+
+function formatLogPreview(text: string, limit = 1000): string {
+    const compact = text.replace(/\s+/g, ' ').trim();
+    return compact.length > limit ? `${compact.slice(0, limit)}…` : compact;
+}
+
+function getSegmentLogText(segment: ChatSegment): string {
+    if (segment.kind === 'usage' || segment.kind === 'tool' || segment.kind === 'permission' || segment.kind === 'task' || segment.kind === 'image') {
+        return '';
+    }
+    return typeof segment.text === 'string'
+        ? segment.text
+        : typeof segment.sourceText === 'string'
+            ? segment.sourceText
+            : '';
+}
+
+function findModelDisplayName(modelId: string): string {
+    if (!configManager || !modelId) return modelId;
+    for (const provider of configManager.listProviders()) {
+        const model = provider.models.find((item) => item.modelId === modelId || `${provider.id}/${item.modelId}` === modelId);
+        if (model) return model.displayName || model.modelId;
+    }
+    return modelId;
+}
+
+function getModelLabelForRoute(route: ChatRoute): string {
+    if (!configManager) return '';
+    if (route === 'normal') {
+        const current = configManager.getCurrentModel();
+        return current ? findModelDisplayName(`${current.providerId}/${current.modelId}`) : '';
+    }
+    if (route === 'expert') {
+        const current = readEffectiveExpertModelSelection();
+        return current.enabled ? findModelDisplayName(current.modelId) : '';
+    }
+    if (route === 'plan') {
+        const current = readEffectivePlanModelSelection();
+        return current.enabled ? findModelDisplayName(current.modelId) : '';
+    }
+    const current = readEffectiveReviewModelSelection();
+    return current.enabled ? findModelDisplayName(current.modelId) : '';
+}
+
+/** 切换当前 Chat 路由并通知 Webview。 */
+async function switchChatRoute(route: ChatRoute, reason: string): Promise<void> {
+    if (activeRoute === route) return;
+    activeRoute = route;
+    Logger.info(`[chat-route] switched to ${route}: reason=${reason}`);
+    await chatViewHost?.postMessage({ type: 'route/changed', route });
+}
+
+/** normal CLI 输出包含 @llsExpert 时把下一条用户消息切到 expert。 */
+async function switchRouteToExpert(reason: string): Promise<void> {
+    await switchChatRoute('expert', reason);
 }
 
 /**
- * 按当前配置启动 Chat CLI 长连接进程。
+ * 从 dispatcher 文本中提取 `@llsExpert` 标记后面的正文。
+ *
+ * 取标记后的剩余字符串，trim 后作为要交棒给专家的指令；标记前的内容（normal 模型
+ * 自己的铺垫语）一并丢弃，避免把 dispatcher 的解释作为专家输入。
+ */
+function extractHandoffInstruction(text: string): string {
+    const match = text.match(/@llsExpert\b\s*/i);
+    if (!match || match.index === undefined) return '';
+    return text.slice(match.index + match[0].length).trim();
+}
+
+async function handleFinalAssistantText(source: ChatRoute, finalText: string): Promise<boolean> {
+    if (!finalText) return false;
+    Logger.info(`模型最终回复(${source})：${formatLogPreview(finalText)}`);
+    if (source === 'normal') {
+        const expertHandled = await watchNormalForExpertHandoff(finalText);
+        const planHandled = await watchNormalForPlanHandoff(finalText);
+        return expertHandled || planHandled;
+    }
+    if (source === 'plan') {
+        await handlePlanDone(finalText);
+        return false;
+    }
+    if (source === 'review') {
+        await handleReviewDone(finalText);
+        return false;
+    }
+    return false;
+}
+
+/** 从 normal CLI 最终回复文本中检测专家移交标记，命中则自动交棒到 expert CLI。 */
+async function watchNormalForExpertHandoff(text: string): Promise<boolean> {
+    // 按需专家方案下 dispatcher 输出的文本标记已废弃，专家完全由 ask_expert MCP 工具触发。
+    // 该函数保留为 no-op，仅为减小本次改造的爆炸半径；后续可在删除 watchNormalForExpertHandoff 调用点后移除。
+    void text;
+    return false;
+
+    const instruction = extractHandoffInstruction(text);
+    cancelRouteProcess('normal');
+
+    await switchRouteToExpert('normal-replied-handoff');
+
+    if (!instruction) {
+        await showChatToast('warn', '检测到 @llsExpert 移交标记，但未抓取到指令文本，已切换路由，等待你的下一条消息。');
+        return true;
+    }
+    if (!getStreamAdapterForRoute('expert')) {
+        await appendAssistantSegments([
+            { kind: 'error', text: '\n检测到 @llsExpert 移交标记，但未配置专家模型，无法继续。\n' }
+        ], true);
+        await switchChatRoute('normal', 'expert-not-configured');
+        return true;
+    }
+
+    Logger.info(`检测到 @llsExpert，自动交棒给 expert Chat CLI：instructionLength=${instruction.length}`);
+    await showChatToast('info', '已检测到 @llsExpert，正在把任务交给专家模型…');
+    try {
+        await sendUserMessageToCli(instruction, { hidden: true, forceRoute: 'expert' });
+    } catch (err) {
+        Logger.error('自动交棒到专家 CLI 失败', err);
+    }
+    return true;
+}
+
+/** 从 normal CLI 最终回复文本中检测 plan/review 编排标记。 */
+async function watchNormalForPlanHandoff(text: string): Promise<boolean> {
+    const match = parsePlanReviewToken(text);
+    if (!match) return false;
+    if (match.token === '@llsPlanTask') {
+        await handleNormalPlanTask(match.tail);
+        return true;
+    }
+    if (match.token === '@llsPlanReview') {
+        await handleNormalPlanReview();
+        return true;
+    }
+    if (match.token === '@llsPlanRevise') {
+        await handleNormalPlanRevise(match.tail);
+        return true;
+    }
+    if (match.token === '@llsPlanDone') {
+        await handleNormalPlanDone();
+        return true;
+    }
+    if (match.token === '@llsPlanApproved') {
+        finishPlanReviewWorkflow('normal-plan-approved');
+        await switchChatRoute('normal', 'plan-approved');
+        return false;
+    }
+    return false;
+}
+
+/** 处理 normal 发起的 plan 任务移交。 */
+async function handleNormalPlanTask(instruction: string): Promise<void> {
+    cancelRouteProcess('normal');
+    if (!instruction) {
+        await showChatToast('warn', '检测到 @llsPlanTask，但未抓取到方案任务描述。');
+        return;
+    }
+    planReviewWorkflowState = {
+        active: true,
+        originalUserTask: instruction,
+        latestPlanText: '',
+        latestReviewText: '',
+        revisionCount: 0,
+        maxRevisions: PLAN_REVIEW_MAX_REVISIONS
+    };
+    try {
+        await ensurePlanCliStarted();
+        await switchChatRoute('plan', 'normal-plan-handoff');
+        await sendUserMessageToCli(instruction, { hidden: true, forceRoute: 'plan' });
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        Logger.error(`启动 plan CLI 或发送方案任务失败：${message}`);
+        finishPlanReviewWorkflow('plan-lazy-start-failed');
+        await switchChatRoute('normal', 'plan-lazy-start-failed');
+        await appendAssistantSegments([{ kind: 'error', text: `\n方案模型不可用：${message}\n` }], true);
+    }
+}
+
+/** 处理 normal 认为方案已完成：审查模型存在时先强制进入 review。 */
+async function handleNormalPlanDone(): Promise<void> {
+    const state = planReviewWorkflowState;
+    if (resolvePlanDoneRoutingAction(state, readEffectiveReviewModelSelection().enabled) === 'review') {
+        Logger.info('检测到 @llsPlanDone 且审查模型已配置，直接交给 review CLI 审查方案文档');
+        await handleNormalPlanReview();
+        return;
+    }
+    finishPlanReviewWorkflow('normal-plan-done');
+    await switchChatRoute('normal', 'plan-done');
+}
+
+/** 处理 normal 要求 review 审查最近方案。 */
+async function handleNormalPlanReview(): Promise<void> {
+    const state = planReviewWorkflowState;
+    if (!state?.active || !state.latestPlanText) {
+        await appendAssistantSegments([{ kind: 'error', text: '\n没有可审查的方案输出。\n' }], true);
+        return;
+    }
+    try {
+        await ensureReviewCliStarted();
+        const prompt = buildReviewPrompt(state);
+        await switchChatRoute('review', 'normal-review-handoff');
+        await sendUserMessageToCli(prompt, { hidden: true, forceRoute: 'review' });
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        Logger.warn(`review CLI 不可用，结束方案流程：${message}`);
+        await sendPlanReviewCallbackToNormal([
+            'The review model is unavailable, so finish the plan workflow without review.',
+            '',
+            `<plan_output>\n${state.latestPlanText}\n</plan_output>`,
+            '',
+            'Reply with @llsPlanDone followed by a concise user-facing summary.'
+        ].join('\n'));
+    }
+}
+
+/** 处理 normal 要求 plan 根据 review 意见修订。 */
+async function handleNormalPlanRevise(feedback: string): Promise<void> {
+    const state = planReviewWorkflowState;
+    if (!state?.active || !state.latestPlanText) {
+        await appendAssistantSegments([{ kind: 'error', text: '\n没有可修订的方案输出。\n' }], true);
+        return;
+    }
+    if (state.revisionCount >= state.maxRevisions) {
+        finishPlanReviewWorkflow('max-revisions');
+        await switchChatRoute('normal', 'plan-max-revisions');
+        await appendAssistantSegments([{ kind: 'markdown', text: '\n方案审查修订次数已达上限，请确认是否继续下一轮修订。\n' }], true);
+        return;
+    }
+    state.revisionCount += 1;
+    try {
+        await ensurePlanCliStarted();
+        await switchChatRoute('plan', 'normal-plan-revise');
+        await sendUserMessageToCli(buildPlanRevisionPrompt(state, feedback), { hidden: true, forceRoute: 'plan' });
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        Logger.error(`发送方案修订任务失败：${message}`);
+        finishPlanReviewWorkflow('plan-revise-failed');
+        await switchChatRoute('normal', 'plan-revise-failed');
+        await appendAssistantSegments([{ kind: 'error', text: `\n方案模型修订不可用：${message}\n` }], true);
+    }
+}
+
+/** 处理 plan CLI 完成本轮方案输出。 */
+async function handlePlanDone(finalText: string): Promise<void> {
+    const state = planReviewWorkflowState;
+    if (!state?.active) return;
+    state.latestPlanText = finalText;
+    await sendPlanReviewCallbackToNormal([
+        'The plan model has completed the following plan for the user\'s request.',
+        '',
+        `<original_user_task>\n${state.originalUserTask}\n</original_user_task>`,
+        '',
+        `<plan_output>\n${finalText}\n</plan_output>`,
+        '',
+        'Decide the next orchestration step:',
+        '- If review is enabled, reply only with @llsPlanReview.',
+        '- If review is disabled, reply with @llsPlanDone followed by a concise user-facing summary.',
+        '- Do not implement the plan.'
+    ].join('\n'));
+}
+
+/** 处理 review CLI 完成本轮审查输出。 */
+async function handleReviewDone(finalText: string): Promise<void> {
+    const state = planReviewWorkflowState;
+    if (!state?.active) return;
+    state.latestReviewText = finalText;
+    await sendPlanReviewCallbackToNormal([
+        'The review model has reviewed the latest plan.',
+        '',
+        `<plan_output>\n${state.latestPlanText}\n</plan_output>`,
+        '',
+        `<review_output>\n${finalText}\n</review_output>`,
+        '',
+        'Decide the next orchestration step:',
+        `- If the review verdict is CHANGES_REQUESTED and revisionCount (${state.revisionCount}) < maxRevisions (${state.maxRevisions}), reply only with @llsPlanRevise followed by the required changes.`,
+        '- If the review verdict is APPROVED, reply with @llsPlanApproved followed by a concise user-facing summary.',
+        '- If revisionCount has reached maxRevisions, stop the loop and ask the user whether to continue.'
+    ].join('\n'));
+}
+
+/** 构造 review CLI 审查 prompt。 */
+function buildReviewPrompt(state: PlanReviewWorkflowState): string {
+    return [
+        'Review the following plan for the user\'s original request.',
+        '',
+        `<original_user_task>\n${state.originalUserTask}\n</original_user_task>`,
+        '',
+        `<plan_output>\n${state.latestPlanText}\n</plan_output>`
+    ].join('\n');
+}
+
+/** 构造 plan CLI 修订 prompt。 */
+function buildPlanRevisionPrompt(state: PlanReviewWorkflowState, feedback: string): string {
+    return [
+        'Revise the previous plan according to the review feedback.',
+        '',
+        `<original_user_task>\n${state.originalUserTask}\n</original_user_task>`,
+        '',
+        `<previous_plan>\n${state.latestPlanText}\n</previous_plan>`,
+        '',
+        `<review_feedback>\n${feedback || state.latestReviewText}\n</review_feedback>`,
+        '',
+        'Return only the revised plan content.'
+    ].join('\n');
+}
+
+/** 把 plan/review 完成结果回调给 normal 编排器。 */
+async function sendPlanReviewCallbackToNormal(prompt: string): Promise<void> {
+    await switchChatRoute('normal', 'plan-review-callback');
+    await sendUserMessageToCli(prompt, { hidden: true, suppressResponse: true, forceRoute: 'normal' });
+}
+
+/** 结束 plan/review workflow 并安排闲置回收。 */
+function finishPlanReviewWorkflow(reason: string): void {
+    planReviewWorkflowState = undefined;
+    schedulePlanReviewIdleDispose(reason);
+}
+
+/** 根据旧 sessionId 找到触发 token 压缩的 CLI 路由。 */
+function resolveRouteForSessionId(sessionId: string | undefined): ChatRoute {
+    if (!sessionId) return activeRoute;
+    return chatSessionRouteById.get(sessionId) ?? activeRoute;
+}
+
+/**
+ * 按当前配置启动 Chat CLI 长连接进程（双 CLI 路由：normal + expert）。
+ *
+ * 内部委托 {@link startChatCliPair}：normal CLI 总是启动，expert CLI 仅在
+ * `expertMode.enabled === true` 且选中了具体专家模型时启动；专家未配置时
+ * 会显式 dispose 旧 expert 实例与适配器，避免遗留旧的环境变量。
+ *
+ * 保留本函数名是为了让 token budget 自愈、selectChatCli 等老调用点维持原 API；
+ * 新增代码请直接调用 {@link startChatCliPair}。
  *
  * @throws 配置无效或子进程启动失败时抛出错误。
  */
 async function startChatCliFromCurrentConfig(options: { forceRestart?: boolean } = {}): Promise<void> {
-    if (!chatCliConfigService || !cliProcess) {
+    await startChatCliPair(options);
+}
+
+/**
+ * 同时启动 normal / expert 两条 Chat CLI 长连接，并重建对应的 stream-json 适配器。
+ *
+ * 关键差异：
+ * - normal CLI 总是启动；其 `--append-system-prompt` 来自
+ *   {@link ChatCliConfigService.getDualConfigsWithRelayEnv} 的 dispatcher 默认文案
+ *   或用户配置 `chat.dispatcher.appendSystemPrompt` 覆盖值。
+ * - expert CLI 仅在 expertMode.enabled === true 且选中具体模型时启动；未配置时
+ *   会显式 stop / dispose 旧 expert 实例，避免上一次启动残留。
+ * - 两条 CLI 使用各自的 sessionStore kind（'normal' / 'expert'），互不覆盖；
+ *   token budget 自动压缩按 sessionId 分桶，自然不串流。
+ *
+ * @param options.forceRestart 为 true 时即使配置未变也强制重启。
+ * @throws Chat CLI 组件未初始化时抛出错误。
+ */
+async function startChatCliPair(options: { forceRestart?: boolean } = {}): Promise<void> {
+    if (!chatCliConfigService || !normalCliProcess) {
         throw new Error('Chat CLI 组件尚未初始化');
     }
     const relayPort = await ensureRelayServerStarted();
-    const config = await chatCliConfigService.getConfigWithRelayEnv(relayPort);
+    const { normal, expert, plan, review } = await chatCliConfigService.getRoutedConfigsWithRelayEnv(relayPort);
     await syncClaudeCliModelSettingsSafely();
-    const persistedSessionId = await chatCliSessionStore?.readSessionId(config.cwd);
-    const launchConfig = { ...config, resumeSessionId: persistedSessionId };
-    Logger.info('准备启动 Chat CLI 配置：' + JSON.stringify({
-        cwd: launchConfig.cwd,
-        cliPath: launchConfig.cliPath,
-        model: launchConfig.model,
-        hasPersistedSession: !!persistedSessionId,
-        willResumePersistedSession: !!launchConfig.resumeSessionId,
-        anthropicBaseUrl: launchConfig.cliEnv.ANTHROPIC_BASE_URL || '',
-        hasAnthropicAuthToken: !!launchConfig.cliEnv.ANTHROPIC_AUTH_TOKEN,
-        hasAnthropicApiKey: !!launchConfig.cliEnv.ANTHROPIC_API_KEY,
-        hasCustomHeaders: !!launchConfig.cliEnv.ANTHROPIC_CUSTOM_HEADERS,
-        skipAuthLogin: launchConfig.cliEnv.CLAUDE_CODE_SKIP_AUTH_LOGIN || '',
-        skipModelValidation: launchConfig.cliEnv.CLAUDE_CODE_SKIP_MODEL_VALIDATION || ''
-    }));
-    if (!options.forceRestart && cliProcess.isRunningWithConfig(launchConfig)) {
-        ensureStreamJsonCliAdapter();
-        await chatViewHost?.postMessage({ type: 'cli/status', status: 'running', detail: config.cliPath });
+
+    // ── normal CLI ─────────────────────────────────────────────────────
+    const normalPersistedSessionId = await chatCliSessionStore?.readSessionId(normal.cwd, 'normal');
+    const normalLaunchConfig = { ...normal, resumeSessionId: normalPersistedSessionId };
+    if (!options.forceRestart && normalCliProcess.isRunningWithConfig(normalLaunchConfig)) {
+        Logger.info(`复用现有 normal Chat CLI 进程（model=${normalLaunchConfig.model}）`);
+        rebuildNormalAdapter();
+    } else {
+        Logger.info('启动 normal Chat CLI：' + JSON.stringify({
+            cwd: normalLaunchConfig.cwd,
+            cliPath: normalLaunchConfig.cliPath,
+            model: normalLaunchConfig.model,
+            hasPersistedSession: !!normalPersistedSessionId,
+            willResumePersistedSession: !!normalLaunchConfig.resumeSessionId,
+            anthropicBaseUrl: normalLaunchConfig.cliEnv.ANTHROPIC_BASE_URL || '',
+            hasAnthropicAuthToken: !!normalLaunchConfig.cliEnv.ANTHROPIC_AUTH_TOKEN,
+            hasAnthropicApiKey: !!normalLaunchConfig.cliEnv.ANTHROPIC_API_KEY,
+            hasCustomHeaders: !!normalLaunchConfig.cliEnv.ANTHROPIC_CUSTOM_HEADERS,
+            skipAuthLogin: normalLaunchConfig.cliEnv.CLAUDE_CODE_SKIP_AUTH_LOGIN || '',
+            skipModelValidation: normalLaunchConfig.cliEnv.CLAUDE_CODE_SKIP_MODEL_VALIDATION || '',
+            forceRestart: !!options.forceRestart
+        }));
+        chatCliCancelRequested = false;
+        logMcpToolsBeforeCliStart();
+        await normalCliProcess.start(normalLaunchConfig);
+        rebuildNormalAdapter();
+    }
+    await chatViewHost?.postMessage({ type: 'cli/status', status: 'running', detail: normal.cliPath });
+
+    // ── expert CLI ─────────────────────────────────────────────────────
+    // 按需专家方案：不再常驻 expert CLI。无论配置如何，均确保旧 expert CLI 已释放。
+    // 专家由 ExpertSubturnService 在主模型调用 ask_expert MCP 工具时按需经 Relay 执行。
+    void expert;
+    await disposeExpertCli('按需专家方案：expert CLI 已停用');
+    if (!plan) {
+        planLaunchConfigCache = undefined;
+        await disposePlanCli('未配置方案任务模型');
+    } else {
+        planLaunchConfigCache = { ...plan, resumeSessionId: undefined };
+        if (planCliProcess && !planCliProcess.isRunningWithConfig(planLaunchConfigCache)) {
+            await disposePlanCli('方案任务模型配置已变更');
+        }
+    }
+    if (!review) {
+        reviewLaunchConfigCache = undefined;
+        await disposeReviewCli('未配置审查任务模型');
+    } else {
+        reviewLaunchConfigCache = { ...review, resumeSessionId: undefined };
+        if (reviewCliProcess && !reviewCliProcess.isRunningWithConfig(reviewLaunchConfigCache)) {
+            await disposeReviewCli('审查任务模型配置已变更');
+        }
+    }
+}
+
+/**
+ * 显式停止并释放 plan CLI 实例与适配器。
+ *
+ * @param reason 仅用于日志诊断的原因描述。
+ */
+async function disposePlanCli(reason: string): Promise<void> {
+    resetRouteBusy('plan');
+    clearPlanIdleDisposeTimer();
+    if (!planCliProcess && !planStreamJsonAdapter) return;
+    Logger.info(`释放 plan Chat CLI：reason=${reason}`);
+    planCliStatusSubscription?.dispose();
+    planCliStatusSubscription = undefined;
+    planCliExitSubscription?.dispose();
+    planCliExitSubscription = undefined;
+    planStreamJsonAdapterSubscription?.dispose();
+    planStreamJsonAdapterSubscription = undefined;
+    planStreamJsonAdapter?.dispose();
+    planStreamJsonAdapter = undefined;
+    if (planCliProcess) {
+        try {
+            await planCliProcess.stop();
+        } catch (err) {
+            Logger.warn('停止 plan Chat CLI 失败：' + (err instanceof Error ? err.message : String(err)));
+        }
+        planCliProcess.dispose();
+        planCliProcess = undefined;
+    }
+}
+
+/**
+ * 显式停止并释放 review CLI 实例与适配器。
+ *
+ * @param reason 仅用于日志诊断的原因描述。
+ */
+async function disposeReviewCli(reason: string): Promise<void> {
+    resetRouteBusy('review');
+    clearReviewIdleDisposeTimer();
+    if (!reviewCliProcess && !reviewStreamJsonAdapter) return;
+    Logger.info(`释放 review Chat CLI：reason=${reason}`);
+    reviewCliStatusSubscription?.dispose();
+    reviewCliStatusSubscription = undefined;
+    reviewCliExitSubscription?.dispose();
+    reviewCliExitSubscription = undefined;
+    reviewStreamJsonAdapterSubscription?.dispose();
+    reviewStreamJsonAdapterSubscription = undefined;
+    reviewStreamJsonAdapter?.dispose();
+    reviewStreamJsonAdapter = undefined;
+    if (reviewCliProcess) {
+        try {
+            await reviewCliProcess.stop();
+        } catch (err) {
+            Logger.warn('停止 review Chat CLI 失败：' + (err instanceof Error ? err.message : String(err)));
+        }
+        reviewCliProcess.dispose();
+        reviewCliProcess = undefined;
+    }
+}
+
+/** 清除 plan CLI 闲置释放计时器。 */
+function clearPlanIdleDisposeTimer(): void {
+    if (!planIdleDisposeTimer) return;
+    clearTimeout(planIdleDisposeTimer);
+    planIdleDisposeTimer = undefined;
+}
+
+/** 清除 review CLI 闲置释放计时器。 */
+function clearReviewIdleDisposeTimer(): void {
+    if (!reviewIdleDisposeTimer) return;
+    clearTimeout(reviewIdleDisposeTimer);
+    reviewIdleDisposeTimer = undefined;
+}
+
+/** 安排 plan/review CLI 在闲置窗口后释放。 */
+function schedulePlanReviewIdleDispose(reason: string): void {
+    clearPlanIdleDisposeTimer();
+    clearReviewIdleDisposeTimer();
+    planIdleDisposeTimer = setTimeout(() => {
+        planIdleDisposeTimer = undefined;
+        void disposePlanCli(`idle-timeout:${reason}`);
+    }, PLAN_REVIEW_IDLE_DISPOSE_MS);
+    planIdleDisposeTimer.unref?.();
+    reviewIdleDisposeTimer = setTimeout(() => {
+        reviewIdleDisposeTimer = undefined;
+        void disposeReviewCli(`idle-timeout:${reason}`);
+    }, PLAN_REVIEW_IDLE_DISPOSE_MS);
+    reviewIdleDisposeTimer.unref?.();
+}
+
+/** 确保 plan CLI 已按当前缓存配置启动。 */
+async function ensurePlanCliStarted(): Promise<void> {
+    clearPlanIdleDisposeTimer();
+    if (!planLaunchConfigCache) {
+        await startChatCliPair();
+    }
+    if (!planLaunchConfigCache) {
+        throw new Error('未配置方案任务模型');
+    }
+    if (!planCliProcess) {
+        planCliProcess = new CliProcess();
+        bindPlanCliStatusHandlers();
+    }
+    const launchConfig = { ...planLaunchConfigCache, resumeSessionId: undefined };
+    if (planCliProcess.isRunningWithConfig(launchConfig)) {
+        rebuildPlanAdapter();
         return;
     }
+    Logger.info('按需启动 plan Chat CLI：' + JSON.stringify({
+        cwd: launchConfig.cwd,
+        cliPath: launchConfig.cliPath,
+        model: launchConfig.model
+    }));
+    await planCliProcess.start(launchConfig);
+    rebuildPlanAdapter();
+}
+
+/** 确保 review CLI 已按当前缓存配置启动。 */
+async function ensureReviewCliStarted(): Promise<void> {
+    clearReviewIdleDisposeTimer();
+    if (!reviewLaunchConfigCache) {
+        await startChatCliPair();
+    }
+    if (!reviewLaunchConfigCache) {
+        throw new Error('未配置审查任务模型');
+    }
+    if (!reviewCliProcess) {
+        reviewCliProcess = new CliProcess();
+        bindReviewCliStatusHandlers();
+    }
+    const launchConfig = { ...reviewLaunchConfigCache, resumeSessionId: undefined };
+    if (reviewCliProcess.isRunningWithConfig(launchConfig)) {
+        rebuildReviewAdapter();
+        return;
+    }
+    Logger.info('按需启动 review Chat CLI：' + JSON.stringify({
+        cwd: launchConfig.cwd,
+        cliPath: launchConfig.cliPath,
+        model: launchConfig.model
+    }));
+    await reviewCliProcess.start(launchConfig);
+    rebuildReviewAdapter();
+}
+
+/**
+ * 显式停止并释放 expert CLI 实例与适配器。
+ *
+ * 在「专家模型从已选切到关闭」「pair 重启时检测到 expertMode 关闭」等场景调用，
+ * 避免旧 expert 子进程占用资源、遗留旧的 ANTHROPIC_MODEL 环境变量。
+ *
+ * @param reason 仅用于日志诊断的原因描述。
+ */
+async function disposeExpertCli(reason: string): Promise<void> {
+    resetRouteBusy('expert');
+    if (!expertCliProcess && !expertStreamJsonAdapter) return;
+    Logger.info(`释放 expert Chat CLI：reason=${reason}`);
+    expertCliStatusSubscription?.dispose();
+    expertCliStatusSubscription = undefined;
+    expertCliExitSubscription?.dispose();
+    expertCliExitSubscription = undefined;
+    expertStreamJsonAdapterSubscription?.dispose();
+    expertStreamJsonAdapterSubscription = undefined;
+    expertStreamJsonAdapter?.dispose();
+    expertStreamJsonAdapter = undefined;
+    if (expertCliProcess) {
+        try {
+            await expertCliProcess.stop();
+        } catch (err) {
+            Logger.warn('停止 expert Chat CLI 失败：' + (err instanceof Error ? err.message : String(err)));
+        }
+        expertCliProcess.dispose();
+        expertCliProcess = undefined;
+    }
+}
+
+/**
+ * 同步重启 normal + expert 两条 Chat CLI（pair 视角）。
+ *
+ * 用于「模型选择保存」「Relay 端口变化」等需要让两条 CLI 同时拿到最新启动参数
+ * 的场景；调用方应优先使用本函数而不是单独调用 startChatCliPair，让重启语义
+ * 在调用点更清晰。
+ *
+ * @param options.silent 是否抑制成功 toast。
+ */
+async function restartChatCliPair(options: { silent?: boolean } = {}): Promise<void> {
+    if (!normalCliProcess || !chatCliConfigService) return;
     chatCliCancelRequested = false;
-    logMcpToolsBeforeCliStart();
-    await cliProcess.start(launchConfig);
-    ensureStreamJsonCliAdapter();
-    await chatViewHost?.postMessage({ type: 'cli/status', status: 'running', detail: config.cliPath });
+    resetAllRouteBusy();
+    await startChatCliPair({ forceRestart: true });
+    if (!options.silent) {
+        await showChatToast('success', 'Chat CLI 长连接已重启。');
+    }
+}
+
+/**
+ * 同时停止 normal + expert 两条 Chat CLI（pair 视角）。
+ *
+ * 与 `dispose` 的区别：仅终止子进程，保留模块级实例引用与订阅，便于后续
+ * 重新调用 {@link startChatCliPair}。
+ */
+async function stopChatCliPair(): Promise<void> {
+    resetAllRouteBusy();
+    if (normalCliProcess) {
+        try {
+            await normalCliProcess.stop();
+        } catch (err) {
+            Logger.warn('停止 normal Chat CLI 失败：' + (err instanceof Error ? err.message : String(err)));
+        }
+    }
+    await disposeExpertCli('stopChatCliPair');
+    await disposePlanCli('stopChatCliPair');
+    await disposeReviewCli('stopChatCliPair');
+}
+
+/**
+ * 重建 normal CLI 的 stream-json 适配器并订阅 ParsedCliEvent。
+ *
+ * 双 CLI 路由方案下，normal CLI 的输出会经过 `@llsExpert` 路由检测
+ * （由 `handleParsedCliEvent(event, 'normal')` 内部处理）。每次 normal CLI
+ * 启动 / 重启时本函数会被调用，确保订阅指向最新子进程。
+ */
+function rebuildNormalAdapter(): void {
+    if (!normalCliProcess) throw new Error('Chat CLI 进程尚未初始化');
+    streamJsonCliAdapterSubscription?.dispose();
+    normalStreamJsonAdapter?.dispose();
+    normalStreamJsonAdapter = new StreamJsonCliAdapter(normalCliProcess, (resultText) => {
+        notifyPermissionDeniedToUser(resultText);
+    });
+    streamJsonCliAdapterSubscription = normalStreamJsonAdapter.onParsedEvent((event) => {
+        void handleParsedCliEvent(event, 'normal').catch((err: unknown) => {
+            Logger.error('处理 normal CLI 流式事件失败', err);
+        });
+    });
+}
+
+/**
+ * 重建 expert CLI 的 stream-json 适配器并订阅 ParsedCliEvent。
+ *
+ * expert CLI 的事件不参与 `@llsExpert` 路由检测，避免循环触发；其它处理
+ * 流程（segments / done / error / session/init）与 normal 一致。
+ */
+function rebuildExpertAdapter(): void {
+    if (!expertCliProcess) throw new Error('Expert Chat CLI 进程尚未初始化');
+    expertStreamJsonAdapterSubscription?.dispose();
+    expertStreamJsonAdapter?.dispose();
+    expertStreamJsonAdapter = new StreamJsonCliAdapter(expertCliProcess, (resultText) => {
+        notifyPermissionDeniedToUser(resultText);
+    });
+    expertStreamJsonAdapterSubscription = expertStreamJsonAdapter.onParsedEvent((event) => {
+        void handleParsedCliEvent(event, 'expert').catch((err: unknown) => {
+            Logger.error('处理 expert CLI 流式事件失败', err);
+        });
+    });
+}
+
+/** 重建 plan CLI 的 stream-json 适配器并订阅 ParsedCliEvent。 */
+function rebuildPlanAdapter(): void {
+    if (!planCliProcess) throw new Error('Plan Chat CLI 进程尚未初始化');
+    planStreamJsonAdapterSubscription?.dispose();
+    planStreamJsonAdapter?.dispose();
+    planStreamJsonAdapter = new StreamJsonCliAdapter(planCliProcess, (resultText) => {
+        notifyPermissionDeniedToUser(resultText);
+    });
+    planStreamJsonAdapterSubscription = planStreamJsonAdapter.onParsedEvent((event) => {
+        void handleParsedCliEvent(event, 'plan').catch((err: unknown) => {
+            Logger.error('处理 plan CLI 流式事件失败', err);
+        });
+    });
+}
+
+/** 重建 review CLI 的 stream-json 适配器并订阅 ParsedCliEvent。 */
+function rebuildReviewAdapter(): void {
+    if (!reviewCliProcess) throw new Error('Review Chat CLI 进程尚未初始化');
+    reviewStreamJsonAdapterSubscription?.dispose();
+    reviewStreamJsonAdapter?.dispose();
+    reviewStreamJsonAdapter = new StreamJsonCliAdapter(reviewCliProcess, (resultText) => {
+        notifyPermissionDeniedToUser(resultText);
+    });
+    reviewStreamJsonAdapterSubscription = reviewStreamJsonAdapter.onParsedEvent((event) => {
+        void handleParsedCliEvent(event, 'review').catch((err: unknown) => {
+            Logger.error('处理 review CLI 流式事件失败', err);
+        });
+    });
 }
 
 /**
@@ -814,28 +1899,6 @@ function logMcpToolsBeforeCliStart(): void {
     } catch (error) {
         Logger.warn('启动 Chat CLI 前枚举 MCP 工具失败：' + (error instanceof Error ? error.message : String(error)));
     }
-}
-
-/**
- * 确保 stream-json CLI 适配器已创建并订阅解析事件。
- *
- * 同时注入 `onPermissionDenied` 回调：当模型工具调用被 Claude CLI 权限策略
- * 拦截时（典型场景：非交互模式下 Bash 写文件被默认策略 deny），向用户弹出
- * 一次性的 VS Code 警告通知，并提供"打开设置"快捷入口跳转到
- * `claudeCodeConfigHelper.chat.permissionMode` 配置项。
- */
-function ensureStreamJsonCliAdapter(): void {
-    if (!cliProcess) throw new Error('Chat CLI 进程尚未初始化');
-    streamJsonCliAdapterSubscription?.dispose();
-    streamJsonCliAdapter?.dispose();
-    streamJsonCliAdapter = new StreamJsonCliAdapter(cliProcess, (resultText) => {
-        notifyPermissionDeniedToUser(resultText);
-    });
-    streamJsonCliAdapterSubscription = streamJsonCliAdapter.onParsedEvent((event) => {
-        void handleParsedCliEvent(event).catch((err: unknown) => {
-            Logger.error('处理 CLI 流式事件失败', err);
-        });
-    });
 }
 
 /**
@@ -870,39 +1933,103 @@ function notifyPermissionDeniedToUser(resultText: string): void {
  * 处理 CLI 适配器解析出的事件，并更新 ChatSession/Webview。
  *
  * @param event 已解析的 CLI 事件。
+ * @param source 事件来源 CLI；`'normal'` 时会在 segments 文本上做 `@llsExpert`
+ *   路由检测（由任务 5 在切路由时使用），`'expert'` 仅做正常渲染、不做任何路由检测，
+ *   避免循环触发。
  */
-async function handleParsedCliEvent(event: ParsedCliEvent): Promise<void> {
+async function handleParsedCliEvent(event: ParsedCliEvent, source: ChatRoute = 'normal'): Promise<void> {
     switch (event.type) {
         case 'segments':
-            if (hiddenCliResponseTurns > 0) {
-                if (event.done) hiddenCliResponseTurns = Math.max(0, hiddenCliResponseTurns - 1);
+            {
+                const chunkText = event.segments.map(getSegmentLogText).filter(Boolean).join('');
+                if (chunkText) assistantTurnTextBySource[source] += chunkText;
+                if (event.done) {
+                    const finalText = assistantTurnTextBySource[source].trim();
+                    assistantTurnTextBySource[source] = '';
+                    await handleFinalAssistantText(source, finalText);
+                }
+            }
+            if (hiddenCliResponseTurnsByRoute[source] > 0) {
+                if (event.done) hiddenCliResponseTurnsByRoute[source] = Math.max(0, hiddenCliResponseTurnsByRoute[source] - 1);
                 return;
             }
             await appendAssistantSegments(event.segments, event.done ?? false);
             return;
         case 'done':
-            if (hiddenCliResponseTurns > 0) {
-                hiddenCliResponseTurns = Math.max(0, hiddenCliResponseTurns - 1);
+            {
+                const finalText = assistantTurnTextBySource[source].trim();
+                if (finalText) {
+                    await handleFinalAssistantText(source, finalText);
+                }
+                assistantTurnTextBySource[source] = '';
+            }
+            if (hiddenCliResponseTurnsByRoute[source] > 0) {
+                hiddenCliResponseTurnsByRoute[source] = Math.max(0, hiddenCliResponseTurnsByRoute[source] - 1);
                 return;
             }
             await finishActiveAssistantMessage();
             return;
         case 'error':
+            assistantTurnTextBySource[source] = '';
             await finishActiveAssistantMessage();
             Logger.error(`Chat CLI 事件错误：${event.message}${event.detail ? ` :: ${event.detail}` : ''}`);
             await showChatToast('error', event.detail ? `${event.message}：${event.detail}` : event.message);
             return;
         case 'session/init':
-            await chatCliSessionStore?.writeSessionId(event.cwd, event.sessionId);
-            lastKnownChatCliSessionId = event.sessionId;
-            Logger.info(`已保存 Chat CLI session_id 到 ${event.cwd}/.LLSOAI`);
+            await chatCliSessionStore?.writeSessionId(event.cwd, event.sessionId, source);
+            chatSessionRouteById.set(event.sessionId, source);
+            if (source === 'normal') {
+                lastKnownChatCliSessionId = event.sessionId;
+            } else if (source === 'expert') {
+                lastKnownExpertChatCliSessionId = event.sessionId;
+            } else if (source === 'plan') {
+                lastKnownPlanChatCliSessionId = event.sessionId;
+            } else {
+                lastKnownReviewChatCliSessionId = event.sessionId;
+            }
+            return;
+        case 'compact/status':
+            handleCliCompactStatus(event, source);
             return;
         case 'tool/permissionRequest':
-            await handleToolPermissionRequest(event);
+            await handleToolPermissionRequest(event, source);
             return;
         default:
             return;
     }
+}
+
+function handleCliCompactStatus(
+    event: Extract<ParsedCliEvent, { type: 'compact/status' }>,
+    source: ChatRoute
+): void {
+    const sessionId = event.sessionId || getSessionIdForRoute(source);
+    if (event.status === 'compacting') {
+        void chatViewHost?.postMessage({
+            type: 'compaction/started',
+            sessionId,
+            beforeTokens: 0
+        });
+        return;
+    }
+    if (event.compactResult === 'success') {
+        tokenBudgetServiceRef?.finishNativeCompaction(sessionId, true);
+        void chatViewHost?.postMessage({
+            type: 'compaction/finished',
+            oldSessionId: sessionId,
+            newSessionId: sessionId,
+            beforeTokens: 0,
+            afterTokens: 0,
+            summary: ''
+        });
+        return;
+    }
+    tokenBudgetServiceRef?.finishNativeCompaction(sessionId, false, event.compactResult || 'compact failed');
+    void chatViewHost?.postMessage({
+        type: 'compaction/failed',
+        sessionId,
+        error: event.compactResult || 'compact failed'
+    });
 }
 
 /**
@@ -915,10 +2042,10 @@ async function handleParsedCliEvent(event: ParsedCliEvent): Promise<void> {
  *
  * @param event 适配器解析出的工具授权请求事件。
  */
-async function handleToolPermissionRequest(event: ToolPermissionRequestEvent): Promise<void> {
-    const adapter = streamJsonCliAdapter;
+async function handleToolPermissionRequest(event: ToolPermissionRequestEvent, source: ChatRoute): Promise<void> {
+    const adapter = getStreamAdapterForRoute(source);
     if (!adapter) {
-        Logger.warn(`收到工具授权请求但 stream-json 适配器不存在：requestId=${event.requestId}`);
+        Logger.warn(`收到 ${source} 工具授权请求但 stream-json 适配器不存在：requestId=${event.requestId}`);
         return;
     }
     const allow = '允许本次执行';
@@ -1004,17 +2131,26 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
             });
             await postChatModelOptions();
             await postChatExpertModelOptions();
+            await postChatPlanModelOptions();
+            await postChatReviewModelOptions();
+            await postModelsSnapshot();
+            await chatViewHost?.postMessage({ type: 'route/changed', route: activeRoute });
             await postChatPermissionMode();
             await postChatTaskFlowStatus();
             await postActiveEditorAttachmentToChat();
             return;
         case 'user/send':
-            Logger.info(`收到 Chat Webview 发送请求：textLength=${message.text.length}, attachments=${message.attachments?.length ?? 0}`);
             {
-                const prompt = buildPromptWithAttachments(message.text, message.attachments);
+                const rawText = message.text;
+                const forceExpert = startsWithExpertPrefix(rawText);
+                if (!forceExpert && activeRoute === 'expert' && !isRouteBusy('expert')) {
+                    await switchChatRoute('normal', 'expert-idle-fallback');
+                }
+                const bodyText = forceExpert ? stripExpertPrefix(rawText) : rawText;
+                const prompt = buildPromptWithAttachments(bodyText, message.attachments);
                 await appendLocalChatMessage('user', prompt, await buildUserDisplaySegments(prompt, message.attachments));
                 armHttpExpectation(prompt);
-                await sendUserMessageToCli(prompt);
+                await sendUserMessageToCli(prompt, { forceExpert });
             }
             return;
         case 'file/pick':
@@ -1032,6 +2168,12 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
         case 'expert/model/select':
             await selectChatExpertModel(message.modelId);
             return;
+        case 'plan/model/select':
+            await selectChatPlanModel(message.modelId);
+            return;
+        case 'review/model/select':
+            await selectChatReviewModel(message.modelId);
+            return;
         case 'taskFlow/open':
             await openLlsCcaiTaskMenu();
             return;
@@ -1045,13 +2187,19 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
             });
             return;
         case 'cli/restart':
-            await restartChatCli();
+            await restartChatRelayAndCli();
+            return;
+        case 'route/select':
+            await handleRouteSelect(message.route);
+            return;
+        case 'models/applyPair':
+            await handleModelsApplyPair(message.normal, message.expert, message.plan, message.review, message.compaction);
             return;
         case 'user/cancel':
             chatCliCancelRequested = true;
             clearHttpExpectation('user_cancel');
             cancelPendingResend('user_cancel');
-            cliProcess?.cancel();
+            cancelRouteProcess(activeRoute);
             await appendAssistantSegments([{ kind: 'markdown', text: '\n（已请求取消当前输出）\n' }], true);
             return;
         case 'user/resend':
@@ -1073,18 +2221,28 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
             try {
                 const cwd = chatCliConfigService?.getConfig().cwd;
                 if (cwd) {
-                    await chatCliSessionStore?.clearSessionId(cwd);
-                    Logger.info(`[session/clear] 已删除 CLI sessionId 文件：cwd=${cwd}`);
+                    await chatCliSessionStore?.clearSessionId(cwd, 'normal');
+                    await chatCliSessionStore?.clearSessionId(cwd, 'expert');
+                    await chatCliSessionStore?.clearSessionId(cwd, 'plan');
+                    await chatCliSessionStore?.clearSessionId(cwd, 'review');
+                    lastKnownChatCliSessionId = '';
+                    lastKnownExpertChatCliSessionId = '';
+                    lastKnownPlanChatCliSessionId = '';
+                    lastKnownReviewChatCliSessionId = '';
+                    chatSessionRouteById.clear();
+                    Logger.info(`[session/clear] 已删除 normal/expert/plan/review CLI sessionId 文件：cwd=${cwd}`);
+                    await disposePlanCli('session/clear');
+                    await disposeReviewCli('session/clear');
                 }
             } catch (err) {
                 Logger.warn('[session/clear] 删除 CLI sessionId 失败：' + (err instanceof Error ? err.message : String(err)));
             }
             autoContinueScheduler?.cancel('session/clear');
             try {
-                await restartChatCli({ silent: true });
-                Logger.info('[session/clear] Chat CLI 已后台重启为全新空上下文');
+                await restartChatCliPair({ silent: true });
+                Logger.info('[session/clear] Chat CLI pair 已后台重启为全新空上下文');
             } catch (err) {
-                Logger.warn('[session/clear] Chat CLI 重启失败：' + (err instanceof Error ? err.message : String(err)));
+                Logger.warn('[session/clear] Chat CLI pair 重启失败：' + (err instanceof Error ? err.message : String(err)));
             }
             await postChatUiLanguage();
             await chatViewHost?.postMessage({
@@ -1124,6 +2282,50 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
 }
 
 /**
+ * 判断指定 provider 下的模型是否可在 Chat 模型选择中出现。
+ *
+ * 同时校验三项：provider 已启用、模型未被显式禁用（enabled !== false）、
+ * 模型未被排除在用户可选范围外（isUserSelectable !== false）。任一不满足
+ * 即视为不可选，统一供 Chat 模型列表与快照过滤使用。
+ *
+ * @param provider 不含密钥的提供商配置。
+ * @param model 模型配置。
+ * @returns 模型可被用户选择则返回 true，否则返回 false。
+ */
+function isSelectableModel(provider: ProviderConfigWithoutSecrets, model: ModelConfig): boolean {
+    if (!provider.enabled) return false;
+    if (model.enabled === false) return false;
+    if (model.isUserSelectable === false) return false;
+    return true;
+}
+
+/**
+ * 校验「模型选择弹窗」一次性提交的子项是否仍可被选中。
+ *
+ * 在普通 / 专家 / 方案 / 审查任一档位提交前调用。当传入空选择时直接放行
+ * （表示用户主动关闭该子模型）；当传入非空选择时要求 provider 与 model
+ * 仍存在且通过 {@link isSelectableModel} 校验，否则抛出含中文档位标签的错误。
+ *
+ * @param label 用于错误提示的子模型标签，如「普通」「专家」。
+ * @param selection 待校验的 providerId/modelId；null 表示该档位关闭。
+ */
+function assertSelectableSubModel(
+    label: string,
+    selection: { providerId: string; modelId: string } | null
+): void {
+    if (!selection) return;
+    if (!configManager) throw new Error('配置管理器尚未初始化');
+    const provider = configManager.getProvider(selection.providerId);
+    const model = provider?.models.find((item) => item.modelId === selection.modelId);
+    if (!provider || !model) {
+        throw new Error(`${label}模型不存在：${selection.providerId}/${selection.modelId}`);
+    }
+    if (!isSelectableModel(provider, model)) {
+        throw new Error(`${label}模型已被禁用，无法选择：${provider.name}/${model.displayName || model.modelId}`);
+    }
+}
+
+/**
  * 读取配置页中可选模型并推送到 Chat Webview。
  */
 async function postChatModelOptions(): Promise<void> {
@@ -1131,9 +2333,8 @@ async function postChatModelOptions(): Promise<void> {
     const current = configManager.getCurrentModel();
     const models: ChatModelOption[] = [];
     for (const provider of configManager.listProviders()) {
-        if (!provider.enabled) continue;
         for (const model of provider.models) {
-            if (model.isUserSelectable === false) continue;
+            if (!isSelectableModel(provider, model)) continue;
             models.push({
                 providerId: provider.id,
                 providerName: provider.name,
@@ -1154,9 +2355,8 @@ async function postChatExpertModelOptions(): Promise<void> {
     const current = readEffectiveExpertModelSelection();
     const models: ChatModelOption[] = [];
     for (const provider of configManager.listProviders()) {
-        if (!provider.enabled) continue;
         for (const model of provider.models) {
-            if (model.isUserSelectable === false) continue;
+            if (!isSelectableModel(provider, model)) continue;
             models.push({
                 providerId: provider.id,
                 providerName: provider.name,
@@ -1167,6 +2367,179 @@ async function postChatExpertModelOptions(): Promise<void> {
         }
     }
     await chatViewHost?.postMessage({ type: 'expert/model/options', models, current });
+}
+
+/**
+ * 读取方案模型下拉框可选项，并推送当前按「项目 > 全局 > 关闭」解析的选择。
+ */
+async function postChatPlanModelOptions(): Promise<void> {
+    if (!configManager) return;
+    const current = readEffectivePlanModelSelection();
+    const models: ChatModelOption[] = [];
+    for (const provider of configManager.listProviders()) {
+        for (const model of provider.models) {
+            if (!isSelectableModel(provider, model)) continue;
+            models.push({
+                providerId: provider.id,
+                providerName: provider.name,
+                modelId: model.modelId,
+                displayName: model.displayName || model.modelId,
+                selected: current.enabled && current.modelId === model.modelId
+            });
+        }
+    }
+    await chatViewHost?.postMessage({ type: 'plan/model/options', models, current });
+}
+
+/**
+ * 读取审查模型下拉框可选项，并推送当前按「项目 > 全局 > 关闭」解析的选择。
+ */
+async function postChatReviewModelOptions(): Promise<void> {
+    if (!configManager) return;
+    const current = readEffectiveReviewModelSelection();
+    const models: ChatModelOption[] = [];
+    for (const provider of configManager.listProviders()) {
+        for (const model of provider.models) {
+            if (!isSelectableModel(provider, model)) continue;
+            models.push({
+                providerId: provider.id,
+                providerName: provider.name,
+                modelId: model.modelId,
+                displayName: model.displayName || model.modelId,
+                selected: current.enabled && current.modelId === model.modelId
+            });
+        }
+    }
+    await chatViewHost?.postMessage({ type: 'review/model/options', models, current });
+}
+
+/**
+ * 一次性推送普通 + 专家两栏模型可选项与当前选择，用于「模型选择弹窗」。
+ *
+ * 与 `postChatModelOptions` / `postChatExpertModelOptions` 共用底层 provider/model
+ * 数据源，但合并为一条 `models/snapshot` 消息，避免弹窗打开时刷新闪动。
+ */
+async function postModelsSnapshot(): Promise<void> {
+    if (!configManager) return;
+    const currentNormal = configManager.getCurrentModel() ?? null;
+    const currentExpert = readEffectiveExpertModelSelection();
+    const currentPlan = readEffectivePlanModelSelection();
+    const currentReview = readEffectiveReviewModelSelection();
+    const currentCompaction = readEffectiveCompactionModelSelection();
+    const normalModels: ChatModelOption[] = [];
+    const expertModels: ChatModelOption[] = [];
+    const planModels: ChatModelOption[] = [];
+    const reviewModels: ChatModelOption[] = [];
+    const compactionModels: ChatModelOption[] = [];
+    for (const provider of configManager.listProviders()) {
+        for (const model of provider.models) {
+            if (!isSelectableModel(provider, model)) continue;
+            const baseOption: ChatModelOption = {
+                providerId: provider.id,
+                providerName: provider.name,
+                modelId: model.modelId,
+                displayName: model.displayName || model.modelId,
+                selected: false
+            };
+            normalModels.push({
+                ...baseOption,
+                selected: currentNormal?.providerId === provider.id && currentNormal.modelId === model.modelId
+            });
+            expertModels.push({
+                ...baseOption,
+                selected: currentExpert.enabled && currentExpert.modelId === model.modelId
+            });
+            planModels.push({
+                ...baseOption,
+                selected: currentPlan.enabled && currentPlan.modelId === model.modelId
+            });
+            reviewModels.push({
+                ...baseOption,
+                selected: currentReview.enabled && currentReview.modelId === model.modelId
+            });
+            compactionModels.push({
+                ...baseOption,
+                selected: currentCompaction.enabled && currentCompaction.modelId === model.modelId
+            });
+        }
+    }
+    await chatViewHost?.postMessage({
+        type: 'models/snapshot',
+        normalModels,
+        expertModels,
+        planModels,
+        reviewModels,
+        compactionModels,
+        currentNormal: currentNormal ? { providerId: currentNormal.providerId, modelId: currentNormal.modelId } : null,
+        currentExpert,
+        currentPlan,
+        currentReview,
+        currentCompaction
+    });
+}
+
+/**
+ * 处理 webview 路由徽章 / 顶部按钮发回的手动路由切换。
+ *
+ * 第一版仅支持手动切回 `'normal'`：清除 normal 输出可能存在的 @llsExpert
+ * 标记带来的副作用，让下一条用户消息回到普通 CLI；切到 `'expert'` 时也走
+ * 同一条路径，便于用户主动锁定专家。
+ *
+ * @param route 用户希望切换到的路由。
+ */
+async function handleRouteSelect(route: ChatRoute): Promise<void> {
+    if (route === 'expert' && !getStreamAdapterForRoute('expert')) {
+        await showChatToast('warn', '未配置专家任务模型，无法切换到专家路由。');
+        return;
+    }
+    await switchChatRoute(route, 'user-route-select');
+}
+
+/**
+ * 处理「模型选择弹窗」一次性提交的普通 + 专家选择。
+ *
+ * 串行执行普通模型保存、专家模型保存与 Chat CLI pair 重启，最后再推送一次
+ * snapshot，避免双下拉时代两次 select 各触发一次重启的冗余。
+ *
+ * @param normal 普通任务模型；null 表示未选。
+ * @param expert 专家任务模型；null 表示「关闭专家」。
+ */
+async function handleModelsApplyPair(
+    normal: { providerId: string; modelId: string } | null,
+    expert: { providerId: string; modelId: string } | null,
+    plan: { providerId: string; modelId: string } | null,
+    review: { providerId: string; modelId: string } | null,
+    compaction: { providerId: string; modelId: string } | null
+): Promise<void> {
+    if (!configManager) throw new Error('配置管理器尚未初始化');
+    assertSelectableSubModel('普通', normal);
+    assertSelectableSubModel('专家', expert);
+    assertSelectableSubModel('方案', plan);
+    assertSelectableSubModel('审查', review);
+    assertSelectableSubModel('压缩', compaction);
+    if (normal) {
+        const provider = configManager.getProvider(normal.providerId);
+        const model = provider?.models.find((item) => item.modelId === normal.modelId);
+        if (!provider || !model) {
+            throw new Error(`模型不存在：${normal.providerId}/${normal.modelId}`);
+        }
+        await configManager.setCurrentModel({ providerId: normal.providerId, modelId: normal.modelId });
+    }
+    const expertModelId = expert ? `${expert.providerId}/${expert.modelId}` : '';
+    await saveExpertModelSelection(expertModelId);
+    const planModelId = plan ? `${plan.providerId}/${plan.modelId}` : '';
+    await savePlanModelSelection(planModelId);
+    const reviewModelId = review ? `${review.providerId}/${review.modelId}` : '';
+    await saveReviewModelSelection(reviewModelId);
+    const compactionModelId = compaction ? `${compaction.providerId}/${compaction.modelId}` : '';
+    await saveCompactionModelSelection(compactionModelId);
+    await postChatModelOptions();
+    await postChatExpertModelOptions();
+    await postChatPlanModelOptions();
+    await postChatReviewModelOptions();
+    await postModelsSnapshot();
+    await restartChatCliPair({ silent: true });
+    await showChatToast('success', '模型已应用，Chat CLI 已重启。');
 }
 
 /**
@@ -1228,10 +2601,13 @@ async function selectChatModel(providerId: string, modelId: string): Promise<voi
     const provider = configManager.getProvider(providerId);
     const model = provider?.models.find((item) => item.modelId === modelId);
     if (!provider || !model) throw new Error(`模型不存在：${providerId}/${modelId}`);
+    if (!isSelectableModel(provider, model)) {
+        throw new Error(`模型已被禁用，无法选择：${provider.name}/${model.displayName || model.modelId}`);
+    }
     await configManager.setCurrentModel({ providerId, modelId });
     await postChatModelOptions();
-    Logger.info(`Chat 输入框切换模型：${provider.name}/${model.displayName || model.modelId}，将通过 --model 重启 CLI`);
-    await restartChatCli({ silent: true });
+    Logger.info(`Chat 输入框切换模型：${provider.name}/${model.displayName || model.modelId}，将重启 Chat CLI pair`);
+    await restartChatCliPair({ silent: true });
     await showChatToast('success', `模型已切换为：${provider.name}/${model.displayName || model.modelId}`);
 }
 
@@ -1246,13 +2622,53 @@ async function selectChatExpertModel(modelId: string): Promise<void> {
     const current = readEffectiveExpertModelSelection();
     if (!current.enabled) {
         Logger.info('Chat 输入框关闭专家模式，已同步保存项目与全局配置');
-        await restartChatCli({ silent: true });
+        await restartChatCliPair({ silent: true });
         await showChatToast('success', '专家已关闭');
         return;
     }
     Logger.info(`Chat 输入框切换专家模型：${current.modelId}，已同步保存项目与全局配置`);
-    await restartChatCli({ silent: true });
+    await restartChatCliPair({ silent: true });
     await showChatToast('success', `专家模型已切换为：${current.modelId}`);
+}
+
+/**
+ * 从 Chat 输入框方案模型下拉框切换方案模型，并同步保存项目与全局配置。
+ *
+ * @param modelId 方案模型 ID；空字符串表示关闭方案。
+ */
+async function selectChatPlanModel(modelId: string): Promise<void> {
+    await savePlanModelSelection(modelId);
+    await postChatPlanModelOptions();
+    const current = readEffectivePlanModelSelection();
+    if (!current.enabled) {
+        Logger.info('Chat 输入框关闭方案模式，已同步保存项目与全局配置');
+        await restartChatCliPair({ silent: true });
+        await showChatToast('success', '方案已关闭');
+        return;
+    }
+    Logger.info(`Chat 输入框切换方案模型：${current.modelId}，已同步保存项目与全局配置`);
+    await restartChatCliPair({ silent: true });
+    await showChatToast('success', `方案模型已切换为：${current.modelId}`);
+}
+
+/**
+ * 从 Chat 输入框审查模型下拉框切换审查模型，并同步保存项目与全局配置。
+ *
+ * @param modelId 审查模型 ID；空字符串表示关闭审查。
+ */
+async function selectChatReviewModel(modelId: string): Promise<void> {
+    await saveReviewModelSelection(modelId);
+    await postChatReviewModelOptions();
+    const current = readEffectiveReviewModelSelection();
+    if (!current.enabled) {
+        Logger.info('Chat 输入框关闭审查模式，已同步保存项目与全局配置');
+        await restartChatCliPair({ silent: true });
+        await showChatToast('success', '审查已关闭');
+        return;
+    }
+    Logger.info(`Chat 输入框切换审查模型：${current.modelId}，已同步保存项目与全局配置`);
+    await restartChatCliPair({ silent: true });
+    await showChatToast('success', `审查模型已切换为：${current.modelId}`);
 }
 
 /**
@@ -1677,7 +3093,7 @@ function armHttpExpectation(prompt: string): void {
     clearHttpExpectation('rearm');
     pendingHttpExpectationPrompt = prompt;
     pendingHttpExpectationStartedAt = Date.now();
-    Logger.info(`Relay 命中看门狗已启动：timeout=${HTTP_EXPECTATION_TIMEOUT_MS}ms, promptLength=${prompt.length}`);
+    Logger.info(`Relay 看门狗已启动（等待 Relay 命中）：timeout=${HTTP_EXPECTATION_TIMEOUT_MS}ms, promptLength=${prompt.length}`);
     pendingHttpExpectationTimer = setTimeout(() => {
         pendingHttpExpectationTimer = undefined;
         void onHttpExpectationTimeout();
@@ -1697,7 +3113,7 @@ function clearHttpExpectation(reason: string): void {
         clearTimeout(pendingHttpExpectationTimer);
         pendingHttpExpectationTimer = undefined;
         const elapsed = pendingHttpExpectationStartedAt ? Date.now() - pendingHttpExpectationStartedAt : -1;
-        Logger.info(`Relay 命中看门狗已清除：reason=${reason}, elapsed=${elapsed}ms`);
+        Logger.info(`Relay 看门狗已清除：reason=${reason}, elapsed=${elapsed}ms`);
     }
     pendingHttpExpectationPrompt = undefined;
     pendingHttpExpectationStartedAt = undefined;
@@ -1712,14 +3128,14 @@ function clearHttpExpectation(reason: string): void {
  */
 async function onHttpExpectationTimeout(): Promise<void> {
     if (isHealingRelayAndCli) {
-        Logger.warn('Relay 命中看门狗超时，但已有自愈流程在执行，本次忽略');
+        Logger.warn('Relay 看门狗超时，但已有自愈流程在执行，本次忽略');
         return;
     }
     const prompt = pendingHttpExpectationPrompt;
     pendingHttpExpectationPrompt = undefined;
     pendingHttpExpectationStartedAt = undefined;
     if (!prompt) {
-        Logger.warn('Relay 命中看门狗超时，但未保留 prompt，跳过自愈');
+        Logger.warn('Relay 看门狗超时，但未保留 prompt，跳过自愈');
         return;
     }
     isHealingRelayAndCli = true;
@@ -1869,22 +3285,58 @@ function cancelPendingResend(reason: string): void {
  *
  * @param text 用户输入文本。
  */
-async function sendUserMessageToCli(text: string, options: { hidden?: boolean } = {}): Promise<void> {
-    Logger.info(`准备发送 Chat 消息到 CLI：length=${text.length}`);
+async function sendUserMessageToCli(text: string, options: { hidden?: boolean; suppressResponse?: boolean; forceExpert?: boolean; forceRoute?: ChatRoute } = {}): Promise<void> {
     chatCliCancelRequested = false;
     activeAssistantMessageId = undefined;
-    if (!options.hidden) {
-        const assistantMessage = await createActiveAssistantMessage();
-        Logger.info(`Chat 已创建 assistant 输出区域：id=${assistantMessage.id}`);
+
+    let route = options.forceRoute ?? activeRoute;
+    let outgoingText = text;
+    const trimmed = text.trim();
+    if (options.forceExpert || startsWithExpertPrefix(trimmed)) {
+        route = 'expert';
+        outgoingText = startsWithExpertPrefix(trimmed) ? stripExpertPrefix(text) : text;
+        await switchChatRoute('expert', 'user-prefix');
+    } else if (options.forceRoute) {
+        await switchChatRoute(options.forceRoute, 'force-route');
+    }
+
+    const hidden = options.hidden === true;
+    const suppressResponse = options.suppressResponse === true;
+    if (suppressResponse) hiddenCliResponseTurnsByRoute[route] += 1;
+
+    Logger.info(`用户发送内容(${route}, hidden=${hidden})：${formatLogPreview(outgoingText)}`);
+
+    if (!hidden) {
+        const assistantMessage = await createActiveAssistantMessage(route);
+        Logger.info(`Chat 已创建 ${route} assistant 输出区域：id=${assistantMessage.id}`);
     }
     try {
         await ensureChatCliStarted();
-        ensureStreamJsonCliAdapter();
-        await streamJsonCliAdapter?.sendUserMessage(text);
-        Logger.info('Chat 消息已提交到 stream-json 适配器');
+        if (route === 'plan') {
+            await ensurePlanCliStarted();
+        } else if (route === 'review') {
+            await ensureReviewCliStarted();
+        }
+        if (route === 'expert') {
+            // 按需专家方案：用户级 @llsExpert / /expert 不再走常驻 expert CLI，
+            // 改为直接调用 ExpertSubturnService 跑一次无历史 sub-turn。
+            await runUserTriggeredExpertSubturn(outgoingText, { hidden });
+            activeRoute = 'normal';
+            await chatViewHost?.postMessage({ type: 'route/changed', route: 'normal' });
+            return;
+        }
+        const adapter = getStreamAdapterForRoute(route);
+        if (!adapter) {
+            throw new Error(`${route} Chat CLI adapter 未就绪`);
+        }
+        if (route !== 'normal') {
+            Logger.info(`发送消息到 ${route} Chat CLI：length=${outgoingText.length}, hidden=${hidden}, forceRoute=${options.forceRoute ?? ''}`);
+        }
+        await adapter.sendUserMessage(outgoingText);
     } catch (err) {
+        if (suppressResponse) hiddenCliResponseTurnsByRoute[route] = Math.max(0, hiddenCliResponseTurnsByRoute[route] - 1);
         const message = err instanceof Error ? err.message : String(err);
-        if (!options.hidden) {
+        if (!hidden) {
             await appendAssistantSegments([{ kind: 'error', text: `\n发送到 CLI 失败：${message}\n` }], true);
         }
         throw err;
@@ -1907,14 +3359,14 @@ async function appendUserMessageAndSend(text: string): Promise<void> {
  *
  * @param text 内部消息文本。
  */
-async function sendHiddenUserMessageToCli(text: string): Promise<void> {
-    hiddenCliResponseTurns += 1;
+async function sendHiddenUserMessageToCli(text: string, route: ChatRoute = activeRoute): Promise<void> {
+    const previousRoute = activeRoute;
+    activeRoute = route;
     try {
         await ensureChatCliStarted();
         await sendUserMessageToCli(text, { hidden: true });
-    } catch (err) {
-        hiddenCliResponseTurns = Math.max(0, hiddenCliResponseTurns - 1);
-        throw err;
+    } finally {
+        activeRoute = previousRoute;
     }
 }
 
@@ -1934,16 +3386,93 @@ async function fillBuiltInChatComposer(text: string, focus: boolean): Promise<vo
  *
  * @param context 扩展上下文，用于注册 Disposable。
  */
-function registerChatCliStatusHandlers(context: vscode.ExtensionContext): void {
-    if (!cliProcess) return;
-    context.subscriptions.push(cliProcess.onStatus((status) => {
-        void chatViewHost?.postMessage({ type: 'cli/status', status: mapCliStatusForWebview(status) });
-    }));
-    context.subscriptions.push(cliProcess.onExit((event) => {
-        void handleChatCliExit(event).catch((err: unknown) => {
-            Logger.error('处理 Chat CLI 退出事件失败', err);
+function registerChatCliStatusHandlers(context?: vscode.ExtensionContext): void {
+    bindNormalCliStatusHandlers();
+    bindExpertCliStatusHandlers();
+    bindPlanCliStatusHandlers();
+    bindReviewCliStatusHandlers();
+    if (context) {
+        context.subscriptions.push({
+            dispose: () => {
+                normalCliStatusSubscription?.dispose();
+                normalCliStatusSubscription = undefined;
+                normalCliExitSubscription?.dispose();
+                normalCliExitSubscription = undefined;
+                expertCliStatusSubscription?.dispose();
+                expertCliStatusSubscription = undefined;
+                expertCliExitSubscription?.dispose();
+                expertCliExitSubscription = undefined;
+                planCliStatusSubscription?.dispose();
+                planCliStatusSubscription = undefined;
+                planCliExitSubscription?.dispose();
+                planCliExitSubscription = undefined;
+                reviewCliStatusSubscription?.dispose();
+                reviewCliStatusSubscription = undefined;
+                reviewCliExitSubscription?.dispose();
+                reviewCliExitSubscription = undefined;
+            }
         });
-    }));
+    }
+}
+
+/**
+ * 订阅 normal CLI 进程状态变化。
+ */
+function bindNormalCliStatusHandlers(): void {
+    if (!normalCliProcess || normalCliStatusSubscription || normalCliExitSubscription) return;
+    normalCliStatusSubscription = normalCliProcess.onStatus((status) => {
+        void chatViewHost?.postMessage({ type: 'cli/status', status: mapCliStatusForWebview(status) });
+    });
+    normalCliExitSubscription = normalCliProcess.onExit((event) => {
+        void handleChatCliExit(event, 'normal').catch((err: unknown) => {
+            Logger.error('处理 normal Chat CLI 退出事件失败', err);
+        });
+    });
+}
+
+/**
+ * 订阅 expert CLI 进程状态变化。
+ */
+function bindExpertCliStatusHandlers(): void {
+    if (!expertCliProcess || expertCliStatusSubscription || expertCliExitSubscription) return;
+    expertCliStatusSubscription = expertCliProcess.onStatus((status) => {
+        Logger.info(`expert Chat CLI 状态变化：${status}`);
+    });
+    expertCliExitSubscription = expertCliProcess.onExit((event) => {
+        void handleChatCliExit(event, 'expert').catch((err: unknown) => {
+            Logger.error('处理 expert Chat CLI 退出事件失败', err);
+        });
+    });
+}
+
+/**
+ * 订阅 plan CLI 进程状态变化。
+ */
+function bindPlanCliStatusHandlers(): void {
+    if (!planCliProcess || planCliStatusSubscription || planCliExitSubscription) return;
+    planCliStatusSubscription = planCliProcess.onStatus((status) => {
+        Logger.info(`plan Chat CLI 状态变化：${status}`);
+    });
+    planCliExitSubscription = planCliProcess.onExit((event) => {
+        void handleChatCliExit(event, 'plan').catch((err: unknown) => {
+            Logger.error('处理 plan Chat CLI 退出事件失败', err);
+        });
+    });
+}
+
+/**
+ * 订阅 review CLI 进程状态变化。
+ */
+function bindReviewCliStatusHandlers(): void {
+    if (!reviewCliProcess || reviewCliStatusSubscription || reviewCliExitSubscription) return;
+    reviewCliStatusSubscription = reviewCliProcess.onStatus((status) => {
+        Logger.info(`review Chat CLI 状态变化：${status}`);
+    });
+    reviewCliExitSubscription = reviewCliProcess.onExit((event) => {
+        void handleChatCliExit(event, 'review').catch((err: unknown) => {
+            Logger.error('处理 review Chat CLI 退出事件失败', err);
+        });
+    });
 }
 
 /**
@@ -1966,19 +3495,24 @@ function mapCliStatusForWebview(status: ReturnType<CliProcess['getStatus']>): 'i
  *
  * @param event CLI 退出事件。
  */
-async function handleChatCliExit(event: { code: number | null; signal: NodeJS.Signals | null }): Promise<void> {
-    const detail = `code=${event.code ?? 'null'}, signal=${event.signal ?? 'null'}`;
-    clearHttpExpectation('cli_exit');
-    cancelPendingResend('cli_exit');
-    await chatViewHost?.postMessage({ type: 'cli/status', status: event.code === 0 ? 'exited' : 'error', detail });
-    if (chatCliCancelRequested) {
+async function handleChatCliExit(
+    event: { code: number | null; signal: NodeJS.Signals | null },
+    source: ChatRoute = 'normal'
+): Promise<void> {
+    const detail = `source=${source}, code=${event.code ?? 'null'}, signal=${event.signal ?? 'null'}`;
+    clearHttpExpectation(`${source}_cli_exit`);
+    cancelPendingResend(`${source}_cli_exit`);
+    if (source === 'normal') {
+        await chatViewHost?.postMessage({ type: 'cli/status', status: event.code === 0 ? 'exited' : 'error', detail });
+    }
+    if (chatCliCancelRequested && source === 'normal') {
         chatCliCancelRequested = false;
         await finishActiveAssistantMessage();
         return;
     }
     if (event.code === 0) return;
     const restart = '重启 CLI';
-    const choice = await vscode.window.showErrorMessage(`Chat CLI 异常退出：${detail}`, restart);
+    const choice = await vscode.window.showErrorMessage(`${source} Chat CLI 异常退出：${detail}`, restart);
     if (choice === restart) {
         await restartChatCli();
     }
@@ -1990,13 +3524,14 @@ async function handleChatCliExit(event: { code: number | null; signal: NodeJS.Si
  * @param role 消息角色。
  * @param text 消息文本。
  */
-async function appendLocalChatMessage(role: ChatMessage['role'], text: string, segments?: ChatSegment[]): Promise<void> {
+async function appendLocalChatMessage(role: ChatMessage['role'], text: string, segments?: ChatSegment[], route: ChatRoute = activeRoute): Promise<void> {
     const message: ChatMessage = {
         id: `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
         role,
         // 同时保存原始 text，方便 user 消息重发与前端 fallback 渲染。
         text,
         segments: segments ?? [{ kind: 'markdown', text }],
+        route,
         createdAt: Date.now()
     };
     chatMessages.push(message);
@@ -2070,11 +3605,22 @@ async function handleUserResend(id: string, editedText?: string): Promise<void> 
 
     Logger.info(`处理 user/resend：id=${id}, index=${index}, totalBefore=${chatMessages.length}, promptLength=${promptText.length}`);
 
-    // 中断当前正在进行的请求。
+    // 仅中断正在执行的请求；空闲 CLI 不发 SIGINT，避免重发时把常驻进程打退出。
     chatCliCancelRequested = true;
     clearHttpExpectation('user_resend');
     cancelPendingResend('user_resend');
-    cliProcess?.cancel();
+    if (isRouteBusy('normal')) {
+        cancelRouteProcess('normal');
+    }
+    if (isRouteBusy('expert')) {
+        cancelRouteProcess('expert');
+    }
+    if (isRouteBusy('plan')) {
+        cancelRouteProcess('plan');
+    }
+    if (isRouteBusy('review')) {
+        cancelRouteProcess('review');
+    }
 
     // 截断：连同目标 user 消息一起删除。
     chatMessages = chatMessages.slice(0, index);
@@ -2138,7 +3684,6 @@ async function appendAssistantSegments(segments: ChatSegment[], done: boolean): 
     // 按 segment.id 去重合并：相同 id 的片段视为对同一 segment 的多次更新（典型场景为工具卡片）
     // —— 此时应原地替换已有 segment，而不是追加新条目，以避免重复渲染。
     for (const incoming of visibleSegments) {
-        rememberExpertToolContext(message.id, incoming);
         syncTokenBudgetContextWindowFromUsage(incoming, message);
         if (incoming.id) {
             const existingIndex = message.segments.findIndex((item) => item.id === incoming.id);
@@ -2210,28 +3755,6 @@ function estimateAssistantOutputTokensForMeter(usageSegment: ChatSegment, messag
 }
 
 /**
- * 记录主模型刚发起的 ask_expert 工具卡片上下文。
- *
- * Relay 收到 `/__expert/run` 时，MCP 工具参数里未必包含 parentMessageId/callId；
- * 因此扩展宿主需要在看到主 CLI 的工具卡片 segment 时保存一次上下文，随后由
- * expertHandler 注入给 ExpertRunnerService，确保专家事件能实时挂到正确位置。
- *
- * @param parentMessageId 当前 assistant 消息 id。
- * @param segment 本次 patch 到达的 ChatSegment。
- */
-function rememberExpertToolContext(parentMessageId: string, segment: ChatSegment): void {
-    const tool = segment.tool;
-    if (!segment.id || segment.kind !== 'tool' || !tool) return;
-    if (tool.name !== 'mcp__llsExpert__ask_expert' && tool.name !== 'ask_expert') return;
-    const callId = segment.id.startsWith('tool:') ? segment.id.slice('tool:'.length) : segment.id;
-    pendingExpertToolContext = {
-        parentMessageId,
-        callId,
-        toolSegmentId: segment.id
-    };
-}
-
-/**
  * 标记当前 assistant 流式消息完成。
  */
 async function finishActiveAssistantMessage(): Promise<void> {
@@ -2255,8 +3778,8 @@ async function finishActiveAssistantMessage(): Promise<void> {
  *
  * @returns 新创建的活动 assistant 消息。
  */
-async function createActiveAssistantMessage(): Promise<ChatMessage> {
-    const message = buildAssistantMessage();
+async function createActiveAssistantMessage(route: ChatRoute = activeRoute): Promise<ChatMessage> {
+    const message = buildAssistantMessage(route);
     chatMessages.push(message);
     activeAssistantMessageId = message.id;
     schedulePersistChatSession();
@@ -2286,12 +3809,14 @@ async function getActiveAssistantMessageForPatch(): Promise<ChatMessage> {
  *
  * @returns 新的 assistant 消息。
  */
-function buildAssistantMessage(): ChatMessage {
+function buildAssistantMessage(route: ChatRoute = activeRoute): ChatMessage {
     return {
         id: `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
         role: 'assistant',
         segments: [],
         pending: true,
+        route,
+        modelLabel: getModelLabelForRoute(route),
         createdAt: Date.now()
     };
 }
@@ -2608,7 +4133,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     configManager = new ConfigManager(context);
     chatCliConfigService = new ChatCliConfigService(configManager);
     cliResolver = new CliResolver(chatCliConfigService);
-    cliProcess = new CliProcess();
+    normalCliProcess = new CliProcess();
     chatCliSessionStore = new ChatCliSessionStore();
     chatViewHost = new ChatViewHost(context);
     llsTaskService = new LlsTaskService(configManager);
@@ -2623,33 +4148,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     settingsWriter = new SettingsWriter();
     relayServer = new RelayServer({ desiredPort: 0 });
     const debugRecorder = new DebugRecorder();
-    // 装配「专家模式」组合根：ExpertRunnerService 持有 chatCliConfigService +
-    // chatViewHost，对外暴露 run() 给 relay 路由调用；并产出一次性鉴权 token
-    // 同步注入到 ChatCliConfigService（写到 expertMcpServer 子进程的 env）和
-    // RelayRouter（用于 `/__expert/run` 入口校验）。
-    const expertRunnerService = new ExpertRunnerService(chatCliConfigService, chatViewHost);
-    expertRunnerServiceRef = expertRunnerService;
-    // 装配 TokenBudgetService：
-    //   - beforeSend：三个 adapter 在 injectLlsTaskRequestBody 后做 token 估算与登记；
-    //   - afterRecv：通过共用 usageSink 桥接，把 UsageReporter 抽到的权威 usage
-    //     覆盖 current，并在累计 input ≥ contextLimit−60000 时异步触发自动压缩；
-    //   - 触发压缩时依次执行：模型摘要 → <summ> 包装 → SessionResetter.reset →
-    //     SeedInjector 注入摘要 → webview 卡片渲染。
-    const sessionResetter: SessionResetter = createSessionResetter();
-    const seedInjector: SeedInjector = {
-        sendUserMessage: async (text: string) => {
-            await sendHiddenUserMessageToCli(text);
-        }
-    };
-    const compactionClient = new CompactionClient();
+    // 装配 TokenBudgetService：记录 token 预算，并在阈值触达时让 normal CLI 执行原生 /compact。
     const tokenBudgetService = new TokenBudgetService({
         configManager,
-        compactionClient,
         commandSender: async (command: string) => {
-            await sendHiddenUserMessageToCli(command);
+            await sendHiddenUserMessageToCli(command, 'normal');
         },
-        sessionResetter,
-        seedInjector,
         notifier: {
             notifyCompactionState: (state: CompactionState) => {
                 // 把 CompactionState 转换为 chatViewHost 协议消息推送到 webview。
@@ -2762,29 +4266,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 Logger.error(`上游超时自动 Continue 失败：${err instanceof Error ? err.message : String(err)}`);
             });
         },
-        expertHandler: {
-            authToken: expertRunnerService.getAuthToken(),
-            run: (body, signal) =>
-                expertRunnerService.run({
-                    args: {
-                        question: body.question,
-                        context: body.context,
-                        goal: body.goal,
-                        constraints: body.constraints,
-                        toolSegmentId: body.toolSegmentId
-                    },
-                    parentMessageId: body.parentMessageId ?? pendingExpertToolContext?.parentMessageId,
-                    callId: body.callId ?? pendingExpertToolContext?.callId,
-                    toolSegmentId: body.toolSegmentId ?? pendingExpertToolContext?.toolSegmentId,
-                    signal
-                })
+        onUpstreamRequestStart: ({ route }) => {
+            setRelayRouteBusy(route, true, 'relay_request_start');
+        },
+        onUpstreamRequestEnd: ({ route }) => {
+            setRelayRouteBusy(route, false, 'relay_request_end');
         }
     }));
     relayServer.setOnHit(() => clearHttpExpectation('relay_hit'));
     void cleanupLegacyRelaySettingsSafely();
 
     context.subscriptions.push(configManager);
-    context.subscriptions.push(cliProcess);
+    context.subscriptions.push(normalCliProcess);
     context.subscriptions.push(chatViewHost);
     context.subscriptions.push(llsTaskService);
     context.subscriptions.push(llsTaskService.onDidChange(() => {
@@ -2920,11 +4413,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }),
         vscode.commands.registerCommand(COMMANDS.chatRestart, async () => {
             try {
-                await restartChatCli();
+                await restartChatRelayAndCli();
             } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
-                Logger.error(`重启 Chat CLI 失败：${message}`);
-                await vscode.window.showErrorMessage(`重启 Chat CLI 失败：${message}`);
+                Logger.error(`重启本地中转与 Chat CLI 失败：${message}`);
+                await vscode.window.showErrorMessage(`重启本地中转与 Chat CLI 失败：${message}`);
             }
         }),
         vscode.commands.registerCommand(COMMANDS.refreshProviders, () => undefined),
@@ -2980,19 +4473,38 @@ export function deactivate(): void {
     cancelPendingResend('deactivate');
     autoContinueScheduler?.cancel('扩展停用');
     autoContinueScheduler = undefined;
+    clearPlanIdleDisposeTimer();
+    clearReviewIdleDisposeTimer();
     relayServer?.dispose();
     relayServer = undefined;
     streamJsonCliAdapterSubscription?.dispose();
     streamJsonCliAdapterSubscription = undefined;
-    streamJsonCliAdapter?.dispose();
-    streamJsonCliAdapter = undefined;
-    cliProcess?.dispose();
-    cliProcess = undefined;
+    normalStreamJsonAdapter?.dispose();
+    normalStreamJsonAdapter = undefined;
+    expertStreamJsonAdapterSubscription?.dispose();
+    expertStreamJsonAdapterSubscription = undefined;
+    expertStreamJsonAdapter?.dispose();
+    expertStreamJsonAdapter = undefined;
+    planStreamJsonAdapterSubscription?.dispose();
+    planStreamJsonAdapterSubscription = undefined;
+    planStreamJsonAdapter?.dispose();
+    planStreamJsonAdapter = undefined;
+    reviewStreamJsonAdapterSubscription?.dispose();
+    reviewStreamJsonAdapterSubscription = undefined;
+    reviewStreamJsonAdapter?.dispose();
+    reviewStreamJsonAdapter = undefined;
+    expertCliProcess?.dispose();
+    expertCliProcess = undefined;
+    planCliProcess?.dispose();
+    planCliProcess = undefined;
+    reviewCliProcess?.dispose();
+    reviewCliProcess = undefined;
+    normalCliProcess?.dispose();
+    normalCliProcess = undefined;
     chatViewHost?.dispose();
     chatViewHost = undefined;
     cliResolver = undefined;
     chatCliConfigService = undefined;
-    expertRunnerServiceRef = undefined;
     configViewProvider?.dispose();
     configViewProvider = undefined;
     llsTaskService?.dispose();

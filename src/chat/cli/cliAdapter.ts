@@ -89,8 +89,33 @@ export type ParsedCliEvent =
     | { type: 'segments'; segments: ChatSegment[]; done?: boolean }
     | { type: 'error'; message: string; detail?: string }
     | { type: 'session/init'; sessionId: string; cwd: string }
+    | { type: 'compact/status'; status: 'compacting' | null; compactResult?: string; sessionId?: string; uuid?: string }
     | ToolPermissionRequestEvent
+    | ExpertSubturnStartedEvent
+    | ExpertSubturnFinishedEvent
     | { type: 'done' };
+
+/** 主 CLI 发起一次 ask_expert MCP 工具调用的事件。 */
+export interface ExpertSubturnStartedEvent {
+    /** 事件类型。 */
+    type: 'expert/subturn/started';
+    /** Anthropic tool_use_id，用于与后续 tool_result 配对。 */
+    toolUseId: string;
+    /** 主模型传入的 question 字段。 */
+    question: string;
+}
+
+/** 主 CLI 收到 ask_expert 工具最终 tool_result 的事件。 */
+export interface ExpertSubturnFinishedEvent {
+    /** 事件类型。 */
+    type: 'expert/subturn/finished';
+    /** 配对的 tool_use_id。 */
+    toolUseId: string;
+    /** 专家最终回答文本（或失败原因）。 */
+    content: string;
+    /** 是否为错误响应。 */
+    isError: boolean;
+}
 
 // =============================================================================
 // 常量
@@ -263,9 +288,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         this.hasEmittedAssistantContent = false;
         this.recentAssistantText = '';
         const jsonLine = JSON.stringify(this.buildUserMessageLine(text));
-        Logger.info(`stream-json 适配器准备写入用户消息：textLength=${text.length}, jsonLength=${jsonLine.length}`);
         this.process.send(jsonLine);
-        Logger.info('stream-json 适配器已调用 CliProcess.send');
     }
 
     /**
@@ -564,7 +587,11 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         const initEvent = this.parseSystemInitEvent(record);
         if (initEvent) return initEvent;
 
-        // 1.1. system / taskstarted / tasknotification → 任务卡片 segment
+        // 1.1. system / status → CLI 原生压缩状态
+        const statusEvent = this.parseSystemStatusEvent(record);
+        if (statusEvent) return statusEvent;
+
+        // 1.2. system / taskstarted / tasknotification → 任务卡片 segment
         const taskEvent = this.parseSystemTaskEvent(record);
         if (taskEvent) return taskEvent;
 
@@ -704,6 +731,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         'task_notification',
         'taskprogress',
         'task_progress',
+        'compact_boundary',
     ]);
 
     private static readonly HIDDEN_CHAT_TOOL_NAMES: ReadonlySet<string> = new Set([
@@ -712,6 +740,26 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         'EnterPlanMode',
         'ExitPlanMode'
     ]);
+
+    /**
+     * ask_expert 委托工具完整名集合。
+     *
+     * 由 in-process MCP server 注册到 Claude CLI 后，工具名按 MCP 命名规则
+     * 被 CLI 重写为 `mcp__<server>__<tool>`，即 `mcp__askExpert__ask_expert`。
+     * 本适配器命中该名称时不渲染普通工具卡片，改为发出 expert/subturn/* 事件。
+     */
+    private static readonly EXPERT_DELEGATION_TOOL_NAMES: ReadonlySet<string> = new Set([
+        'mcp__askExpert__ask_expert',
+        'ask_expert'
+    ]);
+
+    /**
+     * 已被拦截的 ask_expert tool_use_id 集合。
+     *
+     * 当后续 tool_result 命中其中一个 id 时，转换为 expert/subturn/finished 事件
+     * 而非渲染普通 tool_result segment。
+     */
+    private readonly askExpertToolUseIds = new Set<string>();
 
     /**
      * 识别上游 stdout 中穿插的系统任务事件并静默丢弃。
@@ -727,6 +775,21 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      * @param record CLI JSON 事件对象。
      * @returns 命中时返回空 segments 事件以丢弃，否则返回 undefined。
      */
+    /** 识别 Claude CLI 原生压缩状态事件。 */
+    private parseSystemStatusEvent(record: Record<string, unknown>): ParsedCliEvent | undefined {
+        if (record.type !== 'system' || record.subtype !== 'status') return undefined;
+        const status = record.status === 'compacting' ? 'compacting' : null;
+        const compactResult = typeof record.compact_result === 'string' ? record.compact_result : undefined;
+        if (status !== 'compacting' && !compactResult) return { type: 'segments', segments: [], done: false };
+        return {
+            type: 'compact/status',
+            status,
+            compactResult,
+            sessionId: typeof record.session_id === 'string' ? record.session_id : undefined,
+            uuid: typeof record.uuid === 'string' ? record.uuid : undefined
+        };
+    }
+
     private parseSystemTaskEvent(record: Record<string, unknown>): ParsedCliEvent | undefined {
         if (record.type !== 'system') return undefined;
         const subtype = typeof record.subtype === 'string' ? record.subtype : '';
@@ -865,6 +928,12 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
             this.registerBlockState(index, state);
             if (this.isHiddenChatToolName(state.toolName)) {
                 if (state.toolUseId) this.hiddenToolUseIds.add(state.toolUseId);
+                return { type: 'segments', segments: [], done: false };
+            }
+            if (this.isExpertDelegationToolName(state.toolName)) {
+                if (state.toolUseId) this.askExpertToolUseIds.add(state.toolUseId);
+                // 第一阶段：仅静默隐藏卡片，正式 expert/subturn/started 事件待
+                // input_json_delta 累积完整 question 后在 content_block_stop 中发出。
                 return { type: 'segments', segments: [], done: false };
             }
 
@@ -1006,6 +1075,14 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
 
         if (block.type === 'tool_use' && block.toolUseId) {
             if (this.isHiddenChatToolName(block.toolName)) return { type: 'segments', segments: [], done: false };
+            if (this.isExpertDelegationToolName(block.toolName) && this.askExpertToolUseIds.has(block.toolUseId)) {
+                const question = this.extractAskExpertQuestion(block.toolInputJson);
+                return {
+                    type: 'expert/subturn/started',
+                    toolUseId: block.toolUseId,
+                    question
+                };
+            }
             const segment = this.toolSegmentById.get(block.toolUseId);
             if (segment) {
                 const pretty = this.tryFormatJson(block.toolInputJson) ?? block.toolInputJson;
@@ -1150,6 +1227,19 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     }
 
     /**
+     * 判断工具名是否是 ask_expert 委托工具（含 MCP 前缀变体）。
+     *
+     * Claude CLI 把 MCP 工具的完整名重写为 `mcp__<server>__<tool>`，所以这里
+     * 同时匹配 `mcp__askExpert__ask_expert` 与裸名 `ask_expert`。
+     *
+     * @param name 工具名。
+     * @returns 是否命中。
+     */
+    private isExpertDelegationToolName(name: string | undefined): boolean {
+        return !!name && StreamJsonCliAdapter.EXPERT_DELEGATION_TOOL_NAMES.has(name);
+    }
+
+    /**
      * 给思考块文本加上"> 💭 "前缀，并保证以换行结尾，便于 Markdown 引用块渲染。
      *
      * 由于 thinking_delta 是流式增量，单次 chunk 不一定包含完整段落，这里以
@@ -1288,8 +1378,24 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
                 continue;
             }
             if (blockType === 'tool_use') {
-                if (this.isHiddenChatToolName(typeof block.name === 'string' ? block.name : undefined)) {
+                const toolName = typeof block.name === 'string' ? block.name : undefined;
+                if (this.isHiddenChatToolName(toolName)) {
                     if (typeof block.id === 'string') this.hiddenToolUseIds.add(block.id);
+                    continue;
+                }
+                if (this.isExpertDelegationToolName(toolName)) {
+                    const toolUseId = typeof block.id === 'string' ? block.id : '';
+                    if (toolUseId) this.askExpertToolUseIds.add(toolUseId);
+                    const question = this.extractAskExpertQuestionFromInput(block.input);
+                    // 注意：parseSdkWrapperEvent 返回的是 segments 事件，无法直接发出独立的
+                    // expert/subturn/started。这里用 ad-hoc sourceText 编码 expert event 信息
+                    // 由 extension.ts 端通过订阅 onParsed 后用一个监听切片识别。
+                    // 简化起见：直接通过 emitter 旁路发出 expert/subturn/started。
+                    this.emitAdHoc({
+                        type: 'expert/subturn/started',
+                        toolUseId,
+                        question
+                    });
                     continue;
                 }
                 const segment = this.buildSegmentFromCompleteToolUse(block);
@@ -1297,6 +1403,19 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
                 continue;
             }
             if (blockType === 'tool_result') {
+                const toolUseId = typeof block.tool_use_id === 'string' ? block.tool_use_id : '';
+                if (toolUseId && this.askExpertToolUseIds.has(toolUseId)) {
+                    const content = this.stringifyToolResultContent(block.content);
+                    const isError = block.is_error === true;
+                    this.askExpertToolUseIds.delete(toolUseId);
+                    this.emitAdHoc({
+                        type: 'expert/subturn/finished',
+                        toolUseId,
+                        content,
+                        isError
+                    });
+                    continue;
+                }
                 const segment = this.applyToolResult(block);
                 if (segment) segments.push(segment);
                 continue;
@@ -1455,12 +1574,35 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     private handleStandaloneToolBlock(record: Record<string, unknown>): ParsedCliEvent {
         const type = record.type === 'tool_result' ? 'tool_result' : 'tool_use';
         if (type === 'tool_use') {
-            if (this.isHiddenChatToolName(typeof record.name === 'string' ? record.name : undefined)) {
+            const toolName = typeof record.name === 'string' ? record.name : undefined;
+            if (this.isHiddenChatToolName(toolName)) {
                 if (typeof record.id === 'string') this.hiddenToolUseIds.add(record.id);
                 return { type: 'segments', segments: [], done: false };
             }
+            if (this.isExpertDelegationToolName(toolName)) {
+                const toolUseId = typeof record.id === 'string' ? record.id : '';
+                if (toolUseId) this.askExpertToolUseIds.add(toolUseId);
+                const question = this.extractAskExpertQuestionFromInput(record.input);
+                return {
+                    type: 'expert/subturn/started',
+                    toolUseId,
+                    question
+                };
+            }
             const segment = this.buildSegmentFromCompleteToolUse(record);
             return { type: 'segments', segments: [segment], done: false };
+        }
+        const toolUseId = typeof record.tool_use_id === 'string' ? record.tool_use_id : '';
+        if (toolUseId && this.askExpertToolUseIds.has(toolUseId)) {
+            const content = this.stringifyToolResultContent(record.content);
+            const isError = record.is_error === true;
+            this.askExpertToolUseIds.delete(toolUseId);
+            return {
+                type: 'expert/subturn/finished',
+                toolUseId,
+                content,
+                isError
+            };
         }
         const segment = this.applyToolResult(record);
         return { type: 'segments', segments: segment ? [segment] : [], done: false };
@@ -1476,8 +1618,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         const name = typeof block.name === 'string' ? block.name : 'tool';
         const id = typeof block.id === 'string' ? block.id : undefined;
         const inputValue = block.input;
-        const inputWithUiMeta = this.attachToolUiMetadata(name, id, inputValue);
-        const inputPretty = this.tryStringifyValue(inputWithUiMeta);
+        const inputPretty = this.tryStringifyValue(inputValue);
         const segment: ChatSegment = {
             id: this.buildToolSegmentId(id),
             kind: 'tool',
@@ -1487,36 +1628,13 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
                 status: 'running',
                 summary: this.buildToolSummary(name, 'running'),
                 detail: inputPretty,
-                input: inputWithUiMeta
+                input: inputValue
             },
             sourceText: inputPretty,
             confidence: 'high'
         };
         if (id) this.toolSegmentById.set(id, segment);
         return segment;
-    }
-
-    /**
-     * 为 ask_expert 工具入参加入仅供本地 UI 使用的关联元数据。
-     *
-     * Claude CLI 会把 MCP tool_use.input 原样传给 expertMcpServer；这里追加
-     * `toolSegmentId` 后，扩展宿主就能在专家事件里带回同一个 id，webview 因而
-     * 可以把专家实时过程追加到主聊天 ask_expert 工具卡片，而不是等最终
-     * tool_result 一次性渲染。
-     *
-     * @param name 工具名。
-     * @param toolUseId Claude/Anthropic tool_use_id。
-     * @param inputValue 原始工具入参。
-     * @returns 可能附带 UI 元数据的新入参对象。
-     */
-    private attachToolUiMetadata(name: string, toolUseId: string | undefined, inputValue: unknown): unknown {
-        if (name !== 'mcp__llsExpert__ask_expert' && name !== 'ask_expert') return inputValue;
-        if (!toolUseId) return inputValue;
-        if (!inputValue || typeof inputValue !== 'object' || Array.isArray(inputValue)) return inputValue;
-        return {
-            ...(inputValue as Record<string, unknown>),
-            toolSegmentId: this.buildToolSegmentId(toolUseId)
-        };
     }
 
     /**
@@ -1534,6 +1652,13 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     private applyToolResult(block: Record<string, unknown>): ChatSegment | undefined {
         const toolUseId = typeof block.tool_use_id === 'string' ? block.tool_use_id : undefined;
         if (toolUseId && this.hiddenToolUseIds.has(toolUseId)) return undefined;
+        if (toolUseId && this.askExpertToolUseIds.has(toolUseId)) {
+            // ask_expert 的 tool_result 由 cliAdapter 通过单独的 expert/subturn/finished
+            // 事件回写（见 parseSdkWrapperEvent 的内联拦截）；这里返回 undefined 避免
+            // 渲染成普通工具结果卡片。
+            this.askExpertToolUseIds.delete(toolUseId);
+            return undefined;
+        }
         const isError = block.is_error === true;
         const resultText = this.stringifyToolResultContent(block.content);
         const isPermissionDenied = isError && this.isPermissionDeniedMessage(resultText);
@@ -1889,7 +2014,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      */
     private stripEmbeddedSystemTaskEvents(text: string): string {
         if (!text) return text;
-        const marker = /\{[^{}]*?"type"\s*:\s*"system"[^{}]*?"subtype"\s*:\s*"(?:taskstarted|task_started|tasknotification|task_notification|taskprogress|task_progress)"/g;
+        const marker = /\{[^{}]*?"type"\s*:\s*"system"[^{}]*?"subtype"\s*:\s*"(?:taskstarted|task_started|tasknotification|task_notification|taskprogress|task_progress|compact_boundary)"/g;
         if (!marker.test(text)) return text;
         marker.lastIndex = 0;
         let out = '';
@@ -1969,5 +2094,46 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      */
     private emitParsed(event: ParsedCliEvent): void {
         this.emitter.emit(EVENT_PARSED, event);
+    }
+
+    /**
+     * 旁路 emit 一个 ParsedCliEvent；用于在 segments 主循环中插入独立事件
+     * （例如 expert/subturn/started）而不打断本帧的 segments 返回值。
+     *
+     * @param event 待广播事件。
+     */
+    private emitAdHoc(event: ParsedCliEvent): void {
+        this.emitter.emit(EVENT_PARSED, event);
+    }
+
+    /**
+     * 从 ask_expert tool_use 的累积 partial_json 中抽取 `question` 字段。
+     *
+     * 失败时返回空字符串；调用方可在 expert/subturn/started 后再次校验。
+     *
+     * @param raw 累积的 partial_json 字符串。
+     * @returns question 文本。
+     */
+    private extractAskExpertQuestion(raw: string): string {
+        if (!raw) return '';
+        const parsed = this.tryParseJsonObject(raw);
+        if (parsed && typeof (parsed as Record<string, unknown>).question === 'string') {
+            return ((parsed as Record<string, unknown>).question as string).trim();
+        }
+        return '';
+    }
+
+    /**
+     * 从 SDK 完整 input 对象抽取 ask_expert 的 question 字段。
+     *
+     * @param input 已解析的 tool_use.input 对象。
+     * @returns question 文本。
+     */
+    private extractAskExpertQuestionFromInput(input: unknown): string {
+        if (input && typeof input === 'object' && !Array.isArray(input)) {
+            const q = (input as Record<string, unknown>).question;
+            if (typeof q === 'string') return q.trim();
+        }
+        return '';
     }
 }

@@ -268,6 +268,10 @@ class ConfigWebviewController implements vscode.Disposable {
     private async fetchProviderModels(providerId: string): Promise<void> {
         const provider = await this.manager.getProviderWithSecret(providerId);
         if (!provider) throw new Error('提供商不存在');
+        if (provider.enabled === false) {
+            this.postToast('warn', `提供商 ${provider.name} 已禁用，跳过模型拉取`);
+            return;
+        }
         const result = await fetchModels({
             baseUrl: provider.baseUrl,
             apiType: provider.apiType,

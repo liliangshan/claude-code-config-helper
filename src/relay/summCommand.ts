@@ -1,17 +1,5 @@
-import * as http from 'http';
-
-import { LLSCCAI_SUMM_ACK_TEXT, LLSCCAI_SUMM_COMMAND } from './tokenBudget/service';
-
-/** 压缩指令处理所需的最小 tokenBudget 能力。 */
-export interface SummCommandTokenBudget {
-    /** 处理压缩指令请求体并异步启动压缩。 */
-    handleSummCommand(input: {
-        sessionId: string;
-        providerId: string;
-        modelId: string;
-        anthropicBody: string;
-    }): boolean;
-}
+/** Claude CLI 原生压缩请求的 command-name 标记。 */
+export const CLAUDE_COMPACT_COMMAND_MARKER = '<command-name>/compact</command-name>';
 
 /** 从 Anthropic 请求体 metadata 中提取 CLI session_id。 */
 export function extractAnthropicSessionId(parsedBody: unknown): string {
@@ -35,53 +23,44 @@ export function extractAnthropicSessionId(parsedBody: unknown): string {
     return '';
 }
 
-/** 判断 Anthropic 请求最后一条 user 消息是否为压缩指令。 */
-export function isLlsCcaiSummCommandRequest(parsedBody: unknown): boolean {
-    if (!parsedBody || typeof parsedBody !== 'object') return false;
+/** 判断 Anthropic 请求最后一条 user 消息是否为 Claude CLI 原生压缩指令。 */
+export function isClaudeCompactCommandRequest(parsedBody: unknown): boolean {
+    const lastText = readLastUserMessageText(parsedBody).trim();
+    if (lastText.includes(CLAUDE_COMPACT_COMMAND_MARKER) || lastText === '/compact') return true;
+    if (!isClaudeCompactSummaryPrompt(lastText)) return false;
+    return readAllUserMessageText(parsedBody).includes(CLAUDE_COMPACT_COMMAND_MARKER);
+}
+
+/** 读取 Anthropic 请求最后一条 user 消息文本。 */
+function readLastUserMessageText(parsedBody: unknown): string {
+    if (!parsedBody || typeof parsedBody !== 'object') return '';
     const messages = (parsedBody as { messages?: unknown }).messages;
-    if (!Array.isArray(messages) || messages.length === 0) return false;
+    if (!Array.isArray(messages) || messages.length === 0) return '';
     const last = messages[messages.length - 1];
-    if (!last || typeof last !== 'object') return false;
+    if (!last || typeof last !== 'object') return '';
     const record = last as { role?: unknown; content?: unknown };
-    if (record.role !== 'user') return false;
-    return readTextContent(record.content).trim() === LLSCCAI_SUMM_COMMAND;
+    if (record.role !== 'user') return '';
+    return readTextContent(record.content);
 }
 
-/** 触发压缩并向当前 CLI 写回即时 Anthropic JSON 响应。 */
-export function handleLlsCcaiSummCommand(args: {
-    res: http.ServerResponse;
-    tokenBudget: SummCommandTokenBudget | undefined;
-    sessionId: string;
-    providerId: string;
-    modelId: string;
-    anthropicBody: string;
-}): boolean {
-    const started = args.tokenBudget?.handleSummCommand({
-        sessionId: args.sessionId,
-        providerId: args.providerId,
-        modelId: args.modelId,
-        anthropicBody: args.anthropicBody
-    }) === true;
-    writeAnthropicAck(args.res, started ? LLSCCAI_SUMM_ACK_TEXT : '当前上下文暂时无法压缩，请稍后重试。');
-    return true;
+function readAllUserMessageText(parsedBody: unknown): string {
+    if (!parsedBody || typeof parsedBody !== 'object') return '';
+    const messages = (parsedBody as { messages?: unknown }).messages;
+    if (!Array.isArray(messages)) return '';
+    const parts: string[] = [];
+    for (const message of messages) {
+        if (!message || typeof message !== 'object') continue;
+        const record = message as { role?: unknown; content?: unknown };
+        if (record.role !== 'user') continue;
+        parts.push(readTextContent(record.content));
+    }
+    return parts.join('\n');
 }
 
-/** 写入 Claude Code 可消费的非流式 Anthropic 文本响应。 */
-function writeAnthropicAck(res: http.ServerResponse, text: string): void {
-    const body = JSON.stringify({
-        id: `msg_llsccai_summ_${Date.now()}`,
-        type: 'message',
-        role: 'assistant',
-        model: 'llsccai-compaction',
-        content: [{ type: 'text', text }],
-        stop_reason: 'end_turn',
-        stop_sequence: null,
-        usage: { input_tokens: 1, output_tokens: 1 }
-    });
-    res.statusCode = 200;
-    res.setHeader('content-type', 'application/json; charset=utf-8');
-    res.setHeader('content-length', String(Buffer.byteLength(body, 'utf-8')));
-    res.end(body);
+function isClaudeCompactSummaryPrompt(text: string): boolean {
+    return text.includes('CRITICAL: Respond with TEXT ONLY')
+        && text.includes('Your task is to create a detailed summary of the conversation so far')
+        && text.includes('Do NOT call any tools');
 }
 
 /** 读取 Anthropic content 中的文本块。 */

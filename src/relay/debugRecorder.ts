@@ -87,7 +87,6 @@ export class DebugRecorder {
             const filePath = path.join(dir, 'test.json');
             const formatted = this.formatJsonText(bodyText);
             await fs.writeFile(filePath, `${formatted}\n`, 'utf-8');
-            Logger.info(`Relay 请求 body 已写入：${filePath}`);
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             Logger.warn(`写入 Relay 请求 body 失败：${message}`);
@@ -109,7 +108,6 @@ export class DebugRecorder {
             const filePath = path.join(dir, fileName);
             const messages = this.extractRequestMessages(entry.requestBody);
             if (messages.length === 0) {
-                Logger.info(`Relay 调试 messages 为空，跳过写入：${filePath}`);
                 return;
             }
             const record = await this.readDailyMessagesRecord(filePath, dateText);
@@ -123,11 +121,9 @@ export class DebugRecorder {
                 appended += 1;
             }
             if (appended === 0) {
-                Logger.info(`Relay 调试 messages 已存在，跳过追加：${filePath}`);
                 return;
             }
             await fs.writeFile(filePath, `${JSON.stringify(record, null, 2)}\n`, 'utf-8');
-            Logger.info(`Relay 调试 messages 已追加 ${appended} 条：${filePath}`);
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             Logger.warn(`写入 Relay 调试 messages 失败：${message}`);

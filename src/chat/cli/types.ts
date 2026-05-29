@@ -71,14 +71,46 @@ export interface ChatCliConfig {
     /**
      * 专家模式配置（按「项目 > 全局 > 默认」三层合并后的最终结果）。
      *
-     * - 由 `resolveExpertConfig()` 从 `chat.expertMode.project.*` /
-     *   `chat.expertMode.global.*` 两个 scope 合并得到；
-     * - 若 `enabled === true`，`ChatCliConfigService.getConfig()` 会在 `mcpServers`
-     *   字典中追加内置 `llsExpert` server，使主模型可看到 `ask_expert` 工具；
-     * - 该字段由专家进程的 `buildExpertConfig()` 在派生子配置时**反向移除**，
-     *   防止专家递归调用专家（详见 `EXPERT_MODE_DESIGN.md` §6.3）。
+     * 由 `resolveExpertConfig()` 从 `chat.expertMode.project.*` /
+     * `chat.expertMode.global.*` 两个 scope 合并得到。双 CLI 路由方案下，
+     * 该字段仅决定是否启动 expert CLI 与「webview 顶部专家名是否常驻显示」，
+     * 不再控制 MCP 注入。
      */
-    expertMode?: ExpertModeConfig;
+    expertMode?: RoutedModelModeConfig;
+
+    /** 方案模式配置（按「项目 > 全局 > 默认」三层合并后的最终结果）。 */
+    planMode?: RoutedModelModeConfig;
+
+    /** 压缩请求专用模型配置（按「项目 > 全局 > 默认」三层合并后的最终结果）。 */
+    compactionMode?: RoutedModelModeConfig;
+
+    /** 审查模式配置（按「项目 > 全局 > 默认」三层合并后的最终结果）。 */
+    reviewMode?: RoutedModelModeConfig;
+
+    /**
+     * 启动 CLI 时附加的系统提示词，会被转换为 `--append-system-prompt <text>` 启动参数。
+     *
+     * 双 CLI 路由方案下：
+     * - normal CLI 注入「dispatcher 限制」提示词，限制其只能做 build/git/PR/上下文压缩等
+     *   轻量工程操作，遇到复杂任务必须以 `@llsExpert` 文本切路由；
+     * - expert CLI 注入「专家声明」提示词，告知它是被 dispatcher 切换路由后激活的高能力模型；
+     *
+     * 用户可通过 `chat.dispatcher.appendSystemPrompt` / `chat.expert.appendSystemPrompt`
+     * 两个配置项覆盖默认文案。
+     */
+    appendSystemPrompt?: string;
+}
+
+/**
+ * 路由模型模式配置。
+ *
+ * 该类型同时承载 expert/plan/review 三类可选路由模型的最终解析配置。
+ */
+export interface RoutedModelModeConfig {
+    /** 是否启用该路由模型。 */
+    enabled: boolean;
+    /** 该路由模型使用的模型 id；空字符串表示未显式选择。 */
+    model: string;
 }
 
 /**
@@ -91,17 +123,7 @@ export interface ChatCliConfig {
  * 实际运行时由 `resolveExpertConfig()` 按「项目 > 全局 > 默认」三层覆盖合并，
  * 因此本接口字段都是「已解析后」的最终值（非 `Partial`）。
  */
-export interface ExpertModeConfig {
-    /** 是否启用专家模式（即是否在主 CLI 工具列表中注入 `ask_expert`）。 */
-    enabled: boolean;
-    /**
-     * 专家使用的模型 id。
-     *
-     * 空字符串表示「未显式选择」，ExpertRunner 会回退到主模型 id；
-     * 主模型 id 也为空时认为专家模式不可用，主模型不会看到 `ask_expert` 工具。
-     */
-    model: string;
-}
+export type ExpertModeConfig = RoutedModelModeConfig;
 
 /**
  * MCP server 配置项，结构兼容 Claude CLI 与 `.mcp.json` 文档。

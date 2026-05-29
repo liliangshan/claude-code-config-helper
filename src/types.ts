@@ -60,6 +60,17 @@ export interface ModelConfig {
     samplingMode: SamplingMode;
     /** 是否出现在顶部 Claude Code 当前模型下拉框中。 */
     isUserSelectable?: boolean;
+    /**
+     * 模型启用开关。
+     *
+     * - `undefined`（缺省）/ `true`：模型可用，会出现在 Chat 模型下拉、专家/方案/审查
+     *   选择弹窗以及 `models/snapshot` 协议推送的列表中。
+     * - `false`：模型在所有 Chat 选择入口中被隐藏，且无法通过 `selectChatModel`
+     *   或 `handleModelsApplyPair` 提交选择；仍保留在配置页便于后续重新启用。
+     *
+     * 兼容旧数据：未显式设置时由 `ConfigManager.normalizeModel()` 补齐为 `true`。
+     */
+    enabled?: boolean;
     /** 是否转换 reasoning/think 内容。 */
     transformThink?: boolean;
     /** 是否保留 reasoning_content 字段。 */

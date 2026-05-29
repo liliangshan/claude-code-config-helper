@@ -3,11 +3,11 @@
  *
  * 覆盖纯函数逻辑：
  * 1. `resolveExpertConfig` 三层合并优先级（项目 > 全局 > 默认）；
- * 2. `resolveExpertConfig` 对 undefined / 空串 / 错误类型的容忍；
- * 3. `buildExpertConfig` 派生时正确剥除 `llsExpert` 并保留其他 MCP server；
- * 4. `buildExpertConfig` 强制 `strictMcpConfig=true` / 清空 `resumeSessionId` / 注入 LLS_CHAT_ROLE；
- * 5. `buildExpertConfig` 对 `expertMode.model` 为空时回退到主模型；
- * 6. `buildExpertConfig` 输出中**不再**包含 `expertMode` 字段（防止专家递归）。
+ * 2. `resolveExpertConfig` 对 undefined / 空串 / 错误类型的容忍。
+ *
+ * 自双 CLI 路由方案落地后，旧 `buildExpertConfig` 已被
+ * `ChatCliConfigService.getDualConfigsWithRelayEnv` 取代，本文件不再覆盖派生逻辑，
+ * 派生测试由 `src/chat/cli/__tests__/cliConfig.test.ts` 接管。
  *
  * 本文件不依赖 vscode（仅测试纯函数），可以在 `node --test` 下直接运行。
  */
@@ -16,17 +16,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-    buildExpertConfig,
     defaultExpertModeConfig,
-    resolveExpertConfig
+    defaultRoutedModelModeConfig,
+    resolveExpertConfig,
+    resolveRoutedModelModeConfig
 } from '../expertConfig';
-import {
-    EXPERT_MCP_SERVER_NAME,
-    EXPERT_PERMISSION_MODE,
-    EXPERT_ROLE_ENV_KEY,
-    EXPERT_ROLE_ENV_VALUE
-} from '../expertConstants';
-import type { ChatCliConfig } from '../../chat/cli/types';
 
 // ---------------------------------------------------------------------------
 // resolveExpertConfig
@@ -83,142 +77,39 @@ test('resolveExpertConfig: 项目级 model="" 视为未设置，应回退到全�
     assert.deepEqual(result, { enabled: true, model: 'opus-4' });
 });
 
-test('resolveExpertConfig: 传入 undefined partial 不应抛错', () => {
-    assert.doesNotThrow(() =>
-        resolveExpertConfig(undefined, undefined, defaultExpertModeConfig)
-    );
-});
 
 // ---------------------------------------------------------------------------
-// buildExpertConfig
+// resolveRoutedModelModeConfig
 // ---------------------------------------------------------------------------
 
-/**
- * 构造一个最小可用的主进程 ChatCliConfig，作为派生测试的输入。
- *
- * @param overrides 需要覆盖的字段。
- */
-function makeMainConfig(overrides: Partial<ChatCliConfig> = {}): ChatCliConfig {
-    return {
-        enabled: true,
-        cliPath: '/usr/local/bin/claude',
-        cliArgs: [],
-        model: 'main-model-id',
-        cwd: '/workspace',
-        transport: 'streamJsonStdio',
-        cliEnv: { FOO: 'bar' },
-        permissionMode: 'acceptEdits',
-        mcpServers: {
-            [EXPERT_MCP_SERVER_NAME]: { type: 'stdio', command: 'node', args: ['expert-server.js'] },
-            other: { type: 'stdio', command: 'node', args: ['other.js'] }
-        },
-        strictMcpConfig: false,
-        skills: 'all',
-        resumeSessionId: 'main-session-abc',
-        expertMode: { enabled: true, model: 'expert-model-id' },
-        ...overrides
-    };
-}
+test('resolveRoutedModelModeConfig: 两层都未设置时使用默认值', () => {
+    const result = resolveRoutedModelModeConfig(undefined, undefined, defaultRoutedModelModeConfig);
+    assert.deepEqual(result, { enabled: false, model: '' });
+});
 
-test('buildExpertConfig: 从 mcpServers 中剥除 llsExpert，保留其他 server', () => {
-    const expert = buildExpertConfig(makeMainConfig());
-    assert.ok(expert.mcpServers, 'mcpServers 应被保留');
-    assert.equal(
-        expert.mcpServers?.[EXPERT_MCP_SERVER_NAME],
-        undefined,
-        'llsExpert 必须被剥除'
+test('resolveRoutedModelModeConfig: 项目级优先于全局级', () => {
+    const result = resolveRoutedModelModeConfig(
+        { enabled: true, model: 'plan-model' },
+        { enabled: false, model: 'review-model' },
+        defaultRoutedModelModeConfig
     );
-    assert.ok(expert.mcpServers?.other, '其他 server 应保留');
+    assert.deepEqual(result, { enabled: true, model: 'plan-model' });
 });
 
-test('buildExpertConfig: 当 llsExpert 是唯一 server 时 mcpServers 应为 undefined', () => {
-    const expert = buildExpertConfig(
-        makeMainConfig({
-            mcpServers: {
-                [EXPERT_MCP_SERVER_NAME]: { type: 'stdio', command: 'x' }
-            }
-        })
+test('resolveRoutedModelModeConfig: 项目级显式 false 不回退到全局级', () => {
+    const result = resolveRoutedModelModeConfig(
+        { enabled: false, model: '' },
+        { enabled: true, model: 'global-model' },
+        defaultRoutedModelModeConfig
     );
-    assert.equal(expert.mcpServers, undefined);
+    assert.deepEqual(result, { enabled: false, model: 'global-model' });
 });
 
-test('buildExpertConfig: mainConfig.mcpServers 为 undefined 时输出也是 undefined', () => {
-    const expert = buildExpertConfig(makeMainConfig({ mcpServers: undefined }));
-    assert.equal(expert.mcpServers, undefined);
-});
-
-test('buildExpertConfig: strictMcpConfig 强制为 true', () => {
-    const expert = buildExpertConfig(makeMainConfig({ strictMcpConfig: false }));
-    assert.equal(expert.strictMcpConfig, true);
-});
-
-test('buildExpertConfig: resumeSessionId 必须被清空', () => {
-    const expert = buildExpertConfig(makeMainConfig());
-    assert.equal(expert.resumeSessionId, undefined);
-});
-
-test('buildExpertConfig: permissionMode 强制为 EXPERT_PERMISSION_MODE', () => {
-    const expert = buildExpertConfig(
-        makeMainConfig({ permissionMode: 'bypassPermissions' })
+test('resolveRoutedModelModeConfig: 空 model 逐层回退到默认值', () => {
+    const result = resolveRoutedModelModeConfig(
+        { enabled: undefined, model: '' },
+        { enabled: undefined, model: '' },
+        { enabled: true, model: 'default-model' }
     );
-    assert.equal(expert.permissionMode, EXPERT_PERMISSION_MODE);
-});
-
-test('buildExpertConfig: cliEnv 中注入 LLS_CHAT_ROLE=expert 并保留原有 env', () => {
-    const expert = buildExpertConfig(makeMainConfig());
-    assert.equal(expert.cliEnv[EXPERT_ROLE_ENV_KEY], EXPERT_ROLE_ENV_VALUE);
-    assert.equal(expert.cliEnv.FOO, 'bar', '原有 env 必须保留');
-});
-
-test('buildExpertConfig: expertMode.model 非空时优先使用它', () => {
-    const expert = buildExpertConfig(
-        makeMainConfig({
-            model: 'main-model',
-            expertMode: { enabled: true, model: 'expert-model-x' }
-        })
-    );
-    assert.equal(expert.model, 'expert-model-x');
-});
-
-test('buildExpertConfig: expertMode.model 为空时回退到主模型', () => {
-    const expert = buildExpertConfig(
-        makeMainConfig({
-            model: 'main-model',
-            expertMode: { enabled: true, model: '' }
-        })
-    );
-    assert.equal(expert.model, 'main-model');
-});
-
-test('buildExpertConfig: expertMode 整体为 undefined 时也回退到主模型', () => {
-    const expert = buildExpertConfig(
-        makeMainConfig({ model: 'main-model', expertMode: undefined })
-    );
-    assert.equal(expert.model, 'main-model');
-});
-
-test('buildExpertConfig: 派生结果中不再包含 expertMode 字段', () => {
-    const expert = buildExpertConfig(makeMainConfig());
-    assert.equal(
-        Object.prototype.hasOwnProperty.call(expert, 'expertMode'),
-        false,
-        '专家进程的 ChatCliConfig 不应再持有 expertMode 字段'
-    );
-});
-
-test('buildExpertConfig: 不修改原 mainConfig（输入对象保持不变）', () => {
-    const main = makeMainConfig();
-    const mainSnapshot = JSON.parse(JSON.stringify(main));
-    buildExpertConfig(main);
-    assert.deepEqual(main, mainSnapshot, 'mainConfig 应当未被修改');
-});
-
-test('buildExpertConfig: cliPath / cliArgs / cwd / transport / skills 原样继承', () => {
-    const main = makeMainConfig();
-    const expert = buildExpertConfig(main);
-    assert.equal(expert.cliPath, main.cliPath);
-    assert.deepEqual(expert.cliArgs, main.cliArgs);
-    assert.equal(expert.cwd, main.cwd);
-    assert.equal(expert.transport, main.transport);
-    assert.equal(expert.skills, main.skills);
+    assert.deepEqual(result, { enabled: true, model: 'default-model' });
 });

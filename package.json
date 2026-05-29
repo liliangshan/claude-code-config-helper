@@ -2,7 +2,7 @@
     "name": "claude-code-config-helper",
     "displayName": "%extension.displayName%",
     "description": "%extension.description%",
-    "version": "2.0.21",
+    "version": "2.1.0",
     "publisher": "liliangshan",
     "license": "MIT",
     "repository": {
@@ -405,6 +405,127 @@
                     "default": "",
                     "description": "%configuration.chat.expertMode.global.model.description%",
                     "scope": "application"
+                },
+                "claudeCodeConfigHelper.chat.compactionMode.project.enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "%configuration.chat.compactionMode.project.enabled.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.compactionMode.project.model": {
+                    "type": "string",
+                    "default": "",
+                    "description": "%configuration.chat.compactionMode.project.model.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.compactionMode.global.enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "%configuration.chat.compactionMode.global.enabled.description%",
+                    "scope": "application"
+                },
+                "claudeCodeConfigHelper.chat.compactionMode.global.model": {
+                    "type": "string",
+                    "default": "",
+                    "description": "%configuration.chat.compactionMode.global.model.description%",
+                    "scope": "application"
+                },
+                "claudeCodeConfigHelper.chat.planMode.project.enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "%configuration.chat.planMode.project.enabled.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.planMode.project.model": {
+                    "type": "string",
+                    "default": "",
+                    "description": "%configuration.chat.planMode.project.model.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.planMode.global.enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "%configuration.chat.planMode.global.enabled.description%",
+                    "scope": "application"
+                },
+                "claudeCodeConfigHelper.chat.planMode.global.model": {
+                    "type": "string",
+                    "default": "",
+                    "description": "%configuration.chat.planMode.global.model.description%",
+                    "scope": "application"
+                },
+                "claudeCodeConfigHelper.chat.reviewMode.project.enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "%configuration.chat.reviewMode.project.enabled.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.reviewMode.project.model": {
+                    "type": "string",
+                    "default": "",
+                    "description": "%configuration.chat.reviewMode.project.model.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.reviewMode.global.enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "%configuration.chat.reviewMode.global.enabled.description%",
+                    "scope": "application"
+                },
+                "claudeCodeConfigHelper.chat.reviewMode.global.model": {
+                    "type": "string",
+                    "default": "",
+                    "description": "%configuration.chat.reviewMode.global.model.description%",
+                    "scope": "application"
+                },
+                "claudeCodeConfigHelper.chat.dispatcher.appendSystemPrompt": {
+                    "type": "string",
+                    "default": "",
+                    "description": "%configuration.chat.dispatcher.appendSystemPrompt.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.expert.appendSystemPrompt": {
+                    "type": "string",
+                    "default": "",
+                    "description": "%configuration.chat.expert.appendSystemPrompt.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.expert.userTriggerMode": {
+                    "type": "string",
+                    "enum": ["direct", "tool_result"],
+                    "default": "direct",
+                    "description": "%configuration.chat.expert.userTriggerMode.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.expert.maxSteps": {
+                    "type": "number",
+                    "default": 6,
+                    "minimum": 1,
+                    "maximum": 50,
+                    "description": "%configuration.chat.expert.maxSteps.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.expert.stepTimeoutMs": {
+                    "type": "number",
+                    "default": 60000,
+                    "minimum": 1000,
+                    "description": "%configuration.chat.expert.stepTimeoutMs.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.expert.totalTimeoutMs": {
+                    "type": "number",
+                    "default": 300000,
+                    "minimum": 1000,
+                    "description": "%configuration.chat.expert.totalTimeoutMs.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.expert.maxCallsPerTurn": {
+                    "type": "number",
+                    "default": 1,
+                    "minimum": 1,
+                    "maximum": 10,
+                    "description": "%configuration.chat.expert.maxCallsPerTurn.description%",
+                    "scope": "resource"
                 },
                 "openapicopilot.systemPrompt": {
                     "type": "string",

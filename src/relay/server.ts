@@ -32,6 +32,11 @@ export type RelayRequestHandler = (
     res: http.ServerResponse
 ) => void | Promise<void>;
 
+/** 判断请求路径是否是 Relay 承载的 messages 转发路径。 */
+export function isRelayMessagesPath(path: string): boolean {
+    return path === '/v1/messages' || /^\/(normal|expert|plan|review)\/v1\/messages$/.test(path);
+}
+
 /** {@link RelayServer} 构造参数。 */
 export interface RelayServerOptions {
     /**
@@ -133,9 +138,10 @@ export class RelayServer implements vscode.Disposable {
     /**
      * 注入"Relay 命中"回调。
      *
-     * 收到的请求路径为 `POST /v1/messages` 时触发一次回调；其它路径（如未知探测、
-     * `GET /` 等）不触发，避免误清除外部计时器。回调内部异常会被吞掉，不会影响
-     * Relay 本身的请求处理。
+     * 收到的请求路径为 `POST /v1/messages` 或四路 CLI 使用的
+     * `POST /{normal|expert|plan|review}/v1/messages` 时触发一次回调；其它路径
+     * （如未知探测、`GET /` 等）不触发，避免误清除外部计时器。回调内部异常
+     * 会被吞掉，不会影响 Relay 本身的请求处理。
      *
      * @param cb 命中回调；传 undefined 可取消注册。
      */
@@ -282,7 +288,7 @@ export class RelayServer implements vscode.Disposable {
     }
 
     /**
-     * 若请求是 `POST /v1/messages`，触发已注册的命中回调。
+     * 若请求是 `POST /v1/messages` 或带本地 CLI route 前缀的同等路径，触发已注册的命中回调。
      *
      * 仅匹配主转发路径，避免 404 探测、健康检查等噪声请求误清除外部计时器；
      * 回调内部异常会被吞掉并写入日志。
@@ -295,7 +301,7 @@ export class RelayServer implements vscode.Disposable {
         if (method !== 'POST') return;
         const url = req.url ?? '';
         const path = url.split('?', 1)[0];
-        if (path !== '/v1/messages') return;
+        if (!isRelayMessagesPath(path)) return;
         try {
             this.onHit();
         } catch (err) {

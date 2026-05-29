@@ -293,7 +293,7 @@ export class OpenAIChatToAnthropicStreamConverter {
             if (typeof delta.id === 'string') state.id = delta.id;
             const fn = isRecord(delta.function) ? delta.function : {};
             if (typeof fn.name === 'string') state.name = fn.name;
-            const argDelta = typeof fn.arguments === 'string' ? fn.arguments : '';
+            const argDelta = readToolArgumentsDelta(fn.arguments);
             state.argumentsJson += argDelta;
             out += this.maybeStartToolBlock(state);
             out += this.emitPendingToolArgumentsDelta(state);
@@ -435,6 +435,12 @@ export class OpenAIChatToAnthropicStreamConverter {
     }
 }
 
+function readToolArgumentsDelta(value: unknown): string {
+    if (typeof value === 'string') return value;
+    if (isRecord(value)) return JSON.stringify(value);
+    return '';
+}
+
 /**
  * 将 OpenAI Chat Completions 非流式 JSON 转为 Anthropic Messages JSON。
  *
@@ -495,11 +501,12 @@ function appendToolCalls(
             warnings.push({ path: `choices[0].message.tool_calls[${index}].function.name`, code: 'missing_tool_name', message: 'OpenAI tool_call 缺少 function.name，已跳过。' });
             return;
         }
+        const argPath = `choices[0].message.tool_calls[${index}].function.arguments`;
         content.push({
             type: 'tool_use',
             id,
             name,
-            input: parseToolArguments(fn.arguments, `choices[0].message.tool_calls[${index}].function.arguments`, warnings)
+            input: normalizeToolInput(name, parseToolArguments(fn.arguments, argPath, warnings), warnings, argPath)
         });
     });
 }
@@ -513,6 +520,7 @@ function appendToolCalls(
  * @returns 解析后的对象，失败时返回空对象。
  */
 function parseToolArguments(value: unknown, path: string, warnings: ConversionWarning[]): unknown {
+    if (isRecord(value)) return value;
     if (typeof value !== 'string' || !value.trim()) return {};
     try {
         return JSON.parse(value) as unknown;
@@ -524,6 +532,70 @@ function parseToolArguments(value: unknown, path: string, warnings: ConversionWa
         });
         return {};
     }
+}
+
+/**
+ * 归一化工具输入。
+ *
+ * @param name 工具名。
+ * @param input 原始输入。
+ * @param warnings warning 收集器。
+ * @param path 用于 warning 的 JSON 路径。
+ * @returns 归一化后的输入。
+ */
+function normalizeToolInput(
+    name: string,
+    input: unknown,
+    warnings: ConversionWarning[],
+    path: string
+): unknown {
+    if (name === 'Read') {
+        if (!isRecord(input)) return input;
+        const pages = input.pages;
+        if (typeof pages === 'number' && Number.isInteger(pages) && pages >= 1) return { ...input, pages: String(pages) };
+        if (typeof pages === 'string' && isValidPages(pages)) return input;
+        return { ...input, pages: '1' };
+    }
+    if (name === 'Write') return normalizeWriteToolInput(input, warnings, path);
+    return input;
+}
+
+/**
+ * Write 工具空参数/缺字段拦截：把无效调用改写为带 __error__ 字段的占位 input，
+ * 让下游 Claude CLI 端 Write 工具因 schema 校验失败而返回错误 tool_result，
+ * 模型据此重试或改用 Edit 追加。
+ *
+ * @param input 上游返回的 arguments 解析结果。
+ * @param warnings warning 收集器。
+ * @param path warning 路径。
+ * @returns 修正后的 input。
+ */
+function normalizeWriteToolInput(input: unknown, warnings: ConversionWarning[], path: string): unknown {
+    const record = isRecord(input) ? { ...input } : {};
+    const filePath = typeof record.file_path === 'string' ? record.file_path.trim() : '';
+    const hasContent = typeof record.content === 'string';
+    const reasons: string[] = [];
+    if (!filePath) reasons.push('file_path missing or empty');
+    if (!hasContent) reasons.push('content missing');
+    if (reasons.length === 0) return record;
+    warnings.push({
+        path,
+        code: 'invalid_write_tool_input',
+        message: `Write tool call rejected: ${reasons.join('; ')}. Replaced with error placeholder.`
+    });
+    return {
+        file_path: filePath || '__INVALID_WRITE_NO_PATH__',
+        content: '',
+        __error__: `Empty Write call blocked by relay: ${reasons.join('; ')}. Provide a non-empty file_path AND a non-empty initial content (one short segment), then use Edit to append the rest.`
+    };
+}
+
+function isValidPages(value: string): boolean {
+    const match = /^(\d+)(?:-(\d+))?$/.exec(value);
+    if (!match) return false;
+    const start = Number(match[1]);
+    const end = match[2] === undefined ? start : Number(match[2]);
+    return Number.isSafeInteger(start) && Number.isSafeInteger(end) && start >= 1 && end >= start;
 }
 
 /**

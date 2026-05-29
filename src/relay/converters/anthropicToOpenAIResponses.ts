@@ -470,7 +470,7 @@ function convertMetadata(metadata: unknown, warnings: ResponsesConversionWarning
  * @returns 适合 OpenAI Responses function parameters 的 schema。
  */
 function normalizeToolParameters(toolName: string, parameters: Record<string, unknown>): Record<string, unknown> {
-    if (toolName !== 'Read' && toolName !== 'Write' && toolName !== 'Agent') return parameters;
+    if (toolName !== 'Read' && toolName !== 'Write' && toolName !== 'Edit' && toolName !== 'Agent') return parameters;
     const normalized = { ...parameters };
     const properties = isRecord(normalized.properties) ? { ...normalized.properties } : {};
     normalized.properties = properties;
@@ -483,11 +483,41 @@ function normalizeToolParameters(toolName: string, parameters: Record<string, un
         const pages: Record<string, unknown> = isRecord(properties.pages) ? { ...properties.pages } : { type: 'string' };
         pages.type = 'string';
         pages.minLength = 1;
+        pages.default = '1';
+        pages.pattern = '^\\d+(?:-\\d+)?$';
+        pages.description = typeof pages.description === 'string'
+            ? `${pages.description} Invalid or empty values must be replaced with "1".`
+            : 'PDF page range. Use "1", "3", or "10-20". Invalid or empty values must be replaced with "1".';
         properties.pages = pages;
     }
     if (toolName === 'Write') {
+        normalized.type = 'object';
+        if (!isRecord(properties.file_path)) {
+            properties.file_path = {
+                type: 'string',
+                description: 'The absolute path to the file to write (must be absolute, not relative)'
+            };
+        }
+        if (!isRecord(properties.content)) {
+            properties.content = {
+                type: 'string',
+                description: 'The content to write to the file'
+            };
+        }
+        if (normalized.additionalProperties === undefined) normalized.additionalProperties = false;
         required.add('file_path');
         required.add('content');
+    }
+    if (toolName === 'Edit') {
+        normalized.type = 'object';
+        if (!isRecord(properties.file_path)) properties.file_path = { type: 'string' };
+        if (!isRecord(properties.old_string)) properties.old_string = { type: 'string' };
+        if (!isRecord(properties.new_string)) properties.new_string = { type: 'string' };
+        if (!isRecord(properties.replace_all)) properties.replace_all = { type: 'boolean', default: false };
+        if (normalized.additionalProperties === undefined) normalized.additionalProperties = false;
+        required.add('file_path');
+        required.add('old_string');
+        required.add('new_string');
     }
     if (toolName === 'Agent') {
         delete properties.isolation;

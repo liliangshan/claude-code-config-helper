@@ -322,26 +322,6 @@ function stripJsonComments(raw: string): string {
 }
 
 /**
- * 把 VS Code mcp.json 加载结果摘要打到日志，便于排查。
- *
- * @param results 加载结果列表。
- */
-export function logMcpJsonLoadResults(results: McpJsonLoadResult[]): void {
-    for (const result of results) {
-        if (result.loaded) {
-            const keys = Object.keys(result.servers);
-            Logger.info(
-                `加载 VS Code mcp.json[${result.source}]：${result.filePath} -> ${keys.length} 个 server`
-                + (keys.length ? ' (' + keys.join(', ') + ')' : '')
-            );
-        } else if (result.error) {
-            Logger.warn(`加载 VS Code mcp.json[${result.source}] 失败：${result.filePath} -> ${result.error}`);
-        }
-        // 文件不存在的情况静默跳过，避免日志噪音。
-    }
-}
-
-/**
  * 用于在测试中重写 VS Code 工作区根目录解析逻辑的钩子。
  *
  * 默认实现读取 `vscode.workspace.workspaceFolders[0].uri.fsPath`；测试可以替换

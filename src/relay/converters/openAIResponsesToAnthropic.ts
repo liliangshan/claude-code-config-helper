@@ -834,11 +834,12 @@ function appendFunctionCall(
         : typeof item.id === 'string' && item.id
             ? item.id
             : `toolu_${content.length}`;
+    const argPath = `${path}.arguments`;
     content.push({
         type: 'tool_use',
         id,
         name,
-        input: parseToolArguments(item.arguments, `${path}.arguments`, warnings)
+        input: normalizeToolInput(name, parseToolArguments(item.arguments, argPath, warnings), warnings, argPath)
     });
 }
 
@@ -851,6 +852,7 @@ function appendFunctionCall(
  * @returns 解析后的对象，失败时返回空对象。
  */
 function parseToolArguments(value: unknown, path: string, warnings: ResponsesConversionWarning[]): unknown {
+    if (isRecord(value)) return value;
     if (typeof value !== 'string' || !value.trim()) return {};
     try {
         return JSON.parse(value) as unknown;
@@ -862,6 +864,76 @@ function parseToolArguments(value: unknown, path: string, warnings: ResponsesCon
         });
         return {};
     }
+}
+
+/**
+ * 归一化工具输入。
+ *
+ * @param name 工具名。
+ * @param input 原始输入。
+ * @param warnings warning 收集器。
+ * @param path 用于 warning 的 JSON 路径。
+ * @returns 归一化后的输入。
+ */
+function normalizeToolInput(
+    name: string,
+    input: unknown,
+    warnings: ResponsesConversionWarning[],
+    path: string
+): unknown {
+    if (name === 'Read') {
+        if (!isRecord(input)) return input;
+        const pages = input.pages;
+        if (typeof pages === 'number' && Number.isInteger(pages) && pages >= 1) return { ...input, pages: String(pages) };
+        if (typeof pages === 'string' && isValidPages(pages)) return input;
+        return { ...input, pages: '1' };
+    }
+    if (name === 'Write') return normalizeWriteToolInput(input, warnings, path);
+    return input;
+}
+
+/**
+ * Write 工具空参数/缺字段拦截。
+ *
+ * 当上游返回的 Write 调用 file_path 缺失或 content 字段缺失时，把 input 替换为
+ * 带 __error__ 说明的占位 input，让下游 CLI Write 工具因 schema 校验失败而返回
+ * 错误 tool_result，模型据此重试或改用 Edit 追加。
+ *
+ * @param input 上游解析后的 arguments。
+ * @param warnings warning 收集器。
+ * @param path warning 路径。
+ * @returns 修正后的 input。
+ */
+function normalizeWriteToolInput(
+    input: unknown,
+    warnings: ResponsesConversionWarning[],
+    path: string
+): unknown {
+    const record = isRecord(input) ? { ...input } : {};
+    const filePath = typeof record.file_path === 'string' ? record.file_path.trim() : '';
+    const hasContent = typeof record.content === 'string';
+    const reasons: string[] = [];
+    if (!filePath) reasons.push('file_path missing or empty');
+    if (!hasContent) reasons.push('content missing');
+    if (reasons.length === 0) return record;
+    warnings.push({
+        path,
+        code: 'invalid_write_tool_input',
+        message: `Write tool call rejected: ${reasons.join('; ')}. Replaced with error placeholder.`
+    });
+    return {
+        file_path: filePath || '__INVALID_WRITE_NO_PATH__',
+        content: '',
+        __error__: `Empty Write call blocked by relay: ${reasons.join('; ')}. Provide a non-empty file_path AND a non-empty initial content (one short segment), then use Edit to append the rest.`
+    };
+}
+
+function isValidPages(value: string): boolean {
+    const match = /^(\d+)(?:-(\d+))?$/.exec(value);
+    if (!match) return false;
+    const start = Number(match[1]);
+    const end = match[2] === undefined ? start : Number(match[2]);
+    return Number.isSafeInteger(start) && Number.isSafeInteger(end) && start >= 1 && end >= start;
 }
 
 /**

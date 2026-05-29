@@ -35,6 +35,23 @@
         statusInitializing: 'Initialisierung…', copySource: 'Quelle kopieren', copySourceTitle: 'Quelle des aktuellen Webview-Body kopieren', restart: 'Neu starten', restartTitle: 'CLI neu starten', clear: 'Leeren', clearTitle: 'Chatinhalt leeren', dropFilesHere: 'Dateien hierher ziehen, um sie als Kontext zu verwenden', contextPanelAria: 'Hinzugefügte Kontextdateien', defaultCurrentFile: 'Aktuelle Datei standardmäßig anzeigen', clearContext: 'Kontext leeren', contextMenu: 'Kontextmenü', composerPlaceholder: 'Fragen, bearbeiten oder Agent…', attachFile: 'Kontextdateien auswählen', modelSelectTitle: 'Modell wechseln und Chat CLI danach automatisch neu starten', modelSelectAria: 'Modell wechseln', modelLoading: 'Modelle werden geladen…', permissionModeTitle: 'Claude-CLI-Berechtigungsmodus wechseln und Chat CLI danach automatisch neu starten', permissionModeAria: 'Berechtigungsmodus wechseln', sendMessage: 'Nachricht senden', stopResponse: 'Aktuelle Antwort stoppen', noModelConfigured: 'Kein Modell konfiguriert', selectModel: 'Modell auswählen', permissionAcceptEdits: 'Aktuell: acceptEdits (Bearbeitungswerkzeuge automatisch akzeptieren)', permissionBypass: 'Aktuell: bypassPermissions (Berechtigungsprüfungen überspringen, aktuellen Arbeitsbereich vollständig vertrauen)', emptyState: 'LLS CLAUDE CHAT - Unterhaltung starten', longTextOutput: 'Lange Textausgabe', longCodeBlock: 'Langer Codeblock', longDiffOutput: 'Lange diff-Ausgabe', copy: 'Kopieren', copyCode: 'Code kopieren', usageModel: 'Modell ', usageInput: 'Eingabe ', usageOutput: 'Ausgabe ', usageCacheWrite: 'Cache schreiben ', usageCacheRead: 'Cache lesen ', assistantNeedsConfirmation: 'Der Assistent benötigt Ihre Bestätigung', askManyQuestions: 'Es gibt {count} Fragen. Sie müssen antworten, bevor es weitergeht.', askOneQuestion: 'Wählen Sie eine Option oder geben Sie unten eine eigene Antwort ein (erforderlich).', noQuestionText: '(Kein Fragetext)', multiSelect: 'Mehrfachauswahl', customReplyLabel: 'Andere Antwort (optional): Schreiben Sie Ihre Gedanken oder warum Sie eine Option nicht gewählt haben', customReplyPlaceholder: 'Zum Beispiel: Ich möchte eine andere Implementierung verwenden…', sendReply: 'Antwort senden', askUserReplyIntro: 'Ich habe auf Ihre Frage wie folgt geantwortet:', askUserPicked: '   Auswahl: {items}', askUserNoPick: '   Auswahl: (keine Option ausgewählt)', askUserExtra: 'Zusätzlicher Hinweis:', toolRunning: 'Wird ausgeführt', toolSuccess: 'Erfolgreich', toolFailed: 'Fehlgeschlagen', toolPermissionDenied: 'Berechtigung erforderlich', toolPending: 'Warten', collapsibleSummary: '{label} ({count} Zeichen, zum Erweitern klicken)', truncatedChars: '… {count} Zeichen abgeschnitten', resendTitle: 'Erneut senden: diese Nachricht und folgenden Kontext löschen und erneut senden', resendAria: 'Diese Nachricht erneut senden', loading: 'Wird geladen', cliNotSelected: 'CLI nicht ausgewählt', cliStatus: 'CLI-Status: {status}{detail}', unknownError: 'Unbekannter Fehler', copiedBodySource: 'Body-Quelle kopiert', copyBodySourceFailed: 'Kopieren der Body-Quelle fehlgeschlagen', removeAttachment: '{name} entfernen', genericFile: 'Datei', expertPanelTitle: 'Experten-Lauf', expertPanelStatusRunning: 'läuft…', expertPanelStatusDone: 'abgeschlossen', expertPanelStatusError: 'fehlgeschlagen', expertPanelStatusCancelled: 'abgebrochen', expertPanelToggleAria: 'Experten-Panel umschalten', expertEventStart: 'Start', expertEventAnalysis: 'Analyse', expertEventToolCall: 'Werkzeugaufruf', expertEventToolResult: 'Werkzeugergebnis', expertEventFinal: 'Endgültige Antwort', expertEventError: 'Fehler', expertEventCancelled: 'Abgebrochen'
     };
 
+    Object.assign(chatTranslations.ko, {
+        planNotConfigured: '(플랜 모델 없음)',
+        reviewNotConfigured: '(리뷰 모델 없음)'
+    });
+    Object.assign(chatTranslations.ja, {
+        planNotConfigured: '（プランモデル未設定）',
+        reviewNotConfigured: '（レビューモデル未設定）'
+    });
+    Object.assign(chatTranslations.fr, {
+        planNotConfigured: '(Aucun modèle de plan)',
+        reviewNotConfigured: '(Aucun modèle de révision)'
+    });
+    Object.assign(chatTranslations.de, {
+        planNotConfigured: '(Kein Plan-Modell)',
+        reviewNotConfigured: '(Kein Review-Modell)'
+    });
+
     /** 补齐重发编辑态动态文案，避免静态翻译长行继续膨胀。 */
     Object.assign(chatTranslations.en, {
         resendConfirm: 'Send edited message',
@@ -141,6 +158,65 @@
         claudeTodoToggleAria: 'Claude TodoWrite-Todos ein-/ausklappen'
     });
 
+    /** 补齐顶部模型条、模型选择弹窗 UI 文案（按需专家方案下已无路由徽章）。 */
+    Object.assign(chatTranslations.en, {
+        modelsBarNormal: 'Normal:', modelsBarExpert: 'Expert:', openModelPicker: 'Choose models',
+        pickerTitle: 'Select Chat models', pickerNormalSection: 'Normal task model', pickerExpertSection: 'Expert task model', pickerPlanSection: 'Plan task model', pickerReviewSection: 'Review task model', pickerCompactionSection: 'Compaction model',
+        pickerSave: 'Save and restart CLI', pickerCancel: 'Cancel',
+        expertNotConfigured: 'Disable expert', expertNotConfiguredToast: 'Expert model is not configured. Open the model picker to select one.',
+        expertUnavailable: 'Not configured',
+        planNotConfigured: '(Plan model not configured)', reviewNotConfigured: '(Review model not configured)', compactionNotConfigured: '(Use normal model for compaction)'
+    });
+    Object.assign(chatTranslations['zh-cn'], {
+        modelsBarNormal: '普通：', modelsBarExpert: '专家：', openModelPicker: '选择模型',
+        pickerTitle: '选择 Chat 模型', pickerNormalSection: '普通任务模型', pickerExpertSection: '专家任务模型', pickerPlanSection: '方案任务模型', pickerReviewSection: '审查任务模型', pickerCompactionSection: '压缩模型',
+        pickerSave: '保存并重启 CLI', pickerCancel: '取消',
+        expertNotConfigured: '关闭专家', expertNotConfiguredToast: '尚未配置专家模型，请在「选择模型」弹窗中选择。',
+        expertUnavailable: '未配置',
+        planNotConfigured: '（未配置方案模型）', reviewNotConfigured: '（未配置审查模型）', compactionNotConfigured: '（压缩时使用普通模型）'
+    });
+    Object.assign(chatTranslations['zh-tw'], {
+        modelsBarNormal: '一般：', modelsBarExpert: '專家：', openModelPicker: '選擇模型',
+        pickerTitle: '選擇 Chat 模型', pickerNormalSection: '一般任務模型', pickerExpertSection: '專家任務模型', pickerPlanSection: '方案任務模型', pickerReviewSection: '審查任務模型', pickerCompactionSection: '壓縮模型',
+        pickerSave: '儲存並重新啟動 CLI', pickerCancel: '取消',
+        expertNotConfigured: '關閉專家', expertNotConfiguredToast: '尚未設定專家模型，請在「選擇模型」對話框中選擇。',
+        expertUnavailable: '未設定',
+        planNotConfigured: '（未設定方案模型）', reviewNotConfigured: '（未設定審查模型）', compactionNotConfigured: '（壓縮時使用一般模型）'
+    });
+    Object.assign(chatTranslations.ko, {
+        modelsBarNormal: '일반:', modelsBarExpert: '전문가:', openModelPicker: '모델 선택',
+        pickerTitle: 'Chat 모델 선택', pickerNormalSection: '일반 작업 모델', pickerExpertSection: '전문가 작업 모델', pickerPlanSection: '계획 작업 모델', pickerReviewSection: '검토 작업 모델', pickerCompactionSection: '압축 모델',
+        pickerSave: '저장 후 CLI 재시작', pickerCancel: '취소',
+        expertNotConfigured: '전문가 비활성화', expertNotConfiguredToast: '전문가 모델이 설정되지 않았습니다. 모델 선택 대화 상자에서 선택하세요.',
+        expertUnavailable: '미설정',
+        planNotConfigured: '(계획 모델 미설정)', reviewNotConfigured: '(검토 모델 미설정)', compactionNotConfigured: '(압축 시 일반 모델 사용)'
+    });
+    Object.assign(chatTranslations.ja, {
+        modelsBarNormal: '通常:', modelsBarExpert: 'エキスパート:', openModelPicker: 'モデルを選択',
+        pickerTitle: 'Chat モデルを選択', pickerNormalSection: '通常タスクモデル', pickerExpertSection: 'エキスパートタスクモデル', pickerPlanSection: 'プランタスクモデル', pickerReviewSection: 'レビ��ータスクモデル', pickerCompactionSection: '圧縮モデル',
+        pickerSave: '保存して CLI を再起動', pickerCancel: 'キャンセル',
+        expertNotConfigured: 'エキスパートを無効化', expertNotConfiguredToast: 'エキスパートモデルが設定されていません。モデル選択ダイアログで選択してください。',
+        expertUnavailable: '未設定',
+        planNotConfigured: '（プランモデル未設定）', reviewNotConfigured: '（レビューモデル未設定）', compactionNotConfigured: '（圧縮時は通常モデルを使用）'
+    });
+    Object.assign(chatTranslations.fr, {
+        modelsBarNormal: 'Normal :', modelsBarExpert: 'Expert :', openModelPicker: 'Choisir les modèles',
+        pickerTitle: 'Sélectionner les modèles Chat', pickerNormalSection: 'Modèle de tâche normal', pickerExpertSection: 'Modèle de tâche expert', pickerPlanSection: 'Modèle de tâche plan', pickerReviewSection: 'Modèle de tâche revue',
+        pickerSave: 'Enregistrer et redémarrer le CLI', pickerCancel: 'Annuler',
+        expertNotConfigured: 'Désactiver l’expert', expertNotConfiguredToast: 'Le modèle expert n’est pas configuré. Choisissez-en un dans le sélecteur de modèles.',
+        expertUnavailable: 'Non configuré',
+        planNotConfigured: '(Modèle de plan non configuré)', reviewNotConfigured: '(Modèle de revue non configuré)'
+    });
+    Object.assign(chatTranslations.de, {
+        modelsBarNormal: 'Normal:', modelsBarExpert: 'Experte:', openModelPicker: 'Modelle wählen',
+        pickerTitle: 'Chat-Modelle auswählen', pickerNormalSection: 'Normales Aufgabenmodell', pickerExpertSection: 'Experten-Aufgabenmodell', pickerPlanSection: 'Plan-Aufgabenmodell', pickerReviewSection: 'Review-Aufgabenmodell',
+        pickerSave: 'Speichern und CLI neu starten', pickerCancel: 'Abbrechen',
+        routeAutoSwitched: 'Die nächste Nachricht wird über die Experten-Route gesendet',
+        expertNotConfigured: 'Experte deaktivieren', expertNotConfiguredToast: 'Das Expertenmodell ist nicht konfiguriert. Bitte wählen Sie eines im Modell-Auswahldialog.',
+        expertUnavailable: 'Nicht konfiguriert',
+        planNotConfigured: '(Planmodell nicht konfiguriert)', reviewNotConfigured: '(Review-Modell nicht konfiguriert)'
+    });
+
     /** 补齐上下文窗口弹层文案。 */
     Object.assign(chatTranslations.en, {
         contextWindowTitle: 'Context window',
@@ -190,7 +266,26 @@
     const contextClearEl = document.querySelector('[data-role="context-clear"]');
     const attachmentsEl = document.querySelector('[data-role="attachments"]');
     const dropOverlayEl = document.querySelector('[data-role="drop-overlay"]');
-    const modelSelectEl = document.querySelector('[data-role="model-select"]');
+    const modelsBarEl = document.querySelector('[data-role="models-bar"]');
+    const normalModelNameEl = document.querySelector('[data-role="normal-model-name"]');
+    const expertModelNameEl = document.querySelector('[data-role="expert-model-name"]');
+    const openModelPickerEl = document.querySelector('[data-role="open-model-picker"]');
+    const modelPickerDialogEl = document.querySelector('[data-role="model-picker"]');
+    const modelPickerFormEl = document.querySelector('[data-role="model-picker-form"]');
+    const modelPickerNormalSelectEl = document.querySelector('[data-role="model-picker-normal-select"]');
+    const modelPickerExpertSelectEl = document.querySelector('[data-role="model-picker-expert-select"]');
+    const modelPickerPlanSelectEl = document.querySelector('[data-role="model-picker-plan-select"]');
+    const modelPickerReviewSelectEl = document.querySelector('[data-role="model-picker-review-select"]');
+    const modelPickerCompactionSelectEl = document.querySelector('[data-role="model-picker-compaction-select"]');
+    const modelPickerCancelEls = Array.prototype.slice.call(
+        document.querySelectorAll('[data-role="model-picker-cancel"], [data-role="model-picker-cancel-btn"]')
+    );
+    const routeBadgeEl = document.querySelector('[data-role="route-badge"]');
+    const routeBadgeTextEl = document.querySelector('[data-role="route-badge-text"]');
+    const composerNormalChipEl = document.querySelector('[data-role="composer-normal-chip"]');
+    const composerExpertChipEl = document.querySelector('[data-role="composer-expert-chip"]');
+    const composerNormalChipNameEl = document.querySelector('[data-role="composer-normal-chip-name"]');
+    const composerExpertChipNameEl = document.querySelector('[data-role="composer-expert-chip-name"]');
     const permissionModeSelectEl = document.querySelector('[data-role="permission-mode-select"]');
     const tokenMeterEl = document.querySelector('[data-role="token-meter"]');
     const tokenMeterWrapEl = document.querySelector('[data-role="token-meter-wrap"]');
@@ -211,10 +306,24 @@
         expertModelOptions: [],
         expertModelId: '',
         expertEnabled: false,
+        planModelOptions: [],
+        planModelId: '',
+        planEnabled: false,
+        reviewModelOptions: [],
+        reviewModelId: '',
+        reviewEnabled: false,
+        compactionModelOptions: [],
+        compactionModelId: '',
+        compactionEnabled: false,
+        // 按需专家方案：扩展侧通过 expert/availability 广播专家是否配置好，
+        // 仅用于 header 文案展示（无路由激活态）。
+        expertAvailable: false,
+        expertAvailableModelName: '',
         permissionMode: 'acceptEdits',
         defaultAttachmentPaths: new Set(),
         dragDepth: 0,
         chatRunning: false,
+        backendRunning: false,
         compacting: false,
         renderedCompactions: new Set()
     };
@@ -271,7 +380,9 @@
         renderPermissionModeSelect();
         ensureComposerShortcutBar();
         renderExpertModelOptions();
-        renderTaskFlowTodoPanel();
+        renderModelPickerPlanList();
+        renderModelPickerReviewList();
+        renderModelPickerCompactionList();
         renderClaudeTodoPanel();
         setChatRunning(composerState.chatRunning);
         rerenderMessagesFromDom();
@@ -613,27 +724,7 @@
     }
 
     /**
-     * 创建输入框下方的专家模型下拉框。
-     *
-     * @returns {HTMLSelectElement} 已绑定保存事件的专家模型下拉框。
-     */
-    function createExpertModelSelect() {
-        const select = document.createElement('select');
-        select.className = 'composer-shortcut-select';
-        select.dataset.role = 'expert-model-select';
-        select.dataset.i18nTitle = 'expertModelSelectTitle';
-        select.setAttribute('aria-label', t('expertModelSelectAria'));
-        select.addEventListener('change', () => {
-            composerState.expertModelId = select.value;
-            composerState.expertEnabled = select.value.length > 0;
-            renderExpertModelOptions();
-            post({ type: 'expert/model/select', modelId: select.value });
-        });
-        return select;
-    }
-
-    /**
-     * 确保蓝色输入框下方存在专家设置与 CC 任务流快捷按钮。
+     * 确保蓝色输入框下方存在 CC 任务流快捷按钮（专家模型下拉已迁移到顶部模型条 + 弹窗）。
      *
      * 该区域通过运行时脚本动态注入，避免直接修改静态 index.html 结构。
      */
@@ -646,7 +737,6 @@
         shortcutBar.dataset.role = 'composer-shortcut-bar';
 
         shortcutBar.append(
-            createExpertModelSelect(),
             createComposerShortcutButton('ccTaskFlow', () => post({ type: 'taskFlow/open' }))
         );
         if (tokenMeterWrapEl instanceof HTMLElement) {
@@ -654,7 +744,6 @@
         }
 
         composerBox.insertAdjacentElement('afterend', shortcutBar);
-        renderExpertModelOptions();
         applyI18n();
         // 如果在运行中创建/重建此栏，立刻同步禁用态。
         applyRunningDisabledControls(composerState.chatRunning);
@@ -1010,65 +1099,319 @@
     }
 
     /**
-     * 渲染输入框工具栏中的模型切换下拉框。
+     * 在普通 / 专家模型可选项列表中查找指定 key（providerId/modelId）的显示名称。
+     *
+     * 顶部模型条只展示 displayName 一栏，没有 provider 名前缀，避免顶部信息条太挤。
+     *
+     * @param {{ providerId: string; modelId: string; displayName: string }[]} list 模型列表。
+     * @param {string} key 形如 `providerId/modelId` 的 key。
+     * @returns {string} 显示名称；未匹配到时返回 key 本身。
      */
-    function renderModelOptions() {
-        if (!(modelSelectEl instanceof HTMLSelectElement)) return;
-        modelSelectEl.innerHTML = '';
-        const models = composerState.modelOptions || [];
-        if (models.length === 0) {
-            const option = document.createElement('option');
-            option.value = '';
-            option.textContent = t('noModelConfigured');
-            modelSelectEl.appendChild(option);
-            modelSelectEl.disabled = true;
-            return;
+    function findModelDisplayNameByKey(list, key) {
+        if (!key) return '';
+        for (const m of list || []) {
+            if (m.providerId + '/' + m.modelId === key) return m.displayName || key;
         }
-        modelSelectEl.disabled = false;
-        if (!composerState.currentModelKey) {
-            const placeholder = document.createElement('option');
-            placeholder.value = '';
-            placeholder.textContent = t('selectModel');
-            placeholder.selected = true;
-            modelSelectEl.appendChild(placeholder);
+        return key;
+    }
+
+    /**
+     * 渲染顶部模型条上的「普通：xxx · 专家：yyy」名称。
+     *
+     * 数据来自 composerState.modelOptions / expertModelOptions 与 currentModelKey /
+     * expertEnabled+expertModelId；任何一项变化时都应调用本函数刷新展示。
+     */
+    function renderModelsBar() {
+        const normalName = findModelDisplayNameByKey(composerState.modelOptions, composerState.currentModelKey) || t('noModelConfigured');
+        const normalTitle = composerState.currentModelKey || '';
+        if (normalModelNameEl instanceof HTMLElement) {
+            normalModelNameEl.textContent = normalName;
+            normalModelNameEl.title = normalTitle;
         }
-        for (const model of models) {
-            const option = document.createElement('option');
-            option.value = model.providerId + '/' + model.modelId;
-            option.textContent = model.providerName + ': ' + model.displayName;
-            option.title = option.value;
-            option.selected = option.value === composerState.currentModelKey || model.selected;
-            modelSelectEl.appendChild(option);
+        if (composerNormalChipNameEl instanceof HTMLElement) {
+            composerNormalChipNameEl.textContent = normalName;
+        }
+        if (composerNormalChipEl instanceof HTMLElement) {
+            composerNormalChipEl.title = normalTitle || t('openModelPicker');
+        }
+
+        let expertLabel = '—';
+        let expertTitle = '';
+        let expertOff = true;
+        if (composerState.expertEnabled && composerState.expertModelId) {
+            expertLabel = composerState.expertModelId;
+            for (const m of composerState.expertModelOptions || []) {
+                const key = m.providerId + '/' + m.modelId;
+                if (key === composerState.expertModelId || m.modelId === composerState.expertModelId) {
+                    expertLabel = m.displayName || m.modelId;
+                    break;
+                }
+            }
+            expertTitle = composerState.expertModelId;
+            expertOff = false;
+        } else if (composerState.expertAvailable) {
+            // 配置快照尚未到达、但扩展端已广播专家可用时，退回到 availability 报来的名字。
+            expertLabel = composerState.expertAvailableModelName || expertLabel;
+            expertTitle = composerState.expertAvailableModelName || '';
+            expertOff = !composerState.expertAvailableModelName;
+        }
+        if (expertOff) {
+            // 专家未配置：header 显示「未配置」占位，标题给出引导文案。
+            expertLabel = t('expertUnavailable');
+            expertTitle = t('expertNotConfiguredToast');
+        }
+        if (expertModelNameEl instanceof HTMLElement) {
+            expertModelNameEl.textContent = expertLabel;
+            expertModelNameEl.title = expertTitle;
+            expertModelNameEl.classList.toggle('chat-models__name--off', expertOff);
+        }
+        if (composerExpertChipNameEl instanceof HTMLElement) {
+            composerExpertChipNameEl.textContent = expertLabel;
+            composerExpertChipNameEl.classList.toggle('composer-model-chip__name--off', expertOff);
+        }
+        if (composerExpertChipEl instanceof HTMLElement) {
+            composerExpertChipEl.title = expertTitle || t('openModelPicker');
         }
     }
 
     /**
-     * 渲染输入框下方的专家模型下拉框。
+     * 渲染模型选择弹窗中「普通任务模型」radio 列表。
      *
-     * 第一项固定为「关闭专家」；其它项复用当前可选模型列表。
+     * 由 models/snapshot 或 model/options 协议触发；选中项与 composerState.currentModelKey
+     * 一致，未选中时所有 radio 都不选。
      */
-    function renderExpertModelOptions() {
-        const select = document.querySelector('[data-role="expert-model-select"]');
-        if (!(select instanceof HTMLSelectElement)) return;
-        select.innerHTML = '';
+    function renderModelPickerNormalList() {
+        if (!(modelPickerNormalSelectEl instanceof HTMLSelectElement)) return;
+        modelPickerNormalSelectEl.innerHTML = '';
+        const models = composerState.modelOptions || [];
+        if (models.length === 0) {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = t('noModelConfigured');
+            opt.disabled = true;
+            opt.selected = true;
+            modelPickerNormalSelectEl.appendChild(opt);
+            return;
+        }
+        for (const model of models) {
+            const key = model.providerId + '/' + model.modelId;
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = model.providerName + ': ' + model.displayName;
+            opt.title = key;
+            if (key === composerState.currentModelKey) opt.selected = true;
+            modelPickerNormalSelectEl.appendChild(opt);
+        }
+    }
 
-        const closeOption = document.createElement('option');
-        closeOption.value = '';
-        closeOption.textContent = t('closeExpert');
-        closeOption.selected = !composerState.expertEnabled || !composerState.expertModelId;
-        select.appendChild(closeOption);
+    /**
+     * 渲染模型选择弹窗中「专家任务模型」radio 列表。
+     *
+     * 第一项固定为「关闭专家」（value 为空字符串），其余项使用 modelId 作为 value，
+     * 选中规则与 composerState.expertEnabled + expertModelId 一致。
+     */
+    function renderModelPickerPlanList() {
+        if (!(modelPickerPlanSelectEl instanceof HTMLSelectElement)) return;
+        modelPickerPlanSelectEl.innerHTML = '';
+
+        const closeOpt = document.createElement('option');
+        closeOpt.value = '';
+        closeOpt.textContent = t('planNotConfigured');
+        if (!composerState.planEnabled || !composerState.planModelId) closeOpt.selected = true;
+        modelPickerPlanSelectEl.appendChild(closeOpt);
+
+        for (const model of composerState.planModelOptions || []) {
+            const key = model.providerId + '/' + model.modelId;
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = model.providerName + ': ' + model.displayName;
+            opt.title = key;
+            if (composerState.planEnabled && (key === composerState.planModelId || model.modelId === composerState.planModelId)) {
+                opt.selected = true;
+            }
+            modelPickerPlanSelectEl.appendChild(opt);
+        }
+    }
+
+    function renderModelPickerReviewList() {
+        if (!(modelPickerReviewSelectEl instanceof HTMLSelectElement)) return;
+        modelPickerReviewSelectEl.innerHTML = '';
+
+        const closeOpt = document.createElement('option');
+        closeOpt.value = '';
+        closeOpt.textContent = t('reviewNotConfigured');
+        if (!composerState.reviewEnabled || !composerState.reviewModelId) closeOpt.selected = true;
+        modelPickerReviewSelectEl.appendChild(closeOpt);
+
+        for (const model of composerState.reviewModelOptions || []) {
+            const key = model.providerId + '/' + model.modelId;
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = model.providerName + ': ' + model.displayName;
+            opt.title = key;
+            if (composerState.reviewEnabled && (key === composerState.reviewModelId || model.modelId === composerState.reviewModelId)) {
+                opt.selected = true;
+            }
+            modelPickerReviewSelectEl.appendChild(opt);
+        }
+    }
+
+    function renderModelPickerCompactionList() {
+        if (!(modelPickerCompactionSelectEl instanceof HTMLSelectElement)) return;
+        modelPickerCompactionSelectEl.innerHTML = '';
+
+        const closeOpt = document.createElement('option');
+        closeOpt.value = '';
+        closeOpt.textContent = t('compactionNotConfigured');
+        if (!composerState.compactionEnabled || !composerState.compactionModelId) closeOpt.selected = true;
+        modelPickerCompactionSelectEl.appendChild(closeOpt);
+
+        for (const model of composerState.compactionModelOptions || []) {
+            const key = model.providerId + '/' + model.modelId;
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = model.providerName + ': ' + model.displayName;
+            opt.title = key;
+            if (composerState.compactionEnabled && (key === composerState.compactionModelId || model.modelId === composerState.compactionModelId)) {
+                opt.selected = true;
+            }
+            modelPickerCompactionSelectEl.appendChild(opt);
+        }
+    }
+
+    function renderModelPickerExpertList() {
+        if (!(modelPickerExpertSelectEl instanceof HTMLSelectElement)) return;
+        modelPickerExpertSelectEl.innerHTML = '';
+
+        const closeOpt = document.createElement('option');
+        closeOpt.value = '';
+        closeOpt.textContent = t('expertNotConfigured');
+        if (!composerState.expertEnabled || !composerState.expertModelId) closeOpt.selected = true;
+        modelPickerExpertSelectEl.appendChild(closeOpt);
 
         for (const model of composerState.expertModelOptions || []) {
-            const option = document.createElement('option');
-            option.value = model.modelId;
-            option.textContent = model.providerName + ': ' + model.displayName;
-            option.title = model.modelId;
-            option.selected = composerState.expertEnabled && model.modelId === composerState.expertModelId;
-            select.appendChild(option);
+            const key = model.providerId + '/' + model.modelId;
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = model.providerName + ': ' + model.displayName;
+            opt.title = key;
+            if (composerState.expertEnabled && (key === composerState.expertModelId || model.modelId === composerState.expertModelId)) {
+                opt.selected = true;
+            }
+            modelPickerExpertSelectEl.appendChild(opt);
         }
+    }
 
-        select.title = t('expertModelSelectTitle');
-        select.setAttribute('aria-label', t('expertModelSelectAria'));
+    /**
+     * 顶部模型条与模型选择弹窗的统一刷新入口。
+     *
+     * 取代旧的 renderModelOptions / renderExpertModelOptions（基于下拉 select 的版本）。
+     */
+    function renderModelOptions() {
+        renderModelsBar();
+        renderModelPickerNormalList();
+    }
+
+    /**
+     * 顶部模型条与模型选择弹窗的专家栏刷新入口。
+     */
+    function renderExpertModelOptions() {
+        renderModelsBar();
+        renderModelPickerExpertList();
+    }
+
+    /**
+     * 解析弹窗中已选中的普通 + 专家 radio，提取要下发的 providerId/modelId 对。
+     *
+     * 专家 value 为空字符串时返回 null（语义为「关闭专家」）。
+     *
+     * @returns {{ normal: { providerId: string; modelId: string } | null; expert: { providerId: string; modelId: string } | null }}
+     */
+    function readModelPickerSelection() {
+        let normal = null;
+        if (modelPickerNormalSelectEl instanceof HTMLSelectElement && modelPickerNormalSelectEl.value) {
+            const value = modelPickerNormalSelectEl.value;
+            const separator = value.indexOf('/');
+            if (separator > 0) {
+                normal = { providerId: value.slice(0, separator), modelId: value.slice(separator + 1) };
+            }
+        }
+        let expert = null;
+        if (modelPickerExpertSelectEl instanceof HTMLSelectElement && modelPickerExpertSelectEl.value) {
+            const value = modelPickerExpertSelectEl.value;
+            const separator = value.indexOf('/');
+            if (separator > 0) {
+                expert = { providerId: value.slice(0, separator), modelId: value.slice(separator + 1) };
+            }
+        }
+        let plan = null;
+        if (modelPickerPlanSelectEl instanceof HTMLSelectElement && modelPickerPlanSelectEl.value) {
+            const value = modelPickerPlanSelectEl.value;
+            const separator = value.indexOf('/');
+            if (separator > 0) {
+                plan = { providerId: value.slice(0, separator), modelId: value.slice(separator + 1) };
+            }
+        }
+        let review = null;
+        if (modelPickerReviewSelectEl instanceof HTMLSelectElement && modelPickerReviewSelectEl.value) {
+            const value = modelPickerReviewSelectEl.value;
+            const separator = value.indexOf('/');
+            if (separator > 0) {
+                review = { providerId: value.slice(0, separator), modelId: value.slice(separator + 1) };
+            }
+        }
+        let compaction = null;
+        if (modelPickerCompactionSelectEl instanceof HTMLSelectElement && modelPickerCompactionSelectEl.value) {
+            const value = modelPickerCompactionSelectEl.value;
+            const separator = value.indexOf('/');
+            if (separator > 0) {
+                compaction = { providerId: value.slice(0, separator), modelId: value.slice(separator + 1) };
+            }
+        }
+        return { normal, expert, plan, review, compaction };
+    }
+
+    /**
+     * 打开模型选择弹窗：先刷新两栏 radio 列表，再调用原生 dialog.showModal。
+     */
+    function openModelPicker() {
+        if (!(modelPickerDialogEl instanceof HTMLDialogElement)) return;
+        renderModelPickerNormalList();
+        renderModelPickerExpertList();
+        renderModelPickerPlanList();
+        renderModelPickerReviewList();
+        renderModelPickerCompactionList();
+        if (!modelPickerDialogEl.open) modelPickerDialogEl.showModal();
+    }
+
+    /**
+     * 关闭模型选择弹窗。原生 dialog.close 同时会处理键盘焦点归还。
+     */
+    function closeModelPicker() {
+        if (modelPickerDialogEl instanceof HTMLDialogElement && modelPickerDialogEl.open) {
+            modelPickerDialogEl.close();
+        }
+    }
+
+    /**
+     * 提交模型选择弹窗：一次性下发 models/applyPair，让宿主串行处理两次保存 + 一次重启。
+     */
+    function submitModelPicker() {
+        const selection = readModelPickerSelection();
+        if (selection.normal) {
+            composerState.currentModelKey = selection.normal.providerId + '/' + selection.normal.modelId;
+        }
+        composerState.expertEnabled = !!selection.expert;
+        composerState.expertModelId = selection.expert ? (selection.expert.providerId + '/' + selection.expert.modelId) : '';
+        composerState.planEnabled = !!selection.plan;
+        composerState.planModelId = selection.plan ? (selection.plan.providerId + '/' + selection.plan.modelId) : '';
+        composerState.reviewEnabled = !!selection.review;
+        composerState.reviewModelId = selection.review ? (selection.review.providerId + '/' + selection.review.modelId) : '';
+        composerState.compactionEnabled = !!selection.compaction;
+        composerState.compactionModelId = selection.compaction ? (selection.compaction.providerId + '/' + selection.compaction.modelId) : '';
+        renderModelsBar();
+        post({ type: 'models/applyPair', normal: selection.normal, expert: selection.expert, plan: selection.plan, review: selection.review, compaction: selection.compaction });
+        closeModelPicker();
     }
 
     /**
@@ -1144,6 +1487,10 @@
         sendEl.title = composerState.chatRunning ? t('stopResponse') : t('sendMessage');
         sendEl.setAttribute('aria-label', composerState.chatRunning ? t('stopResponse') : t('sendMessage'));
         sendEl.dataset.mode = composerState.chatRunning ? 'stop' : 'send';
+    }
+
+    function setChatPendingFromMessage(pending) {
+        setChatRunning(composerState.backendRunning || !!pending);
     }
 
     /**
@@ -1742,6 +2089,7 @@
         if (inTable) { flushTable(); }
 
         container.appendChild(wrapper);
+        return wrapper;
     }
 
     /**
@@ -1886,9 +2234,9 @@
     function appendText(container, text) {
         if (isLongOutput(text)) {
             appendCollapsibleText(container, text, t('longTextOutput'));
-            return;
+            return undefined;
         }
-        renderMarkdown(container, text);
+        return renderMarkdown(container, text);
     }
 
     function isHiddenChatToolSegment(segment) {
@@ -3664,6 +4012,69 @@
         return actions;
     }
 
+    function assistantRouteLabel(route) {
+        switch (route) {
+            case 'expert': return 'EXPERT';
+            case 'plan': return 'PLAN';
+            case 'review': return 'REVIEW';
+            case 'normal':
+            default: return 'NORMAL';
+        }
+    }
+
+    function assistantSourcePrefixText(message) {
+        if (!message || message.role !== 'assistant') return '';
+        var modelLabel = String(message.modelLabel || '').trim();
+        if (!modelLabel) return '';
+        return '[' + assistantRouteLabel(message.route || 'normal') + '][' + modelLabel + ']';
+    }
+
+    function assistantSourcePrefixTextFromItem(item) {
+        if (!(item instanceof HTMLElement) || item.dataset.role !== 'assistant') return '';
+        var modelLabel = String(item.dataset.modelLabel || '').trim();
+        if (!modelLabel) return '';
+        return '[' + assistantRouteLabel(item.dataset.route || 'normal') + '][' + modelLabel + ']';
+    }
+
+    function createAssistantSourceLabel(text) {
+        if (!text) return null;
+        var label = document.createElement('div');
+        label.className = 'assistantSourcePrefix_07S1Yg';
+        label.textContent = text;
+        return label;
+    }
+
+    function prependAssistantSourceLabel(target, text) {
+        if (!target || !text) return;
+        var label = createAssistantSourceLabel(text);
+        if (!label) return;
+        target.insertBefore(label, target.firstChild);
+    }
+
+    function appendSegmentWithInlinePrefix(container, segment, prefixState) {
+        appendSegment(container, segment);
+        if (!prefixState || prefixState.used || !prefixState.text || !segment || isHiddenChatToolSegment(segment)) return;
+        if (segment.kind === 'usage' || segment.kind === 'task' || segment.kind === 'image') return;
+        var target = container.lastElementChild;
+        if (!(target instanceof HTMLElement)) return;
+        prependAssistantSourceLabel(target, prefixState.text);
+        prefixState.used = true;
+    }
+
+    function contentAlreadyHasAssistantSourceLabel(content) {
+        return !!(content && content.querySelector && content.querySelector('.assistantSourcePrefix_07S1Yg'));
+    }
+
+    function appendSegmentWithPatchPrefix(item, content, segment, forcePrefix) {
+        var prefixText = '';
+        if (forcePrefix) {
+            prefixText = assistantSourcePrefixTextFromItem(item);
+        } else if (!contentAlreadyHasAssistantSourceLabel(content)) {
+            prefixText = assistantSourcePrefixTextFromItem(item);
+        }
+        appendSegmentWithInlinePrefix(content, segment, { text: prefixText, used: false });
+    }
+
     /**
      * 渲染一条 Chat 消息（参考项目风格）。
      *
@@ -3688,6 +4099,8 @@
         // 加上时间线结束点（见 style.css 末尾 [data-pending] 选择器）。
         if (message.role === 'assistant') {
             item.dataset.pending = message.pending ? 'true' : 'false';
+            item.dataset.route = message.route || 'normal';
+            if (message.modelLabel) item.dataset.modelLabel = String(message.modelLabel);
         }
         // 每条消息节点写入位置坐标 dataset.index：
         // 取追加之前的 .message_07S1Yg 兄弟数量（emptyState 已在前面被移除）作为
@@ -3727,17 +4140,18 @@
                 // 依赖 forceScrollToBottomOnce flag）。
                 messagesEl.scrollTop = messagesEl.scrollHeight;
             }
-            if (message.role === 'assistant') setChatRunning(!!message.pending);
+            if (message.role === 'assistant') setChatPendingFromMessage(!!message.pending);
             return;
         }
 
         // Assistant 消息内容
         var content = document.createElement('div');
         content.className = 'assistantMessage_07S1Yg';
+        var prefixState = { text: assistantSourcePrefixText(message), used: false };
         if (message.segments) {
             for (var _s2 = 0; _s2 < message.segments.length; _s2++) {
                 var _seg = message.segments[_s2];
-                appendSegment(content, _seg);
+                appendSegmentWithInlinePrefix(content, _seg, prefixState);
             }
         }
         renderPendingIndicator(content, message);
@@ -3751,7 +4165,7 @@
         } else {
             scrollToBottomIfNeeded(_wasAtBottomAsst);
         }
-        if (message.role === 'assistant') setChatRunning(!!message.pending);
+        if (message.role === 'assistant') setChatPendingFromMessage(!!message.pending);
     }
 
     /**
@@ -3792,7 +4206,7 @@
         var wasAtBottom = isScrolledNearBottom();
         // 更新 pending 状态
         if (item.dataset.role === 'assistant') {
-            setChatRunning(!!pending);
+            setChatPendingFromMessage(!!pending);
             item.dataset.pending = pending ? 'true' : 'false';
         }
         // 获取内容容器（如果是用户消息，不更新）
@@ -3812,7 +4226,8 @@
                         && !existing.classList.contains('is-collapsed');
                     var replacement = document.createElement('div');
                     replacement.style.display = 'contents';
-                    appendSegment(replacement, segment);
+                    var hadSourceLabel = !!(existing.querySelector && existing.querySelector('.assistantSourcePrefix_07S1Yg'));
+                    appendSegmentWithPatchPrefix(item, replacement, segment, hadSourceLabel);
                     var newNode = replacement.firstChild;
                     if (newNode) {
                         if (wasToolExpanded && newNode instanceof HTMLElement && newNode.classList.contains('root_ZUQaOA')) {
@@ -3825,7 +4240,7 @@
                     }
                 }
             }
-            appendSegment(content, segment);
+            appendSegmentWithPatchPrefix(item, content, segment);
         }
         renderPendingIndicator(content, {
             role: item.dataset.role || 'assistant',
@@ -4067,8 +4482,43 @@
                 composerState.expertModelOptions = message.models || [];
                 composerState.expertEnabled = !!message.current?.enabled;
                 composerState.expertModelId = message.current?.modelId || '';
-                ensureComposerShortcutBar();
                 renderExpertModelOptions();
+                break;
+            case 'models/snapshot':
+                composerState.modelOptions = message.normalModels || [];
+                composerState.expertModelOptions = message.expertModels || [];
+                composerState.planModelOptions = message.planModels || [];
+                composerState.reviewModelOptions = message.reviewModels || [];
+                composerState.compactionModelOptions = message.compactionModels || [];
+                composerState.currentModelKey = message.currentNormal
+                    ? message.currentNormal.providerId + '/' + message.currentNormal.modelId
+                    : '';
+                composerState.expertEnabled = !!(message.currentExpert && message.currentExpert.enabled);
+                composerState.expertModelId = message.currentExpert ? (message.currentExpert.modelId || '') : '';
+                composerState.planEnabled = !!(message.currentPlan && message.currentPlan.enabled);
+                composerState.planModelId = message.currentPlan ? (message.currentPlan.modelId || '') : '';
+                composerState.reviewEnabled = !!(message.currentReview && message.currentReview.enabled);
+                composerState.reviewModelId = message.currentReview ? (message.currentReview.modelId || '') : '';
+                composerState.compactionEnabled = !!(message.currentCompaction && message.currentCompaction.enabled);
+                composerState.compactionModelId = message.currentCompaction ? (message.currentCompaction.modelId || '') : '';
+                renderModelOptions();
+                renderExpertModelOptions();
+                renderModelPickerPlanList();
+                renderModelPickerReviewList();
+                renderModelPickerCompactionList();
+                break;
+            case 'chat/running':
+                composerState.backendRunning = !!message.running;
+                setChatRunning(composerState.backendRunning);
+                break;
+            case 'route/changed':
+                // legacy noop：按需专家方案已退役 route/changed 协议，旧版缓存的 webview
+                // 仍��能订阅此消息，这里显式吞掉，避免控制台报 warn。
+                break;
+            case 'expert/availability':
+                composerState.expertAvailable = !!message.available;
+                composerState.expertAvailableModelName = typeof message.modelName === 'string' ? message.modelName : '';
+                renderModelsBar();
                 break;
             case 'permissionMode/current':
                 composerState.permissionMode = message.mode === 'bypassPermissions' ? 'bypassPermissions' : 'acceptEdits';
@@ -4076,9 +4526,6 @@
                 break;
             case 'taskFlow/status':
                 updateTaskFlowTodoStatus(message.snapshot);
-                break;
-            case 'expert/event':
-                handleExpertEvent(message.event);
                 break;
             case 'message/error':
                 setChatRunning(false);
@@ -4100,13 +4547,15 @@
             case 'compaction/finished':
                 setComposerCompacting(false);
                 setTokenMeterCompacting(false);
-                renderCompactionCard({
-                    oldSessionId: message.oldSessionId,
-                    newSessionId: message.newSessionId,
-                    beforeTokens: Number(message.beforeTokens) || 0,
-                    afterTokens: Number(message.afterTokens) || 0,
-                    summary: message.summary || ''
-                });
+                if (Number(message.beforeTokens) > 0 || Number(message.afterTokens) > 0 || message.summary) {
+                    renderCompactionCard({
+                        oldSessionId: message.oldSessionId,
+                        newSessionId: message.newSessionId,
+                        beforeTokens: Number(message.beforeTokens) || 0,
+                        afterTokens: Number(message.afterTokens) || 0,
+                        summary: message.summary || ''
+                    });
+                }
                 break;
             case 'compaction/failed':
                 setComposerCompacting(false);
@@ -4372,14 +4821,22 @@
 
     sendEl?.addEventListener('click', handleComposerAction);
     attachFileEl?.addEventListener('click', () => post({ type: 'file/pick' }));
-    modelSelectEl?.addEventListener('change', () => {
-        if (!(modelSelectEl instanceof HTMLSelectElement)) return;
-        const value = modelSelectEl.value;
-        const separator = value.indexOf('/');
-        if (!value || separator <= 0) return;
-        composerState.currentModelKey = value;
-        post({ type: 'model/select', providerId: value.slice(0, separator), modelId: value.slice(separator + 1) });
+    openModelPickerEl?.addEventListener('click', openModelPicker);
+    composerNormalChipEl?.addEventListener('click', openModelPicker);
+    composerExpertChipEl?.addEventListener('click', openModelPicker);
+    modelPickerCancelEls.forEach((el) => {
+        if (el instanceof HTMLElement) el.addEventListener('click', closeModelPicker);
     });
+    modelPickerFormEl?.addEventListener('submit', (event) => {
+        event.preventDefault();
+        submitModelPicker();
+    });
+    if (modelPickerDialogEl instanceof HTMLDialogElement) {
+        modelPickerDialogEl.addEventListener('cancel', (event) => {
+            event.preventDefault();
+            closeModelPicker();
+        });
+    }
     permissionModeSelectEl?.addEventListener('change', () => {
         if (!(permissionModeSelectEl instanceof HTMLSelectElement)) return;
         const mode = permissionModeSelectEl.value === 'bypassPermissions' ? 'bypassPermissions' : 'acceptEdits';
@@ -4426,7 +4883,7 @@
     }, true);
 
     // ---------------------------------------------------------------------
-    // Expert mode 折叠面板（ExpertPanel）
+    // 旧版 Expert mode 折叠面板（ExpertPanel）已废弃
     // ---------------------------------------------------------------------
     //
     // 每次主模型调用 ask_expert，扩展端会推送一系列 `expert/event` 消息：

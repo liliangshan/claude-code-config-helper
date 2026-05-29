@@ -10,9 +10,22 @@
 <body>
     <div class="chat-root">
         <header class="chat-header">
-            <div>
+            <div class="chat-header__main">
                 <h1>LLS CLAUDE CHAT</h1>
                 <p data-role="cli-status" data-i18n="statusInitializing">Initializing…</p>
+                <div class="chat-models" data-role="models-bar">
+                    <span class="chat-models__item">
+                        <span class="chat-models__label" data-i18n="modelsBarNormal">Normal:</span>
+                        <span class="chat-models__name" data-role="normal-model-name">—</span>
+                    </span>
+                    <span class="chat-models__sep">·</span>
+                    <span class="chat-models__item">
+                        <span class="chat-models__label" data-i18n="modelsBarExpert">Expert:</span>
+                        <span class="chat-models__name" data-role="expert-model-name">—</span>
+                    </span>
+                    <button type="button" class="chat-models__edit" data-role="open-model-picker"
+                            data-i18n-title="openModelPicker" title="Choose models">⚙</button>
+                </div>
             </div>
             <div class="chat-actions">
                 <button type="button" data-role="copy-body-source" data-i18n="copySource" data-i18n-title="copySourceTitle" title="Copy current Webview body source">Copy source</button>
@@ -45,13 +58,18 @@
                 <div class="composer-toolbar">
                     <div class="composer-toolbar__left">
                         <button type="button" class="icon-button" data-role="attach-file" data-i18n-title="attachFile" data-i18n-aria-label="attachFile" title="Select context files" aria-label="Select context files">＋</button>
-                        <select class="model-select" data-role="model-select" data-i18n-title="modelSelectTitle" data-i18n-aria-label="modelSelectAria" title="Switch model and automatically restart Chat CLI" aria-label="Switch model">
-                            <option value="" data-i18n="modelLoading">Loading models…</option>
-                        </select>
                         <select class="model-select permission-mode-select" data-role="permission-mode-select" data-i18n-title="permissionModeTitle" data-i18n-aria-label="permissionModeAria" title="Switch Claude CLI permission mode and automatically restart Chat CLI" aria-label="Switch permission mode">
                             <option value="acceptEdits">acceptEdits</option>
                             <option value="bypassPermissions">bypassPermissions</option>
                         </select>
+                        <button type="button" class="composer-model-chip" data-role="composer-normal-chip" data-i18n-title="openModelPicker" title="Choose models">
+                            <span class="composer-model-chip__label" data-i18n="modelsBarNormal">Normal:</span>
+                            <span class="composer-model-chip__name" data-role="composer-normal-chip-name">—</span>
+                        </button>
+                        <button type="button" class="composer-model-chip" data-role="composer-expert-chip" data-i18n-title="openModelPicker" title="Choose models">
+                            <span class="composer-model-chip__label" data-i18n="modelsBarExpert">Expert:</span>
+                            <span class="composer-model-chip__name" data-role="composer-expert-chip-name">—</span>
+                        </button>
                         <span class="token-meter-wrap" data-role="token-meter-wrap" hidden>
                             <button type="button" class="token-meter" data-role="token-meter" aria-haspopup="dialog" aria-expanded="false" aria-live="polite"></button>
                             <div class="token-meter-popover" data-role="token-meter-popover" role="dialog" aria-hidden="true">
@@ -79,6 +97,38 @@
             </div>
         </footer>
     </div>
+    <dialog class="model-picker" data-role="model-picker">
+        <form method="dialog" class="model-picker__form" data-role="model-picker-form">
+            <header class="model-picker__header">
+                <h2 data-i18n="pickerTitle">Select Chat models</h2>
+                <button type="button" class="model-picker__close" data-role="model-picker-cancel" aria-label="Close">×</button>
+            </header>
+            <section class="model-picker__section">
+                <h3 data-i18n="pickerNormalSection">Normal task model</h3>
+                <select class="model-picker__select" data-role="model-picker-normal-select"></select>
+            </section>
+            <section class="model-picker__section">
+                <h3 data-i18n="pickerExpertSection">Expert task model</h3>
+                <select class="model-picker__select" data-role="model-picker-expert-select"></select>
+            </section>
+            <section class="model-picker__section">
+                <h3 data-i18n="pickerPlanSection">Plan task model</h3>
+                <select class="model-picker__select" data-role="model-picker-plan-select"></select>
+            </section>
+            <section class="model-picker__section">
+                <h3 data-i18n="pickerReviewSection">Review task model</h3>
+                <select class="model-picker__select" data-role="model-picker-review-select"></select>
+            </section>
+            <section class="model-picker__section">
+                <h3 data-i18n="pickerCompactionSection">Compaction model</h3>
+                <select class="model-picker__select" data-role="model-picker-compaction-select"></select>
+            </section>
+            <footer class="model-picker__footer">
+                <button type="button" class="model-picker__cancel" data-role="model-picker-cancel-btn" data-i18n="pickerCancel">Cancel</button>
+                <button type="submit" class="model-picker__save" data-role="model-picker-save" data-i18n="pickerSave">Save and restart CLI</button>
+            </footer>
+        </form>
+    </dialog>
     <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
 </body>
 </html>

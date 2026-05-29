@@ -17,8 +17,15 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
 
-import { StreamJsonCliAdapter } from '../cli/cliAdapter';
-import type { CliChunk, CliExitEvent, CliProcessStatus } from '../cli/types';
+// cliAdapter 顶层 `import * as vscode from 'vscode'`，必须先装好 stub 再 require。
+import { installVscodeStub } from './testUtils/vscodeStub';
+installVscodeStub({ values: { claudeCodeConfigHelper: {} } });
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { StreamJsonCliAdapter } = require('../cli/cliAdapter') as typeof import('../cli/cliAdapter');
+type CliChunk = import('../cli/types').CliChunk;
+type CliExitEvent = import('../cli/types').CliExitEvent;
+type CliProcessStatus = import('../cli/types').CliProcessStatus;
 
 /**
  * 构造一个仅实现 onChunk / onExit / onStatus 的最小 CliProcess 替身。
@@ -103,6 +110,13 @@ test('parseSystemTaskEvent 丢弃 task_progress 下划线写法', () => {
     assert.equal(events[0].type, 'segments');
 });
 
+test('parseSystemTaskEvent 丢弃 compact_boundary', () => {
+    const events = parseSingleStdoutLine(JSON.stringify({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual' } }));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'segments');
+    if (events[0].type === 'segments') assert.equal(events[0].segments.length, 0);
+});
+
 test('parseSystemTaskEvent 对未知 subtype 不静默吞', () => {
     const events = parseSingleStdoutLine(JSON.stringify({ type: 'system', subtype: 'someUnknownSubtype', payload: {} }));
     const allEmpty = events.every((event) => event.type === 'segments' && event.segments.length === 0);
@@ -143,6 +157,11 @@ test('stripEmbeddedSystemTaskEvents 同时剥离两种写法的嵌入 JSON', () 
         {
             name: 'task_progress 下划线写法',
             input: '前文\n{"type":"system","subtype":"task_progress","id":6}\n后文',
+            expected: '前文\n后文'
+        },
+        {
+            name: 'compact_boundary',
+            input: '前文\n{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual"}}\n后文',
             expected: '前文\n后文'
         },
         {
