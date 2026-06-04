@@ -194,6 +194,10 @@ select:focus-visible {
     font-size: var(--lls-font-lg);
     font-weight: 600;
     letter-spacing: 0.2px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .chat-header p {
@@ -3193,3 +3197,215 @@ body.vscode-high-contrast .ask-modal__custom-input {
 }
 .composer-model-chip__name--off { color: var(--lls-fg-subtle); }
 .composer-model-chip:hover { background: var(--lls-bg-hover); color: var(--lls-fg); border-color: var(--lls-border-strong, var(--vscode-focusBorder, #3794ff)); }
+
+/* 任务流恢复对话框：沿用 model-picker 弹层视觉，三按钮让用户继续/清除/稍后。 */
+.task-restore {
+    width: min(460px, 92vw);
+    padding: 0;
+    border: 1px solid var(--lls-border-strong, var(--vscode-focusBorder, #3794ff));
+    border-radius: 12px;
+    background: var(--lls-bg-elevated, #252526);
+    color: var(--lls-fg);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+.task-restore::backdrop {
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(2px);
+}
+.task-restore__body {
+    display: flex;
+    flex-direction: column;
+    padding: var(--lls-space-4);
+    gap: var(--lls-space-3);
+}
+.task-restore__header h2 {
+    margin: 0;
+    font-size: var(--lls-font-md);
+    font-weight: 600;
+    color: var(--lls-fg);
+}
+.task-restore__desc {
+    margin: 0;
+    font-size: var(--lls-font-sm);
+    line-height: 1.5;
+    color: var(--lls-fg-muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.task-restore__meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--lls-space-2);
+    padding: var(--lls-space-2) var(--lls-space-3);
+    border-radius: var(--lls-radius-sm);
+    background: color-mix(in srgb, var(--lls-bg) 80%, transparent);
+}
+.task-restore__name {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--lls-font-sm);
+    font-weight: 500;
+    color: var(--lls-fg);
+}
+.task-restore__progress {
+    flex: 0 0 auto;
+    font-size: var(--lls-font-sm);
+    font-variant-numeric: tabular-nums;
+    color: var(--lls-fg-muted);
+}
+.task-restore__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--lls-space-2);
+}
+.task-restore__btn {
+    height: 30px;
+    padding: 0 var(--lls-space-3);
+    border-radius: var(--lls-radius-sm);
+    border: 1px solid var(--lls-border);
+    background: transparent;
+    color: var(--lls-fg);
+    font-size: var(--lls-font-sm);
+    cursor: pointer;
+    transition: background var(--lls-transition-fast), border-color var(--lls-transition-fast), filter var(--lls-transition-fast);
+}
+.task-restore__btn--ghost:hover { background: var(--lls-bg-hover); }
+.task-restore__btn--danger {
+    color: var(--vscode-errorForeground, #f48771);
+    border-color: color-mix(in srgb, var(--vscode-errorForeground, #f48771) 50%, transparent);
+}
+.task-restore__btn--danger:hover { background: color-mix(in srgb, var(--vscode-errorForeground, #f48771) 16%, transparent); }
+.task-restore__btn--primary {
+    background: var(--vscode-button-background, #0e639c);
+    border-color: transparent;
+    color: var(--vscode-button-foreground, #ffffff);
+}
+.task-restore__btn--primary:hover { filter: brightness(1.08); }
+
+/* 历史会话右侧抽屉面板 */
+.session-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    pointer-events: none;
+}
+.session-panel[aria-hidden="false"] { pointer-events: auto; }
+.session-panel__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0);
+    transition: background var(--lls-transition-fast, 150ms);
+    cursor: default;
+}
+.session-panel[aria-hidden="false"] .session-panel__backdrop {
+    background: rgba(0, 0, 0, 0.45);
+}
+.session-panel__drawer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(360px, 88vw);
+    display: flex;
+    flex-direction: column;
+    background: var(--lls-bg-elevated, var(--vscode-sideBar-background, #252526));
+    border-left: 1px solid var(--lls-border-strong, var(--vscode-focusBorder, #3794ff));
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.45);
+    transform: translateX(100%);
+    transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.session-panel[aria-hidden="false"] .session-panel__drawer {
+    transform: translateX(0);
+}
+.session-panel__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--lls-space-3, 12px) var(--lls-space-4, 16px);
+    border-bottom: 1px solid var(--lls-border);
+    flex-shrink: 0;
+}
+.session-panel__header h2 {
+    margin: 0;
+    font-size: var(--lls-font-md, 14px);
+    font-weight: 600;
+}
+.session-panel__close {
+    background: none;
+    border: none;
+    color: var(--lls-fg-muted);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: var(--lls-radius-sm);
+}
+.session-panel__close:hover { background: var(--lls-bg-hover); color: var(--lls-fg); }
+.session-panel__content {
+    overflow-y: auto;
+    flex: 1;
+    padding: var(--lls-space-2, 8px) 0;
+}
+.session-panel__loading,
+.session-panel__empty {
+    padding: var(--lls-space-4, 16px);
+    color: var(--lls-fg-muted);
+    font-size: var(--lls-font-sm, 12px);
+    text-align: center;
+}
+.session-list__group { margin-bottom: var(--lls-space-2, 8px); }
+.session-list__group-label {
+    padding: 4px var(--lls-space-4, 16px);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--lls-fg-muted);
+}
+.session-list__item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    background: none;
+    border: none;
+    color: var(--lls-fg);
+    cursor: pointer;
+    padding: 6px var(--lls-space-4, 16px);
+    gap: 8px;
+    text-align: left;
+    font-size: var(--lls-font-sm, 12px);
+    line-height: 1.4;
+}
+.session-list__item:hover { background: var(--lls-bg-hover); }
+.session-list__dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--vscode-focusBorder, #3794ff);
+    flex-shrink: 0;
+}
+.session-list__summary {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.session-list__meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    color: var(--lls-fg-muted);
+    font-size: 11px;
+}
+.session-list__branch {
+    background: color-mix(in srgb, var(--vscode-focusBorder, #3794ff) 20%, transparent);
+    color: var(--vscode-focusBorder, #3794ff);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 10px;
+}
+.session-list__time { white-space: nowrap; }

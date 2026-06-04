@@ -3,8 +3,11 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
+import { promises as fs } from 'fs';
 
 import { StreamJsonCliAdapter, type ParsedCliEvent, type ToolPermissionRequestEvent } from './chat/cli/cliAdapter';
+import { createBrowserToolRelayHandler, BROWSER_TOOL_RELAY_PORT_ENV } from './browserTools/httpBridge';
+import { BROWSER_MCP_SERVER_NAME, VSCODE_BROWSER_COMMANDS } from './browserTools/tools';
 import { ChatCliConfigService } from './chat/cli/cliConfig';
 import type { ChatCliConfig } from './chat/cli/types';
 import { CliProcess } from './chat/cli/cliProcess';
@@ -17,7 +20,7 @@ import {
 } from './expertMode/expertTriggers';
 import { resolvePlanDoneRoutingAction } from './chat/routing/planReviewWorkflow';
 import { parsePlanReviewToken } from './chat/routing/planReviewHandoff';
-import type { ChatComposerAttachment, ChatMessage, ChatModelOption, ChatQuickPermissionMode, ChatRoutedModelSelection, ChatRoute, ChatSegment, ChatUiLanguage, LlsTaskSnapshotPayload, WebviewToExtension } from './chat/protocol';
+import type { ChatComposerAttachment, ChatMessage, ChatModelOption, ChatQuickPermissionMode, ChatRoutedModelSelection, ChatRoute, ChatSegment, ChatUiLanguage, LlsTaskSnapshotPayload, WebviewToExtension, SessionListItem } from './chat/protocol';
 import { ConfigManager } from './configManager';
 import {
     CHAT_COMPACTION_MODE_GLOBAL_ENABLED_KEY,
@@ -48,6 +51,7 @@ import { AutoContinueScheduler } from './llsTask/autoContinue';
 import { getLlsCcaiTaskTexts } from './llsTask/messages';
 import { pasteToClaudeCode } from './llsTask/paster';
 import { LlsTaskService } from './llsTask/service';
+import { TaskFlowStore } from './llsTask/store';
 import type { LlsTaskItem } from './llsTask/types';
 import { AnthropicProxyAdapter } from './relay/anthropicProxy';
 import { DebugRecorder } from './relay/debugRecorder';
@@ -77,6 +81,9 @@ let llsTaskService: LlsTaskService | undefined;
 
 /** 模块级自动续推调度器实例。 */
 let autoContinueScheduler: AutoContinueScheduler | undefined;
+
+/** 恢复出未完成任务流后，待 Chat 首次 ready 时弹一次恢复对话框的标志。 */
+let pendingRestorePrompt = false;
 
 /** 模块级本地 HTTP 中转服务实例，一个扩展宿主/工作区使用一个随机空闲端口。 */
 let relayServer: RelayServer | undefined;
@@ -702,6 +709,58 @@ async function continueLlsCcaiTask(): Promise<void> {
     await fillBuiltInChatComposer(llsTaskService.buildContinuePrompt(), true);
 }
 
+/**
+ * Chat 首次 ready 时，按需弹一次任务流恢复对话框。
+ *
+ * 仅当 {@link pendingRestorePrompt} 为真且当前确有未完成任务流时下发
+ * taskFlow/restorePrompt；下发后立即清标志，保证整个会话只弹一次。
+ */
+async function maybePostTaskFlowRestorePrompt(): Promise<void> {
+    if (!pendingRestorePrompt) return;
+    pendingRestorePrompt = false;
+    const service = llsTaskService;
+    if (!service || !service.hasActiveWorkflow()) return;
+    const workflow = service.getSnapshot().workflow;
+    if (!workflow) return;
+    const completed = workflow.tasks.filter((task) => task.status === 'completed').length;
+    await chatViewHost?.postMessage({
+        type: 'taskFlow/restorePrompt',
+        title: workflow.title,
+        summary: workflow.summary,
+        progress: `${completed}/${workflow.tasks.length}`
+    });
+}
+
+/**
+ * 处理 webview 恢复对话框回传的用户选择。
+ *
+ * - continue：启动 CLI 并自动发送续推提示（等 CLI 起好后用
+ *   {@link appendUserMessageAndSend} 自动提交，无需用户手动回车）。
+ * - clear：清空任务流并删除持久化文件（复用 {@link clearLlsCcaiTask}）。
+ * - dismiss：内存与磁盘均保留，用户之后仍可从任务流菜单继续。
+ *
+ * @param choice 用户在对话框中的选择。
+ */
+async function handleTaskFlowRestoreChoice(choice: 'continue' | 'clear' | 'dismiss'): Promise<void> {
+    if (choice === 'continue') {
+        if (!llsTaskService) return;
+        try {
+            autoContinueScheduler?.cancel('用户从恢复对话框继续任务流');
+            const prompt = llsTaskService.buildContinuePrompt();
+            await appendUserMessageAndSend(prompt);
+        } catch (err) {
+            const text = err instanceof Error ? err.message : String(err);
+            Logger.error(`[LlsTask] 恢复继续任务流失败：${text}`);
+            await chatViewHost?.postMessage({ type: 'toast', level: 'error', text });
+        }
+        return;
+    }
+    if (choice === 'clear') {
+        autoContinueScheduler?.resetMissingToolCounter('用户从恢复对话框清除任务流');
+        clearLlsCcaiTask();
+    }
+}
+
 /** 任务流提示词发送选项。 */
 interface TaskFlowPromptSendOptions {
     /** 是否直接提交到目标聊天入口。 */
@@ -825,6 +884,153 @@ function sanitizePersistedChatMessages(messages: ChatMessage[]): ChatMessage[] {
             modelLabel: typeof message.modelLabel === 'string' && message.modelLabel.trim() ? message.modelLabel : undefined,
             createdAt: typeof message.createdAt === 'number' ? message.createdAt : Date.now()
         }));
+}
+
+/**
+ * 读取 Claude Code 原始 JSONL 会话文件并转换为 ChatMessage 数组。
+ *
+ * 只处理 user / assistant 类型的记录；忽略 isSidechain=true 记录和纯 tool_result 的 user 消息。
+ */
+async function parseSessionJsonl(jsonlPath: string): Promise<ChatMessage[]> {
+    let raw: string;
+    try {
+        raw = await fs.readFile(jsonlPath, 'utf8');
+    } catch (e) {
+        Logger.warn(`[parseSessionJsonl] 读取文件失败：path=${jsonlPath} err=${e instanceof Error ? e.message : String(e)}`);
+        return [];
+    }
+
+    const lines = raw.split('\n');
+    const messages: ChatMessage[] = [];
+    let skippedSidechain = 0;
+    let skippedType = 0;
+    let skippedNoContent = 0;
+    let skippedEmptyUser = 0;
+    let skippedEmptyAssistant = 0;
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let rec: Record<string, unknown>;
+        try { rec = JSON.parse(trimmed); } catch { continue; }
+
+        if (rec['isSidechain']) { skippedSidechain++; continue; }
+        const recType = rec['type'] as string;
+        if (recType !== 'user' && recType !== 'assistant') { skippedType++; continue; }
+
+        const msg = rec['message'] as {
+            role?: string;
+            content?: Array<{ type: string; text?: string; name?: string; id?: string; input?: unknown }>;
+            model?: string;
+        } | undefined;
+        if (!msg || !Array.isArray(msg.content)) { skippedNoContent++; continue; }
+
+        const ts = typeof rec['timestamp'] === 'string' ? new Date(rec['timestamp'] as string).getTime() : Date.now();
+        const uuid = typeof rec['uuid'] === 'string' ? rec['uuid'] as string : `hist_${Date.now()}_${messages.length}`;
+
+        if (recType === 'user') {
+            const textItems = msg.content.filter(c => c.type === 'text' && c.text);
+            if (textItems.length === 0) { skippedEmptyUser++; continue; }
+            const text = textItems.map(c => c.text!).join('\n');
+            messages.push({ id: uuid, role: 'user', segments: [{ kind: 'text', text }], text, createdAt: ts });
+        } else {
+            const segments: ChatSegment[] = [];
+            for (const c of msg.content) {
+                if (c.type === 'text' && c.text) {
+                    segments.push({ kind: 'markdown', text: c.text });
+                } else if (c.type === 'tool_use' && c.name) {
+                    const inputStr = c.input ? JSON.stringify(c.input, null, 2) : '';
+                    segments.push({
+                        id: c.id,
+                        kind: 'tool',
+                        tool: { name: c.name, status: 'success', summary: c.name, detail: inputStr, input: c.input }
+                    });
+                }
+            }
+            if (segments.length === 0) { skippedEmptyAssistant++; continue; }
+            messages.push({ id: uuid, role: 'assistant', segments, modelLabel: msg.model, createdAt: ts });
+        }
+    }
+
+    Logger.info(`[parseSessionJsonl] path=${jsonlPath} totalLines=${lines.length} parsed=${messages.length} skip{sidechain=${skippedSidechain},type=${skippedType},noContent=${skippedNoContent},emptyUser=${skippedEmptyUser},emptyAssistant=${skippedEmptyAssistant}}`);
+    return messages.slice(-MAX_IN_MEMORY_CHAT_MESSAGES);
+}
+
+/**
+ * 推导 Claude Code 会话存储目录：`<configDir>/projects/<encodedCwd>`。
+ *
+ * 编码规则与 Claude Code 官方一致：把 cwd 中所有非 [a-zA-Z0-9] 字符替换为
+ * `-`。该规则同时覆盖 POSIX 的 `/`、`.` 与 Windows 的 `:`、`\`，因此跨平台
+ * 都能命中官方生成的目录名。注意不要做长度截断——官方不截断，截断会导致
+ * 深路径（尤其 Windows 长路径）算出错误目录名。
+ *
+ * @param cwd 工作区目录绝对路径。
+ * @returns 该工作区对应的 projects 子目录绝对路径。
+ */
+function resolveClaudeProjectDir(cwd: string): string {
+    const configDir = process.env['CLAUDE_CONFIG_DIR'] ?? path.join(os.homedir(), '.claude');
+    const encodedCwd = cwd.replace(/[^a-zA-Z0-9]/g, '-');
+    return path.join(configDir, 'projects', encodedCwd);
+}
+
+/**
+ * 从 JSONL 会话文件中提取会话标题。
+ *
+ * 优先级：customTitle > aiTitle > lastPrompt > summary。
+ * 仅读取文件首尾各 64KB，避免大文件全量读入。
+ *
+ * @param jsonlPath JSONL 会话文件绝对路径。
+ * @returns 会话标题；未找到时返回空字符串。
+ */
+async function extractSessionTitle(jsonlPath: string): Promise<string> {
+    const BUF_SIZE = 65536;
+    try {
+        const fh = await fs.open(jsonlPath, 'r');
+        try {
+            const st = await fh.stat();
+            const buf = Buffer.allocUnsafe(BUF_SIZE);
+            const r1 = await fh.read(buf, 0, BUF_SIZE, 0);
+            if (r1.bytesRead === 0) return '';
+            const head = buf.toString('utf8', 0, r1.bytesRead);
+            let tail = head;
+            const tailStart = Math.max(0, st.size - BUF_SIZE);
+            if (tailStart > 0) {
+                const r2 = await fh.read(buf, 0, BUF_SIZE, tailStart);
+                tail = buf.toString('utf8', 0, r2.bytesRead);
+            }
+            const extract = (text: string, field: string): string | undefined => {
+                const m = text.match(new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
+                return m ? m[1].replace(/\\n/g, ' ').replace(/\\"/g, '"').trim() : undefined;
+            };
+            return (
+                extract(tail, 'customTitle') ?? extract(head, 'customTitle') ??
+                extract(tail, 'aiTitle') ?? extract(head, 'aiTitle') ??
+                extract(tail, 'lastPrompt') ?? extract(tail, 'summary') ??
+                extract(head, 'summary') ?? ''
+            );
+        } finally { await fh.close(); }
+    } catch {
+        return '';
+    }
+}
+
+/**
+ * 提取指定 session 的标题并推送到 Chat Webview 顶部。
+ *
+ * 新会话尚未生成 aiTitle 时标题为空，Webview 端会回退到默认标题。
+ *
+ * @param cwd 工作区目录，用于推导 projectKey。
+ * @param sessionId 目标会话 ID。
+ */
+async function pushSessionTitleToWebview(cwd: string, sessionId: string): Promise<void> {
+    if (!sessionId) return;
+    try {
+        const jsonlPath = path.join(resolveClaudeProjectDir(cwd), `${sessionId}.jsonl`);
+        const title = await extractSessionTitle(jsonlPath);
+        await chatViewHost?.postMessage({ type: 'session/title', title, sessionId });
+    } catch (e) {
+        Logger.warn('[session/title] 推送会话标题失败：' + (e instanceof Error ? e.message : String(e)));
+    }
 }
 
 /**
@@ -1557,6 +1763,7 @@ async function startChatCliPair(options: { forceRestart?: boolean } = {}): Promi
             forceRestart: !!options.forceRestart
         }));
         chatCliCancelRequested = false;
+        logBrowserMcpInjection(normalLaunchConfig);
         logMcpToolsBeforeCliStart();
         await normalCliProcess.start(normalLaunchConfig);
         rebuildNormalAdapter();
@@ -1871,6 +2078,83 @@ function rebuildReviewAdapter(): void {
     });
 }
 
+function logBrowserMcpInjection(config: ChatCliConfig): void {
+    const server = config.mcpServers?.[BROWSER_MCP_SERVER_NAME];
+    if (!server) {
+        Logger.info('Browser MCP 注入状态：disabled');
+        return;
+    }
+    Logger.info('Browser MCP 注入状态：' + JSON.stringify({
+        serverName: BROWSER_MCP_SERVER_NAME,
+        type: server.type,
+        command: server.command || '',
+        argsCount: Array.isArray(server.args) ? server.args.length : 0,
+        hasEntrypointScript: Array.isArray(server.args) && server.args[0] === '-e' && typeof server.args[1] === 'string' && server.args[1].includes('browserMcpServer'),
+        relayPort: server.env?.[BROWSER_TOOL_RELAY_PORT_ENV] || '',
+        toolPrefix: `mcp__${BROWSER_MCP_SERVER_NAME}__`
+    }));
+}
+
+async function registerBrowserCommandWrappers(context: vscode.ExtensionContext): Promise<void> {
+    const existing = new Set(await vscode.commands.getCommands(true));
+    if (!existing.has(VSCODE_BROWSER_COMMANDS.open)) {
+        context.subscriptions.push(vscode.commands.registerCommand(VSCODE_BROWSER_COMMANDS.open, async (url: string) => {
+            return openBrowserPageFallback(url);
+        }));
+        Logger.info(`Browser command wrapper 已注册：${VSCODE_BROWSER_COMMANDS.open}`);
+    }
+    await promptEnableBrowserChatToolsIfNeeded();
+}
+
+async function promptEnableBrowserChatToolsIfNeeded(): Promise<void> {
+    if (!isVsCodeAtLeast(1, 110)) {
+        Logger.info(`Browser Chat Tools 设置检测跳过：VS Code ${vscode.version} < 1.110`);
+        return;
+    }
+    const config = vscode.workspace.getConfiguration('workbench.browser');
+    if (config.get<boolean>('enableChatTools', false) === true) {
+        Logger.info('Browser Chat Tools 设置已开启：workbench.browser.enableChatTools=true');
+        return;
+    }
+    const action = await vscode.window.showInformationMessage(
+        'LLS CCAI 的浏览器读取/自动化工具需要开启 VS Code 设置 workbench.browser.enableChatTools。是否现在开启？',
+        '开启',
+        '稍后'
+    );
+    if (action !== '开启') {
+        Logger.info('用户暂未开启 Browser Chat Tools 设置');
+        return;
+    }
+    await config.update('enableChatTools', true, vscode.ConfigurationTarget.Global);
+    Logger.info('Browser Chat Tools 设置已写入全局：workbench.browser.enableChatTools=true');
+}
+
+function isVsCodeAtLeast(major: number, minor: number): boolean {
+    const parts = vscode.version.split('.').map((part) => Number.parseInt(part, 10));
+    const currentMajor = Number.isFinite(parts[0]) ? parts[0] : 0;
+    const currentMinor = Number.isFinite(parts[1]) ? parts[1] : 0;
+    return currentMajor > major || (currentMajor === major && currentMinor >= minor);
+}
+
+async function openBrowserPageFallback(url: string): Promise<{ command: string; url: string }> {
+    const target = typeof url === 'string' ? url.trim() : '';
+    if (!target) {
+        throw new Error('url is required');
+    }
+    const failures: string[] = [];
+    for (const command of ['browser.openIntegratedBrowser', 'workbench.action.openIntegratedBrowser', 'simpleBrowser.show']) {
+        try {
+            await vscode.commands.executeCommand(command, target);
+            return { command, url: target };
+        } catch (err) {
+            failures.push(`${command}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+    Logger.warn(`Browser open fallback 未找到内置浏览器命令，改用外部浏览器：${failures.join('; ')}`);
+    await vscode.env.openExternal(vscode.Uri.parse(target));
+    return { command: 'vscode.env.openExternal', url: target };
+}
+
 /**
  * 在启动 Chat CLI 之前枚举当前 VS Code 注册的 MCP 工具数量并写入日志。
  *
@@ -1980,6 +2264,7 @@ async function handleParsedCliEvent(event: ParsedCliEvent, source: ChatRoute = '
             chatSessionRouteById.set(event.sessionId, source);
             if (source === 'normal') {
                 lastKnownChatCliSessionId = event.sessionId;
+                void pushSessionTitleToWebview(event.cwd, event.sessionId);
             } else if (source === 'expert') {
                 lastKnownExpertChatCliSessionId = event.sessionId;
             } else if (source === 'plan') {
@@ -2138,6 +2423,7 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
             await postChatPermissionMode();
             await postChatTaskFlowStatus();
             await postActiveEditorAttachmentToChat();
+            await maybePostTaskFlowRestorePrompt();
             return;
         case 'user/send':
             {
@@ -2176,6 +2462,9 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
             return;
         case 'taskFlow/open':
             await openLlsCcaiTaskMenu();
+            return;
+        case 'taskFlow/restoreChoice':
+            await handleTaskFlowRestoreChoice(message.choice);
             return;
         case 'cli/selectPath':
             await selectChatCli();
@@ -2251,6 +2540,67 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
                 cliPath: chatCliConfigService?.getConfig().cliPath ?? ''
             });
             return;
+        case 'session/resume': {
+            const targetSessionId = message.sessionId;
+            Logger.info(`[session/resume] 切换到历史会话：sessionId=${targetSessionId}`);
+            chatMessages = [];
+            activeAssistantMessageId = undefined;
+            clearHttpExpectation('session_resume');
+            cancelPendingResend('session_resume');
+
+            // 先尝试从 JSONL 加载历史消息
+            let historyMessages: ChatMessage[] = [];
+            let resumeTitle = '';
+            try {
+                const resumeCwd = chatCliConfigService?.getConfig().cwd
+                    ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+                    ?? process.cwd();
+                const jsonlPath = path.join(resolveClaudeProjectDir(resumeCwd), `${targetSessionId}.jsonl`);
+                Logger.info(`[session/resume] 解析历史 JSONL：cwd=${resumeCwd} path=${jsonlPath}`);
+                historyMessages = await parseSessionJsonl(jsonlPath);
+                resumeTitle = await extractSessionTitle(jsonlPath);
+                Logger.info(`[session/resume] 已加载历史消息：${historyMessages.length} 条，标题="${resumeTitle}"`);
+            } catch (e) {
+                Logger.warn('[session/resume] 加载历史消息失败：' + (e instanceof Error ? e.message : String(e)));
+            }
+
+            chatMessages = historyMessages;
+            // 立即渲染历史消息到 webview
+            Logger.info(`[session/resume] 推送 session/init 到 webview：messages=${chatMessages.length} host=${chatViewHost ? 'ready' : 'null'}`);
+            await chatViewHost?.postMessage({
+                type: 'session/init',
+                messages: chatMessages,
+                cliPath: chatCliConfigService?.getConfig().cliPath ?? ''
+            });
+            await chatViewHost?.postMessage({
+                type: 'session/title',
+                title: resumeTitle,
+                sessionId: targetSessionId ?? ''
+            });
+
+            try {
+                const cwd = chatCliConfigService?.getConfig().cwd;
+                if (cwd && targetSessionId) {
+                    await chatCliSessionStore?.writeSessionId(cwd, targetSessionId, 'normal');
+                    await chatCliSessionStore?.clearSessionId(cwd, 'expert');
+                    await chatCliSessionStore?.clearSessionId(cwd, 'plan');
+                    await chatCliSessionStore?.clearSessionId(cwd, 'review');
+                    lastKnownChatCliSessionId = '';
+                    lastKnownExpertChatCliSessionId = '';
+                    lastKnownPlanChatCliSessionId = '';
+                    lastKnownReviewChatCliSessionId = '';
+                    chatSessionRouteById.clear();
+                    await disposePlanCli('session/resume');
+                    await disposeReviewCli('session/resume');
+                    Logger.info(`[session/resume] 已写入目标 sessionId，准备重启 CLI`);
+                    await restartChatCliPair({ silent: true });
+                }
+            } catch (err) {
+                Logger.warn('[session/resume] 切换历史会话失败：' + (err instanceof Error ? err.message : String(err)));
+                await showChatToast('error', '切换历史会话失败：' + (err instanceof Error ? err.message : String(err)));
+            }
+            return;
+        }
         case 'file/open':
             await openWorkspaceFileReference(message.path, message.line, message.endLine);
             return;
@@ -2276,6 +2626,65 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
                 await postActiveEditorAttachmentToChat();
             }
             return;
+        case 'sessions/list': {
+            try {
+                const cwd = chatCliConfigService?.getConfig().cwd
+                    ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+                    ?? process.cwd();
+                const projectDir = resolveClaudeProjectDir(cwd);
+                const BUF_SIZE = 65536;
+                const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                let entries: string[];
+                try { entries = await fs.readdir(projectDir); } catch { entries = []; }
+                const items: SessionListItem[] = [];
+                await Promise.all(entries.map(async (name) => {
+                    if (!name.endsWith('.jsonl')) return;
+                    const sid = name.slice(0, -6);
+                    if (!UUID_RE.test(sid)) return;
+                    const fp = path.join(projectDir, name);
+                    try {
+                        const fh = await fs.open(fp, 'r');
+                        try {
+                            const st = await fh.stat();
+                            const buf = Buffer.allocUnsafe(BUF_SIZE);
+                            const r1 = await fh.read(buf, 0, BUF_SIZE, 0);
+                            if (r1.bytesRead === 0) return;
+                            const head = buf.toString('utf8', 0, r1.bytesRead);
+                            const firstLine = head.slice(0, head.indexOf('\n'));
+                            if (firstLine.includes('"isSidechain":true')) return;
+                            let tail = head;
+                            const tailStart = Math.max(0, st.size - BUF_SIZE);
+                            if (tailStart > 0) {
+                                const r2 = await fh.read(buf, 0, BUF_SIZE, tailStart);
+                                tail = buf.toString('utf8', 0, r2.bytesRead);
+                            }
+                            const extract = (text: string, field: string): string | undefined => {
+                                const m = text.match(new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
+                                return m ? m[1].replace(/\\n/g, ' ').replace(/\\"/g, '"').trim() : undefined;
+                            };
+                            const summary =
+                                extract(tail, 'customTitle') ?? extract(head, 'customTitle') ??
+                                extract(tail, 'aiTitle') ?? extract(head, 'aiTitle') ??
+                                extract(tail, 'lastPrompt') ?? extract(tail, 'summary') ??
+                                extract(head, 'summary');
+                            if (!summary) return;
+                            const gitBranchM = (tail.length > head.length ? tail : head + tail)
+                                .match(/"gitBranch"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+                            items.push({
+                                sessionId: sid,
+                                summary,
+                                gitBranch: gitBranchM?.[1],
+                                lastModified: st.mtime.getTime(),
+                                fileSize: st.size,
+                            });
+                        } finally { await fh.close(); }
+                    } catch { /* skip */ }
+                }));
+                items.sort((a, b) => b.lastModified - a.lastModified);
+                await chatViewHost?.postMessage({ type: 'sessions/list/result', sessions: items });
+            } catch { /* ignore */ }
+            return;
+        }
         default:
             return;
     }
@@ -4136,7 +4545,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     normalCliProcess = new CliProcess();
     chatCliSessionStore = new ChatCliSessionStore();
     chatViewHost = new ChatViewHost(context);
-    llsTaskService = new LlsTaskService(configManager);
+    llsTaskService = new LlsTaskService(configManager, new TaskFlowStore());
+    // 从磁盘恢复上次未完成的任务流；失败已被 store 内部吞掉，绝不阻塞激活。
+    // 恢复出未完成 workflow 时置 pendingRestorePrompt，待 Chat 首次 ready 弹对话框。
+    try {
+        pendingRestorePrompt = await llsTaskService.restore();
+    } catch (err) {
+        Logger.warn(`[LlsTask] 任务流恢复失败：${err instanceof Error ? err.message : String(err)}`);
+    }
     autoContinueScheduler = new AutoContinueScheduler(llsTaskService);
     // 注入 submitter：续推时直接走内置 Chat → CLI 链路，绕开剪贴板 /
     // claude-vscode.focus / 系统级模拟回车。同时让续推提示词作为一条 user
@@ -4248,7 +4664,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }
     };
     void buildUsageSink; // 保留工厂以便未来按 provider 实例化；当前用 sessionId 反查更稳。
-    relayServer.setHandler(createRelayRouter({
+    const browserToolRelayHandler = createBrowserToolRelayHandler();
+    const chatRelayHandler = createRelayRouter({
         configManager,
         llsTaskService,
         autoContinueScheduler,
@@ -4283,7 +4700,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         onUpstreamRequestEnd: ({ route }) => {
             setRelayRouteBusy(route, false, 'relay_request_end');
         }
-    }));
+    });
+    relayServer.setHandler(async (req, res) => {
+        if (await browserToolRelayHandler(req, res)) return;
+        await chatRelayHandler(req, res);
+    });
+
     relayServer.setOnHit(() => clearHttpExpectation('relay_hit'));
     void cleanupLegacyRelaySettingsSafely();
 
@@ -4317,6 +4739,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             });
             void postChatExpertModelOptions().catch((err: unknown) => {
                 Logger.warn(`刷新 Chat 专家模型列表失败：${err instanceof Error ? err.message : String(err)}`);
+            });
+            void postChatPlanModelOptions().catch((err: unknown) => {
+                Logger.warn(`刷新 Chat 方案模型列表失败：${err instanceof Error ? err.message : String(err)}`);
+            });
+            void postChatReviewModelOptions().catch((err: unknown) => {
+                Logger.warn(`刷新 Chat 审查模型列表失败：${err instanceof Error ? err.message : String(err)}`);
+            });
+            void postModelsSnapshot().catch((err: unknown) => {
+                Logger.warn(`刷新 Chat 模型选择快照失败：${err instanceof Error ? err.message : String(err)}`);
             });
         })
     );
@@ -4373,6 +4804,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             });
         })
     );
+
+    await registerBrowserCommandWrappers(context);
 
     // 当前活动编辑器选区变化时，按 Claude Code 方式同步行号/选区上下文。
     context.subscriptions.push(

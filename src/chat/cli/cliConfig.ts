@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as vscode from 'vscode';
 
 import {
+    CHAT_BROWSER_TOOLS_ENABLED_KEY,
     CHAT_CLI_ARGS_KEY,
     CHAT_CLI_CWD_KEY,
     CHAT_CLI_ENV_KEY,
@@ -24,6 +25,8 @@ import {
 import { ConfigManager } from '../../configManager';
 import { readCompactionConfigFromVscode, readExpertConfigFromVscode, readPlanConfigFromVscode, readReviewConfigFromVscode } from '../../expertMode/expertConfig';
 import { ASK_EXPERT_MCP_SERVER_NAME } from '../../expertMode/askExpertMcpServer';
+import { BROWSER_MCP_SERVER_NAME } from '../../browserTools/tools';
+import { BROWSER_TOOL_RELAY_PORT_ENV } from '../../browserTools/httpBridge';
 import {
     loadAllVscodeMcpJsons,
     mergeMcpServers,
@@ -294,7 +297,13 @@ export class ChatCliConfigService {
         const compactionMode = readCompactionConfigFromVscode();
         const planMode = readPlanConfigFromVscode();
         const reviewMode = readReviewConfigFromVscode();
-        const finalMcpServers = stripExpertServerFromMcp(mergedMcpServers);
+        const browserToolsEnabled = config.get<boolean>(CHAT_BROWSER_TOOLS_ENABLED_KEY, true) !== false
+            && vscode.env.uiKind === vscode.UIKind.Desktop;
+        const finalMcpServers = injectBrowserMcpServer(
+            stripExpertServerFromMcp(mergedMcpServers),
+            browserToolsEnabled,
+            undefined
+        );
         return {
             enabled: config.get<boolean>(CHAT_ENABLED_KEY, false),
             cliPath: config.get<string>(CHAT_CLI_PATH_KEY, '').trim(),
@@ -361,9 +370,13 @@ export class ChatCliConfigService {
         const planSuffix = planAvailable
             ? DISPATCHER_PLAN_ROUTING_PRIORITY + '\n' + DISPATCHER_PLAN_REVIEW_PROMPT
             : '';
+        const browserToolsEnabled = baseConfig.mcpServers?.[BROWSER_MCP_SERVER_NAME] !== undefined;
         const normal: ChatCliConfig = {
             ...baseConfig,
-            mcpServers: injectAskExpertMcpServer(baseConfig.mcpServers, expertAvailable),
+            mcpServers: injectAskExpertMcpServer(
+                injectBrowserMcpServer(baseConfig.mcpServers, browserToolsEnabled, relayPort),
+                expertAvailable
+            ),
             appendSystemPrompt: dispatcherPrompt + planSuffix
         };
 
@@ -864,4 +877,44 @@ function injectAskExpertMcpServer(
         };
     }
     return next;
+}
+
+/**
+ * 根据浏览器工具总开关向 mcpServers 字典注入 browser MCP server。
+ *
+ * @param mcpServers 已规范化并剥除历史 expert server 的 MCP server 字典。
+ * @param browserToolsEnabled 是否允许注入 desktop browser tools。
+ * @returns 注入 browser server 后的字典；没有任何 server 时返回 undefined。
+ */
+function injectBrowserMcpServer(
+    mcpServers: ChatCliConfig['mcpServers'],
+    browserToolsEnabled: boolean,
+    relayPort: number | undefined
+): ChatCliConfig['mcpServers'] {
+    if (!browserToolsEnabled) {
+        return mcpServers;
+    }
+    const next: NonNullable<ChatCliConfig['mcpServers']> = { ...(mcpServers ?? {}) };
+    if (!next[BROWSER_MCP_SERVER_NAME]) {
+        next[BROWSER_MCP_SERVER_NAME] = {
+            type: 'stdio',
+            command: process.execPath,
+            args: ['-e', buildBrowserMcpEntrypointScript()],
+            env: relayPort ? { [BROWSER_TOOL_RELAY_PORT_ENV]: String(relayPort) } : undefined
+        };
+    } else if (relayPort) {
+        next[BROWSER_MCP_SERVER_NAME] = {
+            ...next[BROWSER_MCP_SERVER_NAME],
+            env: {
+                ...(next[BROWSER_MCP_SERVER_NAME].env ?? {}),
+                [BROWSER_TOOL_RELAY_PORT_ENV]: String(relayPort)
+            }
+        };
+    }
+    return next;
+}
+
+function buildBrowserMcpEntrypointScript(): string {
+    const entry = require.resolve('../../browserTools/browserMcpServer');
+    return `require(${JSON.stringify(entry)}).startBrowserMcpServer();`;
 }

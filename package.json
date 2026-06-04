@@ -2,7 +2,7 @@
     "name": "claude-code-config-helper",
     "displayName": "%extension.displayName%",
     "description": "%extension.description%",
-    "version": "2.1.2",
+    "version": "3.0.0",
     "publisher": "liliangshan",
     "license": "MIT",
     "repository": {
@@ -362,6 +362,12 @@
                         }
                     ],
                     "description": "%configuration.chat.skills.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.chat.browserTools.enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "%configuration.chat.browserTools.enabled.description%",
                     "scope": "resource"
                 },
                 "claudeCodeConfigHelper.chat.currentModel": {

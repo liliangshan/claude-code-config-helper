@@ -226,6 +226,8 @@ export type ExtensionToWebview =
           language: ChatUiLanguage;
       }
     | { type: 'session/init'; messages: ChatMessage[]; cliPath: string }
+    | { type: 'session/title'; title: string; sessionId: string }
+    | { type: 'sessions/list/result'; sessions: SessionListItem[] }
     | { type: 'message/append'; message: ChatMessage }
     | { type: 'message/patch'; id: string; segments: ChatSegment[]; pending?: boolean; append?: boolean }
     | {
@@ -305,6 +307,22 @@ export type ExtensionToWebview =
           type: 'taskFlow/status';
           /** 当前任务流状态快照；workflow 为 null 时前端隐藏 Todo 卡片。 */
           snapshot: LlsTaskSnapshotPayload;
+      }
+    | {
+          /**
+           * 提示用户上次有未完成任务流被恢复，请在 Chat webview 内弹自定义对话框
+           * 让用户决定「继续 / 清除 / 关闭」。
+           *
+           * 由扩展宿主在 webview 首次 ready 后、检测到 restore 出未完成 workflow 时
+           * 推送一次（只弹一次）。webview 渲染对话框，三按钮回传 taskFlow/restoreChoice。
+           */
+          type: 'taskFlow/restorePrompt';
+          /** 恢复出的任务流标题。 */
+          title: string;
+          /** 恢复出的任务流摘要。 */
+          summary: string;
+          /** 进度文本，如 `2/5`（completed/total）。 */
+          progress: string;
       }
         | {
                     /**
@@ -540,6 +558,18 @@ export type WebviewToExtension =
           /** 打开 LLS CCAI / CC 任务流菜单，用于替代原状态栏中的 CC 任务流按钮。 */
           type: 'taskFlow/open';
       }
+    | {
+          /**
+           * 用户在恢复对话框上的选择回传。
+           *
+           * - continue：启动 CLI 后自动发送续推提示；
+           * - clear：清空任务流并删除 .LLSOAI/task-flow.json；
+           * - dismiss：关闭对话框，内存与磁盘任务流均保留，用户之后仍可从菜单继续。
+           */
+          type: 'taskFlow/restoreChoice';
+          /** 用户选择。 */
+          choice: 'continue' | 'clear' | 'dismiss';
+      }
     | { type: 'file/open'; path: string; line?: number; endLine?: number }
     | { type: 'cli/restart' }
     | { type: 'cli/selectPath' }
@@ -579,4 +609,15 @@ export type WebviewToExtension =
           /** 压缩请求专用模型；null 表示「关闭压缩模型」。 */
           compaction: { providerId: string; modelId: string } | null;
       }
-    | { type: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; message: string };
+    | { type: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; message: string }
+    | { type: 'sessions/list' }
+    | { type: 'session/resume'; sessionId: string };
+
+/** 会话列表条目。 */
+export interface SessionListItem {
+    sessionId: string;
+    summary: string;
+    gitBranch?: string;
+    lastModified: number;
+    fileSize: number;
+}

@@ -38,6 +38,8 @@ export interface VscodeStubConfig {
      * 没有打开工作区时传 undefined。
      */
     workspaceFolderFsPath?: string;
+    /** VS Code UI kind；默认模拟 Desktop。 */
+    uiKind?: number;
 }
 
 /**
@@ -92,6 +94,10 @@ export function installVscodeStub(config: VscodeStubConfig): VscodeStubConfig {
     const fakeVscode = {
         ConfigurationTarget,
         EventEmitter,
+        UIKind: {
+            Desktop: 1,
+            Web: 2
+        },
         workspace: {
             getConfiguration(namespace: string) {
                 return buildWorkspaceConfiguration(namespace);
@@ -109,7 +115,10 @@ export function installVscodeStub(config: VscodeStubConfig): VscodeStubConfig {
             activeTextEditor: undefined
         },
         env: {
-            language: 'en'
+            language: 'en',
+            get uiKind() {
+                return stub.uiKind ?? 1;
+            }
         },
         Uri: {
             file(p: string) { return { fsPath: p }; }

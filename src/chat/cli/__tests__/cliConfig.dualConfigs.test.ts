@@ -21,6 +21,8 @@ const stub: VscodeStubConfig = installVscodeStub({
 const { ChatCliConfigService } = require('../cliConfig') as typeof import('../cliConfig');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { ASK_EXPERT_MCP_SERVER_NAME } = require('../../../expertMode/askExpertMcpServer') as typeof import('../../../expertMode/askExpertMcpServer');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { BROWSER_MCP_SERVER_NAME } = require('../../../browserTools/tools') as typeof import('../../../browserTools/tools');
 
 /**
  * 写入扩展配置到 stub。
@@ -87,20 +89,57 @@ test('dualConfigs: expert 不可用时 normal CLI 不注入 askExpert MCP server
     assert.equal(result.normal.mcpServers?.[ASK_EXPERT_MCP_SERVER_NAME], undefined);
 });
 
-test('dualConfigs: 启用 plan/review 时仍产出对应路由配置', async () => {
-    setExtensionConfig(
-        { 'chat.enabled': true },
-        {
-            'chat.planMode.project.enabled': { workspaceValue: true },
-            'chat.planMode.project.model': { workspaceValue: 'pPlan/mPlan' },
-            'chat.reviewMode.project.enabled': { workspaceValue: true },
-            'chat.reviewMode.project.model': { workspaceValue: 'pReview/mReview' }
-        }
-    );
-    const result = await makeService({ providerId: 'pNormal', modelId: 'mNormal' }).getDualConfigsWithRelayEnv(21004);
-    assert.equal(result.expert, undefined);
-    assert.ok(result.plan);
-    assert.ok(result.review);
-    assert.equal(result.plan?.model, 'pPlan/mPlan');
-    assert.equal(result.review?.model, 'pReview/mReview');
+test('dualConfigs: desktop 且开关开启时注入 browser MCP server', async () => {
+    stub.uiKind = 1;
+    setExtensionConfig({
+        'chat.enabled': true,
+        'chat.browserTools.enabled': true,
+        'chat.includeVscodeMcpJson': false
+    });
+
+    const result = await makeService({ providerId: 'pNormal', modelId: 'mNormal' }).getDualConfigsWithRelayEnv(21005);
+
+    assert.ok(result.normal.mcpServers?.[BROWSER_MCP_SERVER_NAME], 'desktop 开关开启时应注入 browser MCP server');
+    assert.equal(result.normal.mcpServers?.[BROWSER_MCP_SERVER_NAME]?.type, 'stdio');
+    assert.equal(result.normal.mcpServers?.[BROWSER_MCP_SERVER_NAME]?.command, process.execPath);
+});
+
+test('dualConfigs: web 环境即使开关开启也不注入 browser MCP server', async () => {
+    stub.uiKind = 2;
+    setExtensionConfig({
+        'chat.enabled': true,
+        'chat.browserTools.enabled': true,
+        'chat.includeVscodeMcpJson': false
+    });
+
+    const result = await makeService({ providerId: 'pNormal', modelId: 'mNormal' }).getDualConfigsWithRelayEnv(21006);
+
+    assert.equal(result.normal.mcpServers?.[BROWSER_MCP_SERVER_NAME], undefined);
+    stub.uiKind = 1;
+});
+
+test('dualConfigs: desktop 默认注入 browser MCP server', async () => {
+    stub.uiKind = 1;
+    setExtensionConfig({
+        'chat.enabled': true,
+        'chat.includeVscodeMcpJson': false
+    });
+
+    const result = await makeService({ providerId: 'pNormal', modelId: 'mNormal' }).getDualConfigsWithRelayEnv(21007);
+
+    assert.ok(result.normal.mcpServers?.[BROWSER_MCP_SERVER_NAME], 'desktop 默认应注入 browser MCP server');
+    assert.equal(result.normal.mcpServers?.[BROWSER_MCP_SERVER_NAME]?.env?.LLS_BROWSER_TOOL_RELAY_PORT, '21007');
+});
+
+test('dualConfigs: desktop 显式关闭时不注入 browser MCP server', async () => {
+    stub.uiKind = 1;
+    setExtensionConfig({
+        'chat.enabled': true,
+        'chat.browserTools.enabled': false,
+        'chat.includeVscodeMcpJson': false
+    });
+
+    const result = await makeService({ providerId: 'pNormal', modelId: 'mNormal' }).getDualConfigsWithRelayEnv(21008);
+
+    assert.equal(result.normal.mcpServers?.[BROWSER_MCP_SERVER_NAME], undefined);
 });

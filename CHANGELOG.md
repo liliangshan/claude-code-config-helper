@@ -2,6 +2,30 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.0.0] - 2026-06-04
+
+### Added
+
+- Self-built **browser tool suite** for the main CLI (desktop only): `browser_open`, `browser_navigate`, `browser_get_content`, `browser_screenshot`, `browser_console`, and `browser_eval`. They are exposed through a new in-process `browser` MCP server (`src/browserTools/`) that delegates to VS Code's agent browser commands; no version probing or low-version fallback is performed.
+- **Task-flow persistence**: the CC task workflow snapshot is now written to `.LLSOAI/task-flow.json` on every create/update (`src/llsTask/store.ts`) and restored on the next launch. The Chat shows a "Resume unfinished task flow?" dialog with Continue / Later / Clear actions so task progress and the original user prompt survive VS Code restarts.
+- **Past conversations panel** in the Chat header: lists previous sessions for the current workspace; resuming one reloads its full message history into the webview instead of only writing the session id and restarting the CLI.
+- **Session title in the header**: the top `LLS CLAUDE CHAT` title now shows the active session's title (from the JSONL `aiTitle`), falling back to the default when none exists.
+
+### Changed
+
+- Replaced the Chat header **Copy source** and **Clear** buttons with a single **New chat** button that clears the view, deletes the per-route session files, and restarts the CLI for a fresh empty context.
+
+### Fixed
+
+- Made session list/content retrieval **Windows-compatible**: project directory names are encoded exactly like the official Claude CLI (all non-alphanumeric characters mapped to `-`, no truncation), `CLAUDE_CONFIG_DIR` is honored, and the session read path now uses the same `cwd` the CLI writes with so listing and resume work on Windows paths.
+
+## [2.2.3] - 2026-06-03
+
+### Fixed
+
+- Refreshed the full Chat model-picker snapshot when provider/model configuration changes, so normal, expert, plan, review, and compaction dropdowns update without a VS Code restart.
+- Stopped adding the OpenAI-style `stream_options.include_usage` field to Anthropic direct-provider requests while keeping it for OpenAI-compatible streaming conversions.
+
 ## [2.0.23] - 2026-05-28
 
 ### Added

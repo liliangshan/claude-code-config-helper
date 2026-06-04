@@ -13,26 +13,26 @@
     const DEFAULT_CHAT_LANGUAGE = 'en';
     const chatTranslations = {
         en: {
-            statusInitializing: 'Initializing…', copySource: 'Copy source', copySourceTitle: 'Copy current Webview body source', restart: 'Restart', restartTitle: 'Restart CLI', clear: 'Clear', clearTitle: 'Clear chat history', dropFilesHere: 'Drop files here as context', contextPanelAria: 'Added context files', defaultCurrentFile: 'Current file shown by default', clearContext: 'Clear context', contextMenu: 'Context menu', composerPlaceholder: 'Ask, edit, or agent…', attachFile: 'Select context files', modelSelectTitle: 'Switch model and automatically restart Chat CLI', modelSelectAria: 'Switch model', modelLoading: 'Loading models…', permissionModeTitle: 'Switch Claude CLI permission mode and automatically restart Chat CLI', permissionModeAria: 'Switch permission mode', sendMessage: 'Send message', stopResponse: 'Stop current response', noModelConfigured: 'No model configured', selectModel: 'Select a model', permissionAcceptEdits: 'Current: acceptEdits (automatically accept edit tools)', permissionBypass: 'Current: bypassPermissions (skip permission checks, fully trust current workspace)', emptyState: 'LLS CLAUDE CHAT - Start a conversation', longTextOutput: 'Long text output', longCodeBlock: 'Long code block', longDiffOutput: 'Long diff output', copy: 'Copy', copyCode: 'Copy code', usageModel: 'Model ', usageInput: 'Input ', usageOutput: 'Output ', usageCacheWrite: 'Cache write ', usageCacheRead: 'Cache read ', assistantNeedsConfirmation: 'Assistant needs your confirmation', askManyQuestions: 'There are {count} questions. You must reply before continuing.', askOneQuestion: 'Choose an option, or write a custom reply below (required).', noQuestionText: '(No question text)', multiSelect: 'Multiple selection', customReplyLabel: 'Other reply (optional): write your thoughts or why you did not choose an option', customReplyPlaceholder: 'For example: I want to use another implementation…', sendReply: 'Send reply', askUserReplyIntro: 'I replied to your question as follows:', askUserPicked: '   Selected: {items}', askUserNoPick: '   Selected: (no option selected)', askUserExtra: 'Additional note:', toolRunning: 'Running', toolSuccess: 'Success', toolFailed: 'Failed', toolPermissionDenied: 'Permission required', toolPending: 'Pending', collapsibleSummary: '{label} ({count} characters, click to expand)', truncatedChars: '… truncated {count} characters', resendTitle: 'Resend: delete this message and following context, then send again', resendAria: 'Resend this message', loading: 'Loading', cliNotSelected: 'CLI not selected', cliStatus: 'CLI status: {status}{detail}', unknownError: 'Unknown error', copiedBodySource: 'Copied body source', copyBodySourceFailed: 'Failed to copy body source', removeAttachment: 'Remove {name}', genericFile: 'File', closeExpert: 'Disable expert', expertModelSelectTitle: 'Select project expert model', expertModelSelectAria: 'Select project expert model', ccTaskFlow: 'CC task flow', expertPanelTitle: 'Expert run', expertPanelStatusRunning: 'running…', expertPanelStatusDone: 'completed', expertPanelStatusError: 'failed', expertPanelStatusCancelled: 'cancelled', expertPanelToggleAria: 'Toggle expert panel', expertEventStart: 'Start', expertEventAnalysis: 'Analysis', expertEventToolCall: 'Tool call', expertEventToolResult: 'Tool result', expertEventFinal: 'Final answer', expertEventError: 'Error', expertEventCancelled: 'Cancelled'
+            statusInitializing: 'Initializing…', newSession: 'New chat', newSessionTitle: 'Start a new conversation', restart: 'Restart', restartTitle: 'Restart CLI', clear: 'Clear', clearTitle: 'Clear chat history', sessions: 'Sessions', sessionsTitle: 'Past conversations', sessionsLoading: 'Loading…', sessionsEmpty: 'No past conversations found.', dropFilesHere: 'Drop files here as context', contextPanelAria: 'Added context files', defaultCurrentFile: 'Current file shown by default', clearContext: 'Clear context', contextMenu: 'Context menu', composerPlaceholder: 'Ask, edit, or agent…', attachFile: 'Select context files', modelSelectTitle: 'Switch model and automatically restart Chat CLI', modelSelectAria: 'Switch model', modelLoading: 'Loading models…', permissionModeTitle: 'Switch Claude CLI permission mode and automatically restart Chat CLI', permissionModeAria: 'Switch permission mode', sendMessage: 'Send message', stopResponse: 'Stop current response', noModelConfigured: 'No model configured', selectModel: 'Select a model', permissionAcceptEdits: 'Current: acceptEdits (automatically accept edit tools)', permissionBypass: 'Current: bypassPermissions (skip permission checks, fully trust current workspace)', emptyState: 'LLS CLAUDE CHAT - Start a conversation', longTextOutput: 'Long text output', longCodeBlock: 'Long code block', longDiffOutput: 'Long diff output', copy: 'Copy', copyCode: 'Copy code', usageModel: 'Model ', usageInput: 'Input ', usageOutput: 'Output ', usageCacheWrite: 'Cache write ', usageCacheRead: 'Cache read ', assistantNeedsConfirmation: 'Assistant needs your confirmation', askManyQuestions: 'There are {count} questions. You must reply before continuing.', askOneQuestion: 'Choose an option, or write a custom reply below (required).', noQuestionText: '(No question text)', multiSelect: 'Multiple selection', customReplyLabel: 'Other reply (optional): write your thoughts or why you did not choose an option', customReplyPlaceholder: 'For example: I want to use another implementation…', sendReply: 'Send reply', askUserReplyIntro: 'I replied to your question as follows:', askUserPicked: '   Selected: {items}', askUserNoPick: '   Selected: (no option selected)', askUserExtra: 'Additional note:', toolRunning: 'Running', toolSuccess: 'Success', toolFailed: 'Failed', toolPermissionDenied: 'Permission required', toolPending: 'Pending', collapsibleSummary: '{label} ({count} characters, click to expand)', truncatedChars: '… truncated {count} characters', resendTitle: 'Resend: delete this message and following context, then send again', resendAria: 'Resend this message', loading: 'Loading', cliNotSelected: 'CLI not selected', cliStatus: 'CLI status: {status}{detail}', unknownError: 'Unknown error', copiedBodySource: 'Copied body source', copyBodySourceFailed: 'Failed to copy body source', removeAttachment: 'Remove {name}', genericFile: 'File', closeExpert: 'Disable expert', expertModelSelectTitle: 'Select project expert model', expertModelSelectAria: 'Select project expert model', ccTaskFlow: 'CC task flow', expertPanelTitle: 'Expert run', expertPanelStatusRunning: 'running…', expertPanelStatusDone: 'completed', expertPanelStatusError: 'failed', expertPanelStatusCancelled: 'cancelled', expertPanelToggleAria: 'Toggle expert panel', expertEventStart: 'Start', expertEventAnalysis: 'Analysis', expertEventToolCall: 'Tool call', expertEventToolResult: 'Tool result', expertEventFinal: 'Final answer', expertEventError: 'Error', expertEventCancelled: 'Cancelled'
         },
         'zh-cn': {
-            statusInitializing: '正在初始化…', copySource: '复制源码', copySourceTitle: '复制当前 Webview body 源码', restart: '重启', restartTitle: '重启 CLI', clear: '清空', clearTitle: '清空聊天内容', dropFilesHere: '拖放文件到这里作为上下文', contextPanelAria: '已添加的上下文文件', defaultCurrentFile: '默认显示当前文件', clearContext: '清空上下文', contextMenu: '上下文菜单', composerPlaceholder: '询问、编辑或代理…', attachFile: '选择上下文文件', modelSelectTitle: '切换模型，切换后自动重启 Chat CLI', modelSelectAria: '切换模型', modelLoading: '模型加载中…', permissionModeTitle: '切换 Claude CLI 权限模式，切换后自动重启 Chat CLI', permissionModeAria: '切换权限模式', sendMessage: '发送消息', stopResponse: '停止当前响应', noModelConfigured: '未配置模型', selectModel: '请选择模型', permissionAcceptEdits: '当前：acceptEdits（自动接受编辑类工具）', permissionBypass: '当前：bypassPermissions（跳过权限检查，完全信任当前工作区）', emptyState: 'LLS CLAUDE CHAT - 开始对话', longTextOutput: '长文本输出', longCodeBlock: '长代码块', longDiffOutput: '长 diff 输出', copy: '复制', copyCode: '复制代码', usageModel: '模型 ', usageInput: '输入 ', usageOutput: '输出 ', usageCacheWrite: '缓存写 ', usageCacheRead: '缓存读 ', assistantNeedsConfirmation: '助手需要您的确认', askManyQuestions: '共 {count} 个问题，必须回复后才能继续', askOneQuestion: '请选择一个选项，或在下方填写自定义回复（必须回复）', noQuestionText: '(无问题文本)', multiSelect: '可多选', customReplyLabel: '其他回复（可选）：写下你的想法或不选某项的理由', customReplyPlaceholder: '例如：我想换一种实现方式…', sendReply: '发送回复', askUserReplyIntro: '我对你的问题做了如下回复：', askUserPicked: '   选择：{items}', askUserNoPick: '   选择：（未选择任何选项）', askUserExtra: '补充说明：', toolRunning: '执行中', toolSuccess: '成功', toolFailed: '失败', toolPermissionDenied: '需要授权', toolPending: '等待', collapsibleSummary: '{label}（{count} 字符，点击展开）', truncatedChars: '… 已截断 {count} 字符', resendTitle: '重发：删除此消息及其后续上下文并重新发送', resendAria: '重发此消息', loading: '加载中', cliNotSelected: 'CLI 未选择', cliStatus: 'CLI 状态：{status}{detail}', unknownError: '未知错误', copiedBodySource: '已复制 body 源码', copyBodySourceFailed: '复制 body 源码失败', removeAttachment: '移除 {name}', genericFile: '文件', closeExpert: '关闭专家', expertModelSelectTitle: '选择项目专家模型', expertModelSelectAria: '选择项目专家模型', ccTaskFlow: 'CC任务流', expertPanelTitle: '专家运行', expertPanelStatusRunning: '运行中…', expertPanelStatusDone: '已完成', expertPanelStatusError: '失败', expertPanelStatusCancelled: '已取消', expertPanelToggleAria: '展开/折叠专家面板', expertEventStart: '开始', expertEventAnalysis: '分析', expertEventToolCall: '工具调用', expertEventToolResult: '工具结果', expertEventFinal: '最终答案', expertEventError: '错误', expertEventCancelled: '已取消'
+            statusInitializing: '正在初始化…', newSession: '新建会话', newSessionTitle: '开启全新会话', restart: '重启', restartTitle: '重启 CLI', clear: '清空', clearTitle: '清空聊天内容', sessions: '历史会话', sessionsTitle: '历史对话', sessionsLoading: '加载中…', sessionsEmpty: '未找到历史会话。', dropFilesHere: '拖放文件到这里作为上下文', contextPanelAria: '已添加的上下文文件', defaultCurrentFile: '默认显示当前文件', clearContext: '清空上下文', contextMenu: '上下文菜单', composerPlaceholder: '询问、编辑或代理…', attachFile: '选择上下文文件', modelSelectTitle: '切换模型，切换后自动重启 Chat CLI', modelSelectAria: '切换模型', modelLoading: '模型加载中…', permissionModeTitle: '切换 Claude CLI 权限模式，切换后自动重启 Chat CLI', permissionModeAria: '切换权限模式', sendMessage: '发送消息', stopResponse: '停止当前响应', noModelConfigured: '未配置模型', selectModel: '请选择模型', permissionAcceptEdits: '当前：acceptEdits（自动接受编辑类工具）', permissionBypass: '当前：bypassPermissions（跳过权限检查，完全信任当前工作区）', emptyState: 'LLS CLAUDE CHAT - 开始对话', longTextOutput: '长文本输出', longCodeBlock: '长代码块', longDiffOutput: '长 diff 输出', copy: '复制', copyCode: '复制代码', usageModel: '模型 ', usageInput: '输入 ', usageOutput: '输出 ', usageCacheWrite: '缓存写 ', usageCacheRead: '缓存读 ', assistantNeedsConfirmation: '助手需要您的确认', askManyQuestions: '共 {count} 个问题，必须回复后才能继续', askOneQuestion: '请选择一个选项，或在下方填写自定义回复（必须回复）', noQuestionText: '(无问题文本)', multiSelect: '可多选', customReplyLabel: '其他回复（可选）：写下你的想法或不选某项的理由', customReplyPlaceholder: '例如：我想换一种实现方式…', sendReply: '发送回复', askUserReplyIntro: '我对你的问题做了如下回复：', askUserPicked: '   选择：{items}', askUserNoPick: '   选择：（未选择任何选项）', askUserExtra: '补充说明：', toolRunning: '执行中', toolSuccess: '成功', toolFailed: '失败', toolPermissionDenied: '需要授权', toolPending: '等待', collapsibleSummary: '{label}（{count} 字符，点击展开）', truncatedChars: '… 已截断 {count} 字符', resendTitle: '重发：删除此消息及其后续上下文并重新发送', resendAria: '重发此消息', loading: '加载中', cliNotSelected: 'CLI 未选择', cliStatus: 'CLI 状态：{status}{detail}', unknownError: '未知错误', copiedBodySource: '已复制 body 源码', copyBodySourceFailed: '复制 body 源码失败', removeAttachment: '移除 {name}', genericFile: '文件', closeExpert: '关闭专家', expertModelSelectTitle: '选择项目专家模型', expertModelSelectAria: '选择项目专家模型', ccTaskFlow: 'CC任务流', expertPanelTitle: '专家运行', expertPanelStatusRunning: '运行中…', expertPanelStatusDone: '已完成', expertPanelStatusError: '失败', expertPanelStatusCancelled: '已取消', expertPanelToggleAria: '展开/折叠专家面板', expertEventStart: '开始', expertEventAnalysis: '分析', expertEventToolCall: '工具调用', expertEventToolResult: '工具结果', expertEventFinal: '最终答案', expertEventError: '错误', expertEventCancelled: '已取消'
         }
     };
     chatTranslations['zh-tw'] = {
-        statusInitializing: '正在初始化…', copySource: '複製原始碼', copySourceTitle: '複製目前 Webview body 原始碼', restart: '重新啟動', restartTitle: '重新啟動 CLI', clear: '清除', clearTitle: '清除聊天內容', dropFilesHere: '將檔案拖放到這裡作為上下文', contextPanelAria: '已新增的上下文檔案', defaultCurrentFile: '預設顯示目前檔案', clearContext: '清除上下文', contextMenu: '上下文選單', composerPlaceholder: '提問、編輯或代理…', attachFile: '選擇上下文檔案', modelSelectTitle: '切換模型，切換後會自動重新啟動 Chat CLI', modelSelectAria: '切換模型', modelLoading: '模型載入中…', permissionModeTitle: '切換 Claude CLI 權限模式，切換後會自動重新啟動 Chat CLI', permissionModeAria: '切換權限模式', sendMessage: '傳送訊息', stopResponse: '停止目前回應', noModelConfigured: '尚未設定模型', selectModel: '請選擇模型', permissionAcceptEdits: '目前：acceptEdits（自動接受編輯類工具）', permissionBypass: '目前：bypassPermissions（略過權限檢查，完全信任目前工作區）', emptyState: 'LLS CLAUDE CHAT - 開始對話', longTextOutput: '長文字輸出', longCodeBlock: '長程式碼區塊', longDiffOutput: '長 diff 輸出', copy: '複製', copyCode: '複製程式碼', usageModel: '模型 ', usageInput: '輸入 ', usageOutput: '輸出 ', usageCacheWrite: '快取寫入 ', usageCacheRead: '快取讀取 ', assistantNeedsConfirmation: '助手需要您的確認', askManyQuestions: '共有 {count} 個問題，必須回覆後才能繼續', askOneQuestion: '請選擇一個選項，或在下方填寫自訂回覆（必須回覆）', noQuestionText: '(沒有問題文字)', multiSelect: '可複選', customReplyLabel: '其他回覆（選填）：寫下你的想法或未選某項的理由', customReplyPlaceholder: '例如：我想換一種實作方式…', sendReply: '傳送回覆', askUserReplyIntro: '我對你的問題做了如下回覆：', askUserPicked: '   選擇：{items}', askUserNoPick: '   選擇：（未選擇任何選項）', askUserExtra: '補充說明：', toolRunning: '執行中', toolSuccess: '成功', toolFailed: '失敗', toolPermissionDenied: '需要授權', toolPending: '等待', collapsibleSummary: '{label}（{count} 個字元，點擊展開）', truncatedChars: '… 已截斷 {count} 個字元', resendTitle: '重送：刪除此訊息及後續上下文並重新傳送', resendAria: '重送此訊息', loading: '載入中', cliNotSelected: '尚未選擇 CLI', cliStatus: 'CLI 狀態：{status}{detail}', unknownError: '未知錯誤', copiedBodySource: '已複製 body 原始碼', copyBodySourceFailed: '複製 body 原始碼失敗', removeAttachment: '移除 {name}', genericFile: '檔案', expertPanelTitle: '專家執行', expertPanelStatusRunning: '執行中…', expertPanelStatusDone: '已完成', expertPanelStatusError: '失敗', expertPanelStatusCancelled: '已取消', expertPanelToggleAria: '展開/收合專家面板', expertEventStart: '開始', expertEventAnalysis: '分析', expertEventToolCall: '工具呼叫', expertEventToolResult: '工具結果', expertEventFinal: '最終回答', expertEventError: '錯誤', expertEventCancelled: '已取消'
+        statusInitializing: '正在初始化…', newSession: '新增會話', newSessionTitle: '開啟全新會話', restart: '重新啟動', restartTitle: '重新啟動 CLI', clear: '清除', clearTitle: '清除聊天內容', dropFilesHere: '將檔案拖放到這裡作為上下文', contextPanelAria: '已新增的上下文檔案', defaultCurrentFile: '預設顯示目前檔案', clearContext: '清除上下文', contextMenu: '上下文選單', composerPlaceholder: '提問、編輯或代理…', attachFile: '選擇上下文檔案', modelSelectTitle: '切換模型，切換後會自動重新啟動 Chat CLI', modelSelectAria: '切換模型', modelLoading: '模型載入中…', permissionModeTitle: '切換 Claude CLI 權限模式，切換後會自動重新啟動 Chat CLI', permissionModeAria: '切換權限模式', sendMessage: '傳送訊息', stopResponse: '停止目前回應', noModelConfigured: '尚未設定模型', selectModel: '請選擇模型', permissionAcceptEdits: '目前：acceptEdits（自動接受編輯類工具）', permissionBypass: '目前：bypassPermissions（略過權限檢查，完全信任目前工作區）', emptyState: 'LLS CLAUDE CHAT - 開始對話', longTextOutput: '長文字輸出', longCodeBlock: '長程式碼區塊', longDiffOutput: '長 diff 輸出', copy: '複製', copyCode: '複製程式碼', usageModel: '模型 ', usageInput: '輸入 ', usageOutput: '輸出 ', usageCacheWrite: '快取寫入 ', usageCacheRead: '快取讀取 ', assistantNeedsConfirmation: '助手需要您的確認', askManyQuestions: '共有 {count} 個問題，必須回覆後才能繼續', askOneQuestion: '請選擇一個選項，或在下方填寫自訂回覆（必須回覆）', noQuestionText: '(沒有問題文字)', multiSelect: '可複選', customReplyLabel: '其他回覆（選填）：寫下你的想法或未選某項的理由', customReplyPlaceholder: '例如：我想換一種實作方式…', sendReply: '傳送回覆', askUserReplyIntro: '我對你的問題做了如下回覆：', askUserPicked: '   選擇：{items}', askUserNoPick: '   選擇：（未選擇任何選項）', askUserExtra: '補充說明：', toolRunning: '執行中', toolSuccess: '成功', toolFailed: '失敗', toolPermissionDenied: '需要授權', toolPending: '等待', collapsibleSummary: '{label}（{count} 個字元，點擊展開）', truncatedChars: '… 已截斷 {count} 個字元', resendTitle: '重送：刪除此訊息及後續上下文並重新傳送', resendAria: '重送此訊息', loading: '載入中', cliNotSelected: '尚未選擇 CLI', cliStatus: 'CLI 狀態：{status}{detail}', unknownError: '未知錯誤', copiedBodySource: '已複製 body 原始碼', copyBodySourceFailed: '複製 body 原始碼失敗', removeAttachment: '移除 {name}', genericFile: '檔案', expertPanelTitle: '專家執行', expertPanelStatusRunning: '執行中…', expertPanelStatusDone: '已完成', expertPanelStatusError: '失敗', expertPanelStatusCancelled: '已取消', expertPanelToggleAria: '展開/收合專家面板', expertEventStart: '開始', expertEventAnalysis: '分析', expertEventToolCall: '工具呼叫', expertEventToolResult: '工具結果', expertEventFinal: '最終回答', expertEventError: '錯誤', expertEventCancelled: '已取消'
     };
     chatTranslations.ko = {
-        statusInitializing: '초기화 중…', copySource: '소스 복사', copySourceTitle: '현재 Webview body 소스 복사', restart: '재시작', restartTitle: 'CLI 재시작', clear: '비우기', clearTitle: '채팅 내용 비우기', dropFilesHere: '파일을 여기에 끌어 놓아 컨텍스트로 추가', contextPanelAria: '추가된 컨텍스트 파일', defaultCurrentFile: '기본적으로 현재 파일 표시', clearContext: '컨텍스트 지우기', contextMenu: '컨텍스트 메뉴', composerPlaceholder: '질문, 편집 또는 에이전트…', attachFile: '컨텍스트 파일 선택', modelSelectTitle: '모델 전환, 전환 후 Chat CLI 자동 재시작', modelSelectAria: '모델 전환', modelLoading: '모델 로드 중…', permissionModeTitle: 'Claude CLI 권한 모드 전환, 전환 후 Chat CLI 자동 재시작', permissionModeAria: '권한 모드 전환', sendMessage: '메시지 보내기', stopResponse: '현재 응답 중지', noModelConfigured: '설정된 모델 없음', selectModel: '모델 선택', permissionAcceptEdits: '현재: acceptEdits(편집 도구 자동 승인)', permissionBypass: '현재: bypassPermissions(권한 확인 건너뛰기, 현재 작업 영역 완전 신뢰)', emptyState: 'LLS CLAUDE CHAT - 대화 시작', longTextOutput: '긴 텍스트 출력', longCodeBlock: '긴 코드 블록', longDiffOutput: '긴 diff 출력', copy: '복사', copyCode: '코드 복사', usageModel: '모델 ', usageInput: '입력 ', usageOutput: '출력 ', usageCacheWrite: '캐시 쓰기 ', usageCacheRead: '캐시 읽기 ', assistantNeedsConfirmation: '어시스턴트가 확인을 요청합니다', askManyQuestions: '질문이 {count}개 있습니다. 계속하려면 답변해야 합니다.', askOneQuestion: '옵션을 선택하거나 아래에 사용자 지정 답변을 입력하세요(필수).', noQuestionText: '(질문 텍스트 없음)', multiSelect: '다중 선택 가능', customReplyLabel: '기타 답변(선택): 생각이나 선택하지 않은 이유를 적어 주세요', customReplyPlaceholder: '예: 다른 구현 방식으로 바꾸고 싶습니다…', sendReply: '답변 보내기', askUserReplyIntro: '질문에 대해 다음과 같이 답변했습니다:', askUserPicked: '   선택: {items}', askUserNoPick: '   선택: (선택한 옵션 없음)', askUserExtra: '추가 설명:', toolRunning: '실행 중', toolSuccess: '성공', toolFailed: '실패', toolPermissionDenied: '권한 필요', toolPending: '대기 중', collapsibleSummary: '{label}({count}자, 클릭하여 펼치기)', truncatedChars: '… {count}자 잘림', resendTitle: '다시 보내기: 이 메시지와 이후 컨텍스트를 삭제하고 다시 전송', resendAria: '이 메시지 다시 보내기', loading: '로드 중', cliNotSelected: 'CLI가 선택되지 않음', cliStatus: 'CLI 상태: {status}{detail}', unknownError: '알 수 없는 오류', copiedBodySource: 'body 소스를 복사했습니다', copyBodySourceFailed: 'body 소스 복사 실패', removeAttachment: '{name} 제거', genericFile: '파일', expertPanelTitle: '전문가 실행', expertPanelStatusRunning: '실행 중…', expertPanelStatusDone: '완료됨', expertPanelStatusError: '실패', expertPanelStatusCancelled: '취소됨', expertPanelToggleAria: '전문가 패널 토글', expertEventStart: '시작', expertEventAnalysis: '분석', expertEventToolCall: '도구 호출', expertEventToolResult: '도구 결과', expertEventFinal: '최종 답변', expertEventError: '오류', expertEventCancelled: '취소됨'
+        statusInitializing: '초기화 중…', newSession: '새 대화', newSessionTitle: '새 대화 시작', restart: '재시작', restartTitle: 'CLI 재시작', clear: '비우기', clearTitle: '채팅 내용 비우기', dropFilesHere: '파일을 여기에 끌어 놓아 컨텍스트로 추가', contextPanelAria: '추가된 컨텍스트 파일', defaultCurrentFile: '기본적으로 현재 파일 표시', clearContext: '컨텍스트 지우기', contextMenu: '컨텍스트 메뉴', composerPlaceholder: '질문, 편집 또는 에이전트…', attachFile: '컨텍스트 파일 선택', modelSelectTitle: '모델 전환, 전환 후 Chat CLI 자동 재시작', modelSelectAria: '모델 전환', modelLoading: '모델 로드 중…', permissionModeTitle: 'Claude CLI 권한 모드 전환, 전환 후 Chat CLI 자동 재시작', permissionModeAria: '권한 모드 전환', sendMessage: '메시지 보내기', stopResponse: '현재 응답 중지', noModelConfigured: '설정된 모델 없음', selectModel: '모델 선택', permissionAcceptEdits: '현재: acceptEdits(편집 도구 자동 승인)', permissionBypass: '현재: bypassPermissions(권한 확인 건너뛰기, 현재 작업 영역 완전 신뢰)', emptyState: 'LLS CLAUDE CHAT - 대화 시작', longTextOutput: '긴 텍스트 출력', longCodeBlock: '긴 코드 블록', longDiffOutput: '긴 diff 출력', copy: '복사', copyCode: '코드 복사', usageModel: '모델 ', usageInput: '입력 ', usageOutput: '출력 ', usageCacheWrite: '캐시 쓰기 ', usageCacheRead: '캐시 읽기 ', assistantNeedsConfirmation: '어시스턴트가 확인을 요청합니다', askManyQuestions: '질문이 {count}개 있습니다. 계속하려면 답변해야 합니다.', askOneQuestion: '옵션을 선택하거나 아래에 사용자 지정 답변을 입력하세요(필수).', noQuestionText: '(질문 텍스트 없음)', multiSelect: '다중 선택 가능', customReplyLabel: '기타 답변(선택): 생각이나 선택하지 않은 이유를 적어 주세요', customReplyPlaceholder: '예: 다른 구현 방식으로 바꾸고 싶습니다…', sendReply: '답변 보내기', askUserReplyIntro: '질문에 대해 다음과 같이 답변했습니다:', askUserPicked: '   선택: {items}', askUserNoPick: '   선택: (선택한 옵션 없음)', askUserExtra: '추가 설명:', toolRunning: '실행 중', toolSuccess: '성공', toolFailed: '실패', toolPermissionDenied: '권한 필요', toolPending: '대기 중', collapsibleSummary: '{label}({count}자, 클릭하여 펼치기)', truncatedChars: '… {count}자 잘림', resendTitle: '다시 보내기: 이 메시지와 이후 컨텍스트를 삭제하고 다시 전송', resendAria: '이 메시지 다시 보내기', loading: '로드 중', cliNotSelected: 'CLI가 선택되지 않음', cliStatus: 'CLI 상태: {status}{detail}', unknownError: '알 수 없는 오류', copiedBodySource: 'body 소스를 복사했습니다', copyBodySourceFailed: 'body 소스 복사 실패', removeAttachment: '{name} 제거', genericFile: '파일', expertPanelTitle: '전문가 실행', expertPanelStatusRunning: '실행 중…', expertPanelStatusDone: '완료됨', expertPanelStatusError: '실패', expertPanelStatusCancelled: '취소됨', expertPanelToggleAria: '전문가 패널 토글', expertEventStart: '시작', expertEventAnalysis: '분석', expertEventToolCall: '도구 호출', expertEventToolResult: '도구 결과', expertEventFinal: '최종 답변', expertEventError: '오류', expertEventCancelled: '취소됨'
     };
     chatTranslations.ja = {
-        statusInitializing: '初期化中…', copySource: 'ソースをコピー', copySourceTitle: '現在の Webview body ソースをコピー', restart: '再起動', restartTitle: 'CLI を再起動', clear: 'クリア', clearTitle: 'チャット内容をクリア', dropFilesHere: 'ファイルをここにドロップしてコンテキストに追加', contextPanelAria: '追加済みのコンテキストファイル', defaultCurrentFile: '既定で現在のファイルを表示', clearContext: 'コンテキストをクリア', contextMenu: 'コンテキストメニュー', composerPlaceholder: '質問、編集、またはエージェント…', attachFile: 'コンテキストファイルを選択', modelSelectTitle: 'モデルを切り替え、切り替え後に Chat CLI を自動再起動', modelSelectAria: 'モデルを切り替え', modelLoading: 'モデルを読み込み中…', permissionModeTitle: 'Claude CLI 権限モードを切り替え、切り替え後に Chat CLI を自動再起動', permissionModeAria: '権限モードを切り替え', sendMessage: 'メッセージを送信', stopResponse: '現在の応答を停止', noModelConfigured: 'モデルが設定されていません', selectModel: 'モデルを選択してください', permissionAcceptEdits: '現在: acceptEdits（編集系ツールを自動承認）', permissionBypass: '現在: bypassPermissions（権限チェックをスキップし、現在のワークスペースを完全に信頼）', emptyState: 'LLS CLAUDE CHAT - 会話を開始', longTextOutput: '長いテキスト出力', longCodeBlock: '長いコードブロック', longDiffOutput: '長い diff 出力', copy: 'コピー', copyCode: 'コードをコピー', usageModel: 'モデル ', usageInput: '入力 ', usageOutput: '出力 ', usageCacheWrite: 'キャッシュ書き込み ', usageCacheRead: 'キャッシュ読み取り ', assistantNeedsConfirmation: 'アシスタントが確認を求めています', askManyQuestions: '{count} 件の質問があります。続行するには回答が必要です。', askOneQuestion: '選択肢を選ぶか、下にカスタム返信を入力してください（必須）。', noQuestionText: '(質問テキストなし)', multiSelect: '複数選択可', customReplyLabel: 'その他の返信（任意）：考えや選択しない理由を書いてください', customReplyPlaceholder: '例：別の実装方法に変更したいです…', sendReply: '返信を送信', askUserReplyIntro: '質問に対して次のように回答しました:', askUserPicked: '   選択: {items}', askUserNoPick: '   選択:（選択された項目はありません）', askUserExtra: '補足説明:', toolRunning: '実行中', toolSuccess: '成功', toolFailed: '失敗', toolPermissionDenied: '権限が必要', toolPending: '待機中', collapsibleSummary: '{label}（{count} 文字、クリックして展開）', truncatedChars: '… {count} 文字を切り詰めました', resendTitle: '再送信: このメッセージと後続のコンテキストを削除して再送信', resendAria: 'このメッセージを再送信', loading: '読み込み中', cliNotSelected: 'CLI が未選択', cliStatus: 'CLI 状態: {status}{detail}', unknownError: '不明なエラー', copiedBodySource: 'body ソースをコピーしました', copyBodySourceFailed: 'body ソースのコピーに失敗しました', removeAttachment: '{name} を削除', genericFile: 'ファイル', expertPanelTitle: 'エキスパート実行', expertPanelStatusRunning: '実行中…', expertPanelStatusDone: '完了', expertPanelStatusError: '失敗', expertPanelStatusCancelled: 'キャンセル', expertPanelToggleAria: 'エキスパートパネル切り替え', expertEventStart: '開始', expertEventAnalysis: '分析', expertEventToolCall: 'ツール呼び出し', expertEventToolResult: 'ツール結果', expertEventFinal: '最終回答', expertEventError: 'エラー', expertEventCancelled: 'キャンセル'
+        statusInitializing: '初期化中…', newSession: '新しいチャット', newSessionTitle: '新しい会話を開始', restart: '再起動', restartTitle: 'CLI を再起動', clear: 'クリア', clearTitle: 'チャット内容をクリア', dropFilesHere: 'ファイルをここにドロップしてコンテキストに追加', contextPanelAria: '追加済みのコンテキストファイル', defaultCurrentFile: '既定で現在のファイルを表示', clearContext: 'コンテキストをクリア', contextMenu: 'コンテキストメニュー', composerPlaceholder: '質問、編集、またはエージェント…', attachFile: 'コンテキストファイルを選択', modelSelectTitle: 'モデルを切り替え、切り替え後に Chat CLI を自動再起動', modelSelectAria: 'モデルを切り替え', modelLoading: 'モデルを読み込み中…', permissionModeTitle: 'Claude CLI 権限モードを切り替え、切り替え後に Chat CLI を自動再起動', permissionModeAria: '権限モードを切り替え', sendMessage: 'メッセージを送信', stopResponse: '現在の応答を停止', noModelConfigured: 'モデルが設定されていません', selectModel: 'モデルを選択してください', permissionAcceptEdits: '現在: acceptEdits（編集系ツールを自動承認）', permissionBypass: '現在: bypassPermissions（権限チェックをスキップし、現在のワークスペースを完全に信頼）', emptyState: 'LLS CLAUDE CHAT - 会話を開始', longTextOutput: '長いテキスト出力', longCodeBlock: '長いコードブロック', longDiffOutput: '長い diff 出力', copy: 'コピー', copyCode: 'コードをコピー', usageModel: 'モデル ', usageInput: '入力 ', usageOutput: '出力 ', usageCacheWrite: 'キャッシュ書き込み ', usageCacheRead: 'キャッシュ読み取り ', assistantNeedsConfirmation: 'アシスタントが確認を求めています', askManyQuestions: '{count} 件の質問があります。続行するには回答が必要です。', askOneQuestion: '選択肢を選ぶか、下にカスタム返信を入力してください（必須）。', noQuestionText: '(質問テキストなし)', multiSelect: '複数選択可', customReplyLabel: 'その他の返信（任意）：考えや選択しない理由を書いてください', customReplyPlaceholder: '例：別の実装方法に変更したいです…', sendReply: '返信を送信', askUserReplyIntro: '質問に対して次のように回答しました:', askUserPicked: '   選択: {items}', askUserNoPick: '   選択:（選択された項目はありません）', askUserExtra: '補足説明:', toolRunning: '実行中', toolSuccess: '成功', toolFailed: '失敗', toolPermissionDenied: '権限が必要', toolPending: '待機中', collapsibleSummary: '{label}（{count} 文字、クリックして展開）', truncatedChars: '… {count} 文字を切り詰めました', resendTitle: '再送信: このメッセージと後続のコンテキストを削除して再送信', resendAria: 'このメッセージを再送信', loading: '読み込み中', cliNotSelected: 'CLI が未選択', cliStatus: 'CLI 状態: {status}{detail}', unknownError: '不明なエラー', copiedBodySource: 'body ソースをコピーしました', copyBodySourceFailed: 'body ソースのコピーに失敗しました', removeAttachment: '{name} を削除', genericFile: 'ファイル', expertPanelTitle: 'エキスパート実行', expertPanelStatusRunning: '実行中…', expertPanelStatusDone: '完了', expertPanelStatusError: '失敗', expertPanelStatusCancelled: 'キャンセル', expertPanelToggleAria: 'エキスパートパネル切り替え', expertEventStart: '開始', expertEventAnalysis: '分析', expertEventToolCall: 'ツール呼び出し', expertEventToolResult: 'ツール結果', expertEventFinal: '最終回答', expertEventError: 'エラー', expertEventCancelled: 'キャンセル'
     };
     chatTranslations.fr = {
-        statusInitializing: 'Initialisation…', copySource: 'Copier la source', copySourceTitle: 'Copier la source du body Webview actuel', restart: 'Redémarrer', restartTitle: 'Redémarrer le CLI', clear: 'Effacer', clearTitle: 'Effacer le contenu du chat', dropFilesHere: 'Déposez les fichiers ici comme contexte', contextPanelAria: 'Fichiers de contexte ajoutés', defaultCurrentFile: 'Afficher le fichier actuel par défaut', clearContext: 'Effacer le contexte', contextMenu: 'Menu de contexte', composerPlaceholder: 'Demander, modifier ou agent…', attachFile: 'Sélectionner des fichiers de contexte', modelSelectTitle: 'Changer de modèle et redémarrer automatiquement Chat CLI', modelSelectAria: 'Changer de modèle', modelLoading: 'Chargement des modèles…', permissionModeTitle: 'Changer le mode d’autorisation Claude CLI et redémarrer automatiquement Chat CLI', permissionModeAria: 'Changer le mode d’autorisation', sendMessage: 'Envoyer le message', stopResponse: 'Arrêter la réponse actuelle', noModelConfigured: 'Aucun modèle configuré', selectModel: 'Sélectionner un modèle', permissionAcceptEdits: 'Actuel : acceptEdits (accepter automatiquement les outils d’édition)', permissionBypass: 'Actuel : bypassPermissions (ignorer les contrôles d’autorisation, faire pleinement confiance à l’espace de travail actuel)', emptyState: 'LLS CLAUDE CHAT - Commencer une conversation', longTextOutput: 'Sortie texte longue', longCodeBlock: 'Bloc de code long', longDiffOutput: 'Sortie diff longue', copy: 'Copier', copyCode: 'Copier le code', usageModel: 'Modèle ', usageInput: 'Entrée ', usageOutput: 'Sortie ', usageCacheWrite: 'Écriture cache ', usageCacheRead: 'Lecture cache ', assistantNeedsConfirmation: 'L’assistant a besoin de votre confirmation', askManyQuestions: 'Il y a {count} questions. Vous devez répondre avant de continuer.', askOneQuestion: 'Choisissez une option ou saisissez une réponse personnalisée ci-dessous (obligatoire).', noQuestionText: '(Aucun texte de question)', multiSelect: 'Sélection multiple', customReplyLabel: 'Autre réponse (facultatif) : indiquez vos pensées ou pourquoi vous n’avez pas choisi une option', customReplyPlaceholder: 'Par exemple : je veux utiliser une autre implémentation…', sendReply: 'Envoyer la réponse', askUserReplyIntro: 'J’ai répondu à votre question comme suit :', askUserPicked: '   Sélection : {items}', askUserNoPick: '   Sélection : (aucune option sélectionnée)', askUserExtra: 'Note complémentaire :', toolRunning: 'En cours', toolSuccess: 'Succès', toolFailed: 'Échec', toolPermissionDenied: 'Autorisation requise', toolPending: 'En attente', collapsibleSummary: '{label} ({count} caractères, cliquez pour développer)', truncatedChars: '… {count} caractères tronqués', resendTitle: 'Renvoyer : supprimer ce message et le contexte suivant, puis renvoyer', resendAria: 'Renvoyer ce message', loading: 'Chargement', cliNotSelected: 'CLI non sélectionné', cliStatus: 'État CLI : {status}{detail}', unknownError: 'Erreur inconnue', copiedBodySource: 'Source body copiée', copyBodySourceFailed: 'Échec de la copie de la source body', removeAttachment: 'Supprimer {name}', genericFile: 'Fichier', expertPanelTitle: 'Exécution experte', expertPanelStatusRunning: 'en cours…', expertPanelStatusDone: 'terminé', expertPanelStatusError: 'échec', expertPanelStatusCancelled: 'annulé', expertPanelToggleAria: 'Basculer le panneau expert', expertEventStart: 'Début', expertEventAnalysis: 'Analyse', expertEventToolCall: 'Appel d’outil', expertEventToolResult: 'Résultat d’outil', expertEventFinal: 'Réponse finale', expertEventError: 'Erreur', expertEventCancelled: 'Annulé'
+        statusInitializing: 'Initialisation…', newSession: 'Nouvelle conversation', newSessionTitle: 'Démarrer une nouvelle conversation', restart: 'Redémarrer', restartTitle: 'Redémarrer le CLI', clear: 'Effacer', clearTitle: 'Effacer le contenu du chat', dropFilesHere: 'Déposez les fichiers ici comme contexte', contextPanelAria: 'Fichiers de contexte ajoutés', defaultCurrentFile: 'Afficher le fichier actuel par défaut', clearContext: 'Effacer le contexte', contextMenu: 'Menu de contexte', composerPlaceholder: 'Demander, modifier ou agent…', attachFile: 'Sélectionner des fichiers de contexte', modelSelectTitle: 'Changer de modèle et redémarrer automatiquement Chat CLI', modelSelectAria: 'Changer de modèle', modelLoading: 'Chargement des modèles…', permissionModeTitle: 'Changer le mode d’autorisation Claude CLI et redémarrer automatiquement Chat CLI', permissionModeAria: 'Changer le mode d’autorisation', sendMessage: 'Envoyer le message', stopResponse: 'Arrêter la réponse actuelle', noModelConfigured: 'Aucun modèle configuré', selectModel: 'Sélectionner un modèle', permissionAcceptEdits: 'Actuel : acceptEdits (accepter automatiquement les outils d’édition)', permissionBypass: 'Actuel : bypassPermissions (ignorer les contrôles d’autorisation, faire pleinement confiance à l’espace de travail actuel)', emptyState: 'LLS CLAUDE CHAT - Commencer une conversation', longTextOutput: 'Sortie texte longue', longCodeBlock: 'Bloc de code long', longDiffOutput: 'Sortie diff longue', copy: 'Copier', copyCode: 'Copier le code', usageModel: 'Modèle ', usageInput: 'Entrée ', usageOutput: 'Sortie ', usageCacheWrite: 'Écriture cache ', usageCacheRead: 'Lecture cache ', assistantNeedsConfirmation: 'L’assistant a besoin de votre confirmation', askManyQuestions: 'Il y a {count} questions. Vous devez répondre avant de continuer.', askOneQuestion: 'Choisissez une option ou saisissez une réponse personnalisée ci-dessous (obligatoire).', noQuestionText: '(Aucun texte de question)', multiSelect: 'Sélection multiple', customReplyLabel: 'Autre réponse (facultatif) : indiquez vos pensées ou pourquoi vous n’avez pas choisi une option', customReplyPlaceholder: 'Par exemple : je veux utiliser une autre implémentation…', sendReply: 'Envoyer la réponse', askUserReplyIntro: 'J’ai répondu à votre question comme suit :', askUserPicked: '   Sélection : {items}', askUserNoPick: '   Sélection : (aucune option sélectionnée)', askUserExtra: 'Note complémentaire :', toolRunning: 'En cours', toolSuccess: 'Succès', toolFailed: 'Échec', toolPermissionDenied: 'Autorisation requise', toolPending: 'En attente', collapsibleSummary: '{label} ({count} caractères, cliquez pour développer)', truncatedChars: '… {count} caractères tronqués', resendTitle: 'Renvoyer : supprimer ce message et le contexte suivant, puis renvoyer', resendAria: 'Renvoyer ce message', loading: 'Chargement', cliNotSelected: 'CLI non sélectionné', cliStatus: 'État CLI : {status}{detail}', unknownError: 'Erreur inconnue', copiedBodySource: 'Source body copiée', copyBodySourceFailed: 'Échec de la copie de la source body', removeAttachment: 'Supprimer {name}', genericFile: 'Fichier', expertPanelTitle: 'Exécution experte', expertPanelStatusRunning: 'en cours…', expertPanelStatusDone: 'terminé', expertPanelStatusError: 'échec', expertPanelStatusCancelled: 'annulé', expertPanelToggleAria: 'Basculer le panneau expert', expertEventStart: 'Début', expertEventAnalysis: 'Analyse', expertEventToolCall: 'Appel d’outil', expertEventToolResult: 'Résultat d’outil', expertEventFinal: 'Réponse finale', expertEventError: 'Erreur', expertEventCancelled: 'Annulé'
     };
     chatTranslations.de = {
-        statusInitializing: 'Initialisierung…', copySource: 'Quelle kopieren', copySourceTitle: 'Quelle des aktuellen Webview-Body kopieren', restart: 'Neu starten', restartTitle: 'CLI neu starten', clear: 'Leeren', clearTitle: 'Chatinhalt leeren', dropFilesHere: 'Dateien hierher ziehen, um sie als Kontext zu verwenden', contextPanelAria: 'Hinzugefügte Kontextdateien', defaultCurrentFile: 'Aktuelle Datei standardmäßig anzeigen', clearContext: 'Kontext leeren', contextMenu: 'Kontextmenü', composerPlaceholder: 'Fragen, bearbeiten oder Agent…', attachFile: 'Kontextdateien auswählen', modelSelectTitle: 'Modell wechseln und Chat CLI danach automatisch neu starten', modelSelectAria: 'Modell wechseln', modelLoading: 'Modelle werden geladen…', permissionModeTitle: 'Claude-CLI-Berechtigungsmodus wechseln und Chat CLI danach automatisch neu starten', permissionModeAria: 'Berechtigungsmodus wechseln', sendMessage: 'Nachricht senden', stopResponse: 'Aktuelle Antwort stoppen', noModelConfigured: 'Kein Modell konfiguriert', selectModel: 'Modell auswählen', permissionAcceptEdits: 'Aktuell: acceptEdits (Bearbeitungswerkzeuge automatisch akzeptieren)', permissionBypass: 'Aktuell: bypassPermissions (Berechtigungsprüfungen überspringen, aktuellen Arbeitsbereich vollständig vertrauen)', emptyState: 'LLS CLAUDE CHAT - Unterhaltung starten', longTextOutput: 'Lange Textausgabe', longCodeBlock: 'Langer Codeblock', longDiffOutput: 'Lange diff-Ausgabe', copy: 'Kopieren', copyCode: 'Code kopieren', usageModel: 'Modell ', usageInput: 'Eingabe ', usageOutput: 'Ausgabe ', usageCacheWrite: 'Cache schreiben ', usageCacheRead: 'Cache lesen ', assistantNeedsConfirmation: 'Der Assistent benötigt Ihre Bestätigung', askManyQuestions: 'Es gibt {count} Fragen. Sie müssen antworten, bevor es weitergeht.', askOneQuestion: 'Wählen Sie eine Option oder geben Sie unten eine eigene Antwort ein (erforderlich).', noQuestionText: '(Kein Fragetext)', multiSelect: 'Mehrfachauswahl', customReplyLabel: 'Andere Antwort (optional): Schreiben Sie Ihre Gedanken oder warum Sie eine Option nicht gewählt haben', customReplyPlaceholder: 'Zum Beispiel: Ich möchte eine andere Implementierung verwenden…', sendReply: 'Antwort senden', askUserReplyIntro: 'Ich habe auf Ihre Frage wie folgt geantwortet:', askUserPicked: '   Auswahl: {items}', askUserNoPick: '   Auswahl: (keine Option ausgewählt)', askUserExtra: 'Zusätzlicher Hinweis:', toolRunning: 'Wird ausgeführt', toolSuccess: 'Erfolgreich', toolFailed: 'Fehlgeschlagen', toolPermissionDenied: 'Berechtigung erforderlich', toolPending: 'Warten', collapsibleSummary: '{label} ({count} Zeichen, zum Erweitern klicken)', truncatedChars: '… {count} Zeichen abgeschnitten', resendTitle: 'Erneut senden: diese Nachricht und folgenden Kontext löschen und erneut senden', resendAria: 'Diese Nachricht erneut senden', loading: 'Wird geladen', cliNotSelected: 'CLI nicht ausgewählt', cliStatus: 'CLI-Status: {status}{detail}', unknownError: 'Unbekannter Fehler', copiedBodySource: 'Body-Quelle kopiert', copyBodySourceFailed: 'Kopieren der Body-Quelle fehlgeschlagen', removeAttachment: '{name} entfernen', genericFile: 'Datei', expertPanelTitle: 'Experten-Lauf', expertPanelStatusRunning: 'läuft…', expertPanelStatusDone: 'abgeschlossen', expertPanelStatusError: 'fehlgeschlagen', expertPanelStatusCancelled: 'abgebrochen', expertPanelToggleAria: 'Experten-Panel umschalten', expertEventStart: 'Start', expertEventAnalysis: 'Analyse', expertEventToolCall: 'Werkzeugaufruf', expertEventToolResult: 'Werkzeugergebnis', expertEventFinal: 'Endgültige Antwort', expertEventError: 'Fehler', expertEventCancelled: 'Abgebrochen'
+        statusInitializing: 'Initialisierung…', newSession: 'Neuer Chat', newSessionTitle: 'Neue Unterhaltung starten', restart: 'Neu starten', restartTitle: 'CLI neu starten', clear: 'Leeren', clearTitle: 'Chatinhalt leeren', dropFilesHere: 'Dateien hierher ziehen, um sie als Kontext zu verwenden', contextPanelAria: 'Hinzugefügte Kontextdateien', defaultCurrentFile: 'Aktuelle Datei standardmäßig anzeigen', clearContext: 'Kontext leeren', contextMenu: 'Kontextmenü', composerPlaceholder: 'Fragen, bearbeiten oder Agent…', attachFile: 'Kontextdateien auswählen', modelSelectTitle: 'Modell wechseln und Chat CLI danach automatisch neu starten', modelSelectAria: 'Modell wechseln', modelLoading: 'Modelle werden geladen…', permissionModeTitle: 'Claude-CLI-Berechtigungsmodus wechseln und Chat CLI danach automatisch neu starten', permissionModeAria: 'Berechtigungsmodus wechseln', sendMessage: 'Nachricht senden', stopResponse: 'Aktuelle Antwort stoppen', noModelConfigured: 'Kein Modell konfiguriert', selectModel: 'Modell auswählen', permissionAcceptEdits: 'Aktuell: acceptEdits (Bearbeitungswerkzeuge automatisch akzeptieren)', permissionBypass: 'Aktuell: bypassPermissions (Berechtigungsprüfungen überspringen, aktuellen Arbeitsbereich vollständig vertrauen)', emptyState: 'LLS CLAUDE CHAT - Unterhaltung starten', longTextOutput: 'Lange Textausgabe', longCodeBlock: 'Langer Codeblock', longDiffOutput: 'Lange diff-Ausgabe', copy: 'Kopieren', copyCode: 'Code kopieren', usageModel: 'Modell ', usageInput: 'Eingabe ', usageOutput: 'Ausgabe ', usageCacheWrite: 'Cache schreiben ', usageCacheRead: 'Cache lesen ', assistantNeedsConfirmation: 'Der Assistent benötigt Ihre Bestätigung', askManyQuestions: 'Es gibt {count} Fragen. Sie müssen antworten, bevor es weitergeht.', askOneQuestion: 'Wählen Sie eine Option oder geben Sie unten eine eigene Antwort ein (erforderlich).', noQuestionText: '(Kein Fragetext)', multiSelect: 'Mehrfachauswahl', customReplyLabel: 'Andere Antwort (optional): Schreiben Sie Ihre Gedanken oder warum Sie eine Option nicht gewählt haben', customReplyPlaceholder: 'Zum Beispiel: Ich möchte eine andere Implementierung verwenden…', sendReply: 'Antwort senden', askUserReplyIntro: 'Ich habe auf Ihre Frage wie folgt geantwortet:', askUserPicked: '   Auswahl: {items}', askUserNoPick: '   Auswahl: (keine Option ausgewählt)', askUserExtra: 'Zusätzlicher Hinweis:', toolRunning: 'Wird ausgeführt', toolSuccess: 'Erfolgreich', toolFailed: 'Fehlgeschlagen', toolPermissionDenied: 'Berechtigung erforderlich', toolPending: 'Warten', collapsibleSummary: '{label} ({count} Zeichen, zum Erweitern klicken)', truncatedChars: '… {count} Zeichen abgeschnitten', resendTitle: 'Erneut senden: diese Nachricht und folgenden Kontext löschen und erneut senden', resendAria: 'Diese Nachricht erneut senden', loading: 'Wird geladen', cliNotSelected: 'CLI nicht ausgewählt', cliStatus: 'CLI-Status: {status}{detail}', unknownError: 'Unbekannter Fehler', copiedBodySource: 'Body-Quelle kopiert', copyBodySourceFailed: 'Kopieren der Body-Quelle fehlgeschlagen', removeAttachment: '{name} entfernen', genericFile: 'Datei', expertPanelTitle: 'Experten-Lauf', expertPanelStatusRunning: 'läuft…', expertPanelStatusDone: 'abgeschlossen', expertPanelStatusError: 'fehlgeschlagen', expertPanelStatusCancelled: 'abgebrochen', expertPanelToggleAria: 'Experten-Panel umschalten', expertEventStart: 'Start', expertEventAnalysis: 'Analyse', expertEventToolCall: 'Werkzeugaufruf', expertEventToolResult: 'Werkzeugergebnis', expertEventFinal: 'Endgültige Antwort', expertEventError: 'Fehler', expertEventCancelled: 'Abgebrochen'
     };
 
     Object.assign(chatTranslations.ko, {
@@ -158,6 +158,57 @@
         claudeTodoToggleAria: 'Claude TodoWrite-Todos ein-/ausklappen'
     });
 
+    /** 补齐任务流恢复对话框文案：继续/清除/稍后三按钮。 */
+    Object.assign(chatTranslations.en, {
+        restoreTitle: 'Resume unfinished task flow?',
+        restoreDesc: 'An unfinished task flow was found in this workspace. Continue it, or clear it.',
+        restoreContinue: 'Continue',
+        restoreClear: 'Clear',
+        restoreDismiss: 'Later'
+    });
+    Object.assign(chatTranslations['zh-cn'], {
+        restoreTitle: '恢复未完成的任务流？',
+        restoreDesc: '在当前工作区发现一个未完成的任务流，可以继续推进，或清除它。',
+        restoreContinue: '继续',
+        restoreClear: '清除',
+        restoreDismiss: '稍后'
+    });
+    Object.assign(chatTranslations['zh-tw'], {
+        restoreTitle: '恢復未完成的任務流？',
+        restoreDesc: '在目前工作區發現一個未完成的任務流，可以繼續推進，或清除它。',
+        restoreContinue: '繼續',
+        restoreClear: '清除',
+        restoreDismiss: '稍後'
+    });
+    Object.assign(chatTranslations.ko, {
+        restoreTitle: '완료되지 않은 작업 흐름을 재개할까요?',
+        restoreDesc: '이 작업 영역에서 완료되지 않은 작업 흐름을 발견했습니다. 계속하거나 지울 수 있습니다.',
+        restoreContinue: '계속',
+        restoreClear: '지우기',
+        restoreDismiss: '나중에'
+    });
+    Object.assign(chatTranslations.ja, {
+        restoreTitle: '未完了のタスクフローを再開しますか？',
+        restoreDesc: 'このワークスペースに未完了のタスクフローが見つかりました。続行するか、クリアできます。',
+        restoreContinue: '続行',
+        restoreClear: 'クリア',
+        restoreDismiss: '後で'
+    });
+    Object.assign(chatTranslations.fr, {
+        restoreTitle: 'Reprendre le flux de tâches inachevé ?',
+        restoreDesc: 'Un flux de tâches inachevé a été trouvé dans cet espace de travail. Continuez-le ou effacez-le.',
+        restoreContinue: 'Continuer',
+        restoreClear: 'Effacer',
+        restoreDismiss: 'Plus tard'
+    });
+    Object.assign(chatTranslations.de, {
+        restoreTitle: 'Unfertigen Aufgabenfluss fortsetzen?',
+        restoreDesc: 'In diesem Arbeitsbereich wurde ein unfertiger Aufgabenfluss gefunden. Fortsetzen oder löschen.',
+        restoreContinue: 'Fortsetzen',
+        restoreClear: 'Löschen',
+        restoreDismiss: 'Später'
+    });
+
     /** 补齐顶部模型条、模型选择弹窗 UI 文案（按需专家方案下已无路由徽章）。 */
     Object.assign(chatTranslations.en, {
         modelsBarNormal: 'Normal:', modelsBarExpert: 'Expert:', openModelPicker: 'Choose models',
@@ -280,6 +331,13 @@
     const modelPickerCancelEls = Array.prototype.slice.call(
         document.querySelectorAll('[data-role="model-picker-cancel"], [data-role="model-picker-cancel-btn"]')
     );
+    const taskRestoreDialogEl = document.querySelector('[data-role="task-restore"]');
+    const taskRestoreSummaryEl = document.querySelector('[data-role="task-restore-summary"]');
+    const taskRestoreNameEl = document.querySelector('[data-role="task-restore-name"]');
+    const taskRestoreProgressEl = document.querySelector('[data-role="task-restore-progress"]');
+    const taskRestoreContinueEl = document.querySelector('[data-role="task-restore-continue"]');
+    const taskRestoreClearEl = document.querySelector('[data-role="task-restore-clear"]');
+    const taskRestoreDismissEl = document.querySelector('[data-role="task-restore-dismiss"]');
     const routeBadgeEl = document.querySelector('[data-role="route-badge"]');
     const routeBadgeTextEl = document.querySelector('[data-role="route-badge-text"]');
     const composerNormalChipEl = document.querySelector('[data-role="composer-normal-chip"]');
@@ -296,9 +354,13 @@
     const tokenMeterBarUsedEl = document.querySelector('[data-role="token-meter-bar-used"]');
     const tokenMeterBarReservedEl = document.querySelector('[data-role="token-meter-bar-reserved"]');
     const statusEl = document.querySelector('[data-role="cli-status"]');
+    const sessionTitleEl = document.querySelector('[data-role="session-title"]');
     const restartCliEl = document.querySelector('[data-role="restart-cli"]');
-    const clearSessionEl = document.querySelector('[data-role="clear-session"]');
-    const copyBodySourceEl = document.querySelector('[data-role="copy-body-source"]');
+    const newSessionEl = document.querySelector('[data-role="new-session"]');
+    const openSessionsEl = document.querySelector('[data-role="open-sessions"]');
+    const sessionListDialogEl = document.querySelector('[data-role="session-list"]');
+    const sessionListContentEl = document.querySelector('[data-role="session-list-content"]');
+    const sessionListCloseEls = document.querySelectorAll('[data-role="session-list-close"]');
     const composerState = {
         attachments: [],
         modelOptions: [],
@@ -1385,6 +1447,35 @@
     }
 
     /**
+     * 弹出任务流恢复对话框，展示恢复出的标题/摘要/进度。
+     *
+     * 由扩展端在 webview/ready 后下发 taskFlow/restorePrompt 触发；用户三选一
+     * （继续 / 清除 / 稍后）后通过 taskFlow/restoreChoice 回传扩展。
+     *
+     * @param {{title?: string, summary?: string, progress?: string}} payload 恢复出的任务流信息。
+     */
+    function showTaskRestoreDialog(payload) {
+        if (!(taskRestoreDialogEl instanceof HTMLDialogElement)) return;
+        var info = payload || {};
+        if (taskRestoreSummaryEl) taskRestoreSummaryEl.textContent = info.summary || t('restoreDesc');
+        if (taskRestoreNameEl) taskRestoreNameEl.textContent = info.title || '';
+        if (taskRestoreProgressEl) taskRestoreProgressEl.textContent = info.progress || '';
+        if (!taskRestoreDialogEl.open) taskRestoreDialogEl.showModal();
+    }
+
+    /**
+     * 关闭任务流恢复对话框并回传用户选择。
+     *
+     * @param {'continue' | 'clear' | 'dismiss'} choice 用户选择。
+     */
+    function resolveTaskRestore(choice) {
+        if (taskRestoreDialogEl instanceof HTMLDialogElement && taskRestoreDialogEl.open) {
+            taskRestoreDialogEl.close();
+        }
+        post({ type: 'taskFlow/restoreChoice', choice: choice });
+    }
+
+    /**
      * 关闭模型选择弹窗。原生 dialog.close 同时会处理键盘焦点归还。
      */
     function closeModelPicker() {
@@ -1393,9 +1484,88 @@
         }
     }
 
-    /**
-     * 提交模型选择弹窗：一次性下发 models/applyPair，让宿主串行处理两次保存 + 一次重启。
-     */
+    function openSessions() {
+        if (!(sessionListDialogEl instanceof HTMLElement)) return;
+        if (sessionListContentEl) {
+            sessionListContentEl.innerHTML = '<p class="session-panel__loading" data-i18n="sessionsLoading">Loading…</p>';
+        }
+        sessionListDialogEl.setAttribute('aria-hidden', 'false');
+        post({ type: 'sessions/list' });
+    }
+
+    function closeSessionList() {
+        if (sessionListDialogEl instanceof HTMLElement) {
+            sessionListDialogEl.setAttribute('aria-hidden', 'true');
+        }
+    }
+
+    function renderSessionList(sessions) {
+        if (!sessionListContentEl) return;
+        if (!sessions || sessions.length === 0) {
+            sessionListContentEl.innerHTML = '<p class="session-list__empty">No past conversations found.</p>';
+            return;
+        }
+        var now = Date.now();
+        var groups = [];
+        var groupMap = {};
+        sessions.forEach(function (s) {
+            var label = getSessionDateGroup(s.lastModified, now);
+            if (!groupMap[label]) {
+                groupMap[label] = [];
+                groups.push(label);
+            }
+            groupMap[label].push(s);
+        });
+        var html = '';
+        groups.forEach(function (label) {
+            html += '<div class="session-list__group"><div class="session-list__group-label">' + escapeHtml(label) + '</div>';
+            groupMap[label].forEach(function (s) {
+                var timeAgo = formatTimeAgo(s.lastModified, now);
+                var branch = s.gitBranch ? '<span class="session-list__branch">' + escapeHtml(s.gitBranch) + '</span>' : '';
+                html += '<button type="button" class="session-list__item" data-session-id="' + escapeHtml(s.sessionId) + '">'
+                    + '<span class="session-list__dot"></span>'
+                    + '<span class="session-list__summary">' + escapeHtml(s.summary) + '</span>'
+                    + '<span class="session-list__meta">' + branch + '<span class="session-list__time">' + escapeHtml(timeAgo) + '</span></span>'
+                    + '</button>';
+            });
+            html += '</div>';
+        });
+        sessionListContentEl.innerHTML = html;
+        sessionListContentEl.querySelectorAll('.session-list__item').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var sid = btn.getAttribute('data-session-id');
+                if (sid) {
+                    post({ type: 'session/resume', sessionId: sid });
+                    closeSessionList();
+                }
+            });
+        });
+    }
+
+    function getSessionDateGroup(ts, now) {
+        var d = new Date(ts);
+        var n = new Date(now);
+        var dDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        var nDay = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
+        var diff = nDay - dDay;
+        if (diff === 0) return 'Today';
+        if (diff === 86400000) return 'Yesterday';
+        if (diff < 7 * 86400000) return 'This week';
+        if (diff < 30 * 86400000) return 'This month';
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    }
+
+    function formatTimeAgo(ts, now) {
+        var diff = Math.floor((now - ts) / 1000);
+        if (diff < 60) return diff + 's ago';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+        if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+        return Math.floor(diff / 86400) + 'd ago';
+    }
+
+    function escapeHtml(str) {
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
     function submitModelPicker() {
         const selection = readModelPickerSelection();
         if (selection.normal) {
@@ -4527,6 +4697,13 @@
             case 'taskFlow/status':
                 updateTaskFlowTodoStatus(message.snapshot);
                 break;
+            case 'taskFlow/restorePrompt':
+                showTaskRestoreDialog({
+                    title: message.title,
+                    summary: message.summary,
+                    progress: message.progress
+                });
+                break;
             case 'message/error':
                 setChatRunning(false);
                 showToast('error', message.detail ? (message.error || t('unknownError')) + ': ' + message.detail : (message.error || t('unknownError')));
@@ -4562,9 +4739,31 @@
                 setTokenMeterCompacting(false);
                 showToast('error', '压缩失败：' + (message.error || t('unknownError')) + '，建议手动清空上下文。');
                 break;
+            case 'sessions/list/result':
+                renderSessionList(message.sessions || []);
+                break;
+            case 'session/title':
+                applySessionTitle(message.title || '');
+                break;
             default:
                 break;
         }
+    }
+
+    /**
+     * 把会话标题应用到顶部 H1。
+     *
+     * 标题为空时回退到默认标题（data-default-title）。同时设置 title 属性，
+     * 便于长标题被 CSS 省略后悬停查看完整内容。
+     *
+     * @param {string} title 会话标题，空字符串表示无标题。
+     */
+    function applySessionTitle(title) {
+        if (!sessionTitleEl) return;
+        const fallback = sessionTitleEl.getAttribute('data-default-title') || 'LLS CLAUDE CHAT';
+        const text = (title || '').trim();
+        sessionTitleEl.textContent = text || fallback;
+        sessionTitleEl.title = text || fallback;
     }
 
     /**
@@ -4773,52 +4972,6 @@
     applyI18n();
     setChatRunning(false);
 
-    /**
-     * 复制当前 Webview 的 body 源码，便于调试真实 DOM 结构和样式命中情况。
-     * 优先使用 Clipboard API；若不可用，则退回到临时 textarea + execCommand。
-     */
-    function copyBodySource() {
-        document.querySelectorAll('.message_07S1Yg[data-role="assistant"]').forEach(function (item) {
-            if (item instanceof HTMLElement) ensureAssistantMessageContainer(item);
-        });
-        const source = document.body ? document.body.outerHTML : '';
-        if (!source) return;
-        const onCopied = () => showToast('info', t('copiedBodySource'));
-        const onFailed = () => showToast('error', t('copyBodySourceFailed'));
-        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-            navigator.clipboard.writeText(source).then(onCopied, function () {
-                fallbackCopyText(source, onCopied, onFailed);
-            });
-            return;
-        }
-        fallbackCopyText(source, onCopied, onFailed);
-    }
-
-    /**
-     * 使用临时 textarea 执行复制，作为 Clipboard API 不可用时的兜底方案。
-     *
-     * @param {string} text 要复制的文本。
-     * @param {() => void} onCopied 复制成功回调。
-     * @param {() => void} onFailed 复制失败回调。
-     */
-    function fallbackCopyText(text, onCopied, onFailed) {
-        const textarea = document.createElement('textarea');
-        textarea.value = text;
-        textarea.setAttribute('readonly', 'readonly');
-        textarea.style.position = 'fixed';
-        textarea.style.left = '-9999px';
-        document.body.appendChild(textarea);
-        textarea.select();
-        try {
-            if (document.execCommand('copy')) onCopied();
-            else onFailed();
-        } catch (_err) {
-            onFailed();
-        } finally {
-            textarea.remove();
-        }
-    }
-
     sendEl?.addEventListener('click', handleComposerAction);
     attachFileEl?.addEventListener('click', () => post({ type: 'file/pick' }));
     openModelPickerEl?.addEventListener('click', openModelPicker);
@@ -4826,6 +4979,13 @@
     composerExpertChipEl?.addEventListener('click', openModelPicker);
     modelPickerCancelEls.forEach((el) => {
         if (el instanceof HTMLElement) el.addEventListener('click', closeModelPicker);
+    });
+    taskRestoreContinueEl?.addEventListener('click', () => resolveTaskRestore('continue'));
+    taskRestoreClearEl?.addEventListener('click', () => resolveTaskRestore('clear'));
+    taskRestoreDismissEl?.addEventListener('click', () => resolveTaskRestore('dismiss'));
+    taskRestoreDialogEl?.addEventListener('cancel', (event) => {
+        event.preventDefault();
+        resolveTaskRestore('dismiss');
     });
     modelPickerFormEl?.addEventListener('submit', (event) => {
         event.preventDefault();
@@ -4867,8 +5027,16 @@
         closeTokenMeterPopover();
     });
     restartCliEl?.addEventListener('click', () => post({ type: 'cli/restart' }));
-    clearSessionEl?.addEventListener('click', () => post({ type: 'session/clear' }));
-    copyBodySourceEl?.addEventListener('click', copyBodySource);
+    newSessionEl?.addEventListener('click', () => { applySessionTitle(''); post({ type: 'session/clear' }); });
+    openSessionsEl?.addEventListener('click', openSessions);
+    sessionListCloseEls.forEach((el) => {
+        if (el instanceof HTMLElement) el.addEventListener('click', closeSessionList);
+    });
+    if (sessionListDialogEl instanceof HTMLElement) {
+        sessionListDialogEl.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') closeSessionList();
+        });
+    }
     contextClearEl?.addEventListener('click', clearAttachments);
     installAssistantMessageNormalizer();
     composerEl?.addEventListener('keydown', (event) => {

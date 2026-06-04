@@ -144,38 +144,6 @@ export function rewriteRequestBody(
     return rawBody;
 }
 
-/**
- * 为 Anthropic 兼容流式请求显式要求上游返回 token usage。
- *
- * Claude/Anthropic 官方流式协议通常会在 message_start / message_delta 中返回
- * usage，但不少 Anthropic-compatible 服务实际复用了 OpenAI 的开关语义：只有
- * 请求体携带 `stream_options.include_usage=true` 时，最终响应或 CLI 聚合出的
- * result.usage/modelUsage 才会包含非 0 的输入/输出 token 统计。
- *
- * 这里在任务流注入完成后再次处理 body，避免注入过程覆盖字段；如果请求体不是
- * JSON 对象则保持原样透传，保证兼容异常/未知格式。
- *
- * @param bodyText 即将发送给上游的 Anthropic 请求体文本。
- * @returns 补充 usage 开关后的请求体文本，解析失败时返回原文本。
- */
-export function requestAnthropicUsageStats(bodyText: string): string {
-    try {
-        const parsed = JSON.parse(bodyText) as unknown;
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return bodyText;
-        const body = parsed as Record<string, unknown>;
-        const streamOptions = body.stream_options;
-        body.stream_options = {
-            ...(streamOptions && typeof streamOptions === 'object' && !Array.isArray(streamOptions)
-                ? (streamOptions as Record<string, unknown>)
-                : {}),
-            include_usage: true
-        };
-        return JSON.stringify(body);
-    } catch {
-        return bodyText;
-    }
-}
-
 /** Anthropic Proxy 可选任务流依赖。 */
 export type AnthropicProxyTaskDeps = LlsTaskRequestInjectionDeps;
 
@@ -283,7 +251,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
             this.taskDeps,
             { createTriggered: ctx.llsTaskCreateTriggered === true, modelName: modelId }
         );
-        const bodyText = requestAnthropicUsageStats(injectedRequest.bodyText);
+        const bodyText = injectedRequest.bodyText;
         // token 预算登记（仅估算 + 登记，不改写 body；阈值触发的压缩走响应侧 afterRecv）
         try {
             const sessionId = extractSessionId(parsedBody);

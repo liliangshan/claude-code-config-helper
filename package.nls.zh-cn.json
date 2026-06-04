@@ -46,6 +46,7 @@
     "configuration.chat.strictMcpConfig.description": "追加 --strict-mcp-config，让 Claude CLI 忽略 .mcp.json 等其它 MCP 配置来源，只使用本扩展注入的 servers。",
     "configuration.chat.includeVscodeMcpJson.description": "同时读取 VS Code 标准的 mcp.json 配置（工作区 .vscode/mcp.json 与用户级 mcp.json），让内置 Chat CLI 也能看到你为 VS Code 配置的 MCP server。顶层支持 `servers`（VS Code 风格）和 `mcpServers`（Claude CLI 风格）两种字段。",
     "configuration.chat.skills.description": "启动 Claude CLI 时允许的技能（skills）。与 SDK options 的 `skills` 字段一致（anthropic.claude-code 2.1.x）：filenameApp 为 'all' 表示允许全部；填名称数组则在 --allowedTools 中注入 Skill(name) 条目；留空或设为 null 表示不注入。",
+    "configuration.chat.browserTools.enabled.description": "在 VS Code desktop 中为内置 Chat 启用内置浏览器 MCP 工具。desktop 支持可用时默认开启；设为 false 可关闭。主 Claude CLI 可以打开页面、读取内容、截图、读取控制台输出，并在 Integrated Browser 中执行 Playwright/JavaScript。",
     "configuration.chat.currentModel.description": "内置 Chat 使用的当前模型。项目/工作区值优先于全局值，并通过 --model 传给 Claude CLI。",
     "configuration.chat.expertMode.project.enabled.description": "项目级按需专家开关（ask_expert MCP 工具）。开启且配置了专家模型后，主 Claude CLI 可看到 ask_expert 并在需要时把一个自包含问题委托给专家子请求；专家全过程在 Chat 面板可见，但不会写入主对话上下文。本项优先级高于全局设置；不设置时回退到 chat.expertMode.global.enabled。",
     "configuration.chat.expertMode.project.model.description": "项目级专家子请求使用的模型 id。空字符串表示继承全局值 chat.expertMode.global.model；若全局也为空则专家不可用，主模型直接作答。保存于工作区 .vscode/settings.json。",

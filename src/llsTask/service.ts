@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 
 import type { ConfigManager } from '../configManager';
 import { getLlsCcaiTaskTexts } from './messages';
+import type { TaskFlowStore } from './store';
 import type {
     LlsTaskSnapshot,
     LlsTaskStatus,
@@ -38,12 +39,50 @@ export class LlsTaskService implements vscode.Disposable {
     /** 上一次 active workflow 响应是否没有调用任务流状态更新工具。 */
     private workflowUpdateMissing = false;
 
+    /** 持久化防抖定时器句柄；undefined 表示当前没有待落盘的写。 */
+    private persistTimer: NodeJS.Timeout | undefined;
+
+    /** 恢复阶段标志：为 true 时 emitChange 跳过一次 persist，避免“载入即回写”。 */
+    private restoring = false;
+
     /**
      * 创建任务流服务。
      *
-    * @param configManager 配置管理器，用于读取 UI 语言。
+     * @param configManager 配置管理器，用于读取 UI 语言。
+     * @param store 可选的任务流持久化存储；省略时退化为纯内存模式（便于现有单测无需改桩）。
      */
-    public constructor(private readonly configManager: ConfigManager) {}
+    public constructor(
+        private readonly configManager: ConfigManager,
+        private readonly store?: TaskFlowStore
+    ) {}
+
+    /**
+     * 从磁盘恢复上次未完成的任务流到内存。
+     *
+     * 仅当存在持久化 store、读回的 workflow 非空且**未全部完成**时才恢复；
+     * 已完成的任务流没有续推价值，恢复反而会误弹「运行中」提示。
+     * 恢复过程用 {@link restoring} 标志跳过一次 persist，避免「载入即回写」。
+     *
+     * 任何异常都被 store 内部吞掉，restore 不抛出，绝不阻塞扩展激活。
+     *
+     * @returns 实际恢复出未完成任务流时返回 true，供调用方决定是否弹恢复对话框。
+     */
+    public async restore(): Promise<boolean> {
+        if (!this.store) return false;
+        const loaded = await this.store.load();
+        if (!loaded || !loaded.workflow) return false;
+        const tasks = loaded.workflow.tasks;
+        const allCompleted = tasks.length > 0 && tasks.every((task) => task.status === 'completed');
+        if (allCompleted) return false;
+        this.restoring = true;
+        try {
+            this.snapshot = loaded;
+            this.emitChange();
+        } finally {
+            this.restoring = false;
+        }
+        return true;
+    }
 
     /**
      * 获取当前任务流快照副本。
@@ -151,6 +190,11 @@ export class LlsTaskService implements vscode.Disposable {
         this.workflowCreationPending = false;
         this.workflowUpdateMissing = false;
         this.snapshot = { workflow: null, updatedAt: Date.now() };
+        if (this.persistTimer) {
+            clearTimeout(this.persistTimer);
+            this.persistTimer = undefined;
+        }
+        void this.store?.clear();
         this.emitChange();
     }
 
@@ -292,9 +336,14 @@ export class LlsTaskService implements vscode.Disposable {
     }
 
     /**
-     * 释放事件资源。
+     * 释放事件资源，并把待落盘的快照立即刷盘。
      */
     public dispose(): void {
+        if (this.persistTimer) {
+            clearTimeout(this.persistTimer);
+            this.persistTimer = undefined;
+            void this.store?.save(this.getSnapshot());
+        }
         this.changeEmitter.dispose();
     }
 
@@ -332,10 +381,29 @@ export class LlsTaskService implements vscode.Disposable {
     }
 
     /**
-     * 发送状态变更事件。
+     * 发送状态变更事件，并按需触发防抖落盘。
+     *
+     * 恢复阶段（{@link restoring} 为 true）只 fire 事件、跳过 persist，避免
+     * 「从磁盘载入即又写回磁盘」的无谓写。
      */
     private emitChange(): void {
         this.changeEmitter.fire(this.getSnapshot());
+        if (!this.restoring) this.persist();
+    }
+
+    /**
+     * 防抖落盘当前快照（250ms trailing）。
+     *
+     * 把一次批量 {@link updateTaskStatuses} 引发的连续 emitChange 合并为一次磁盘写。
+     * 无 store 时直接返回，退化为纯内存模式。
+     */
+    private persist(): void {
+        if (!this.store) return;
+        if (this.persistTimer) clearTimeout(this.persistTimer);
+        this.persistTimer = setTimeout(() => {
+            this.persistTimer = undefined;
+            void this.store?.save(this.getSnapshot());
+        }, 250);
     }
 
     /**

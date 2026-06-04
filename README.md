@@ -1,11 +1,18 @@
 # Claude Code Config Helper
 
-**Version:** 2.0.23
+**Version:** 3.0.0
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
 
 ## Highlights
 
+- Added a self-built **browser tool suite** for the main CLI (desktop only): `browser_open`, `browser_navigate`, `browser_get_content`, `browser_screenshot`, `browser_console`, and `browser_eval`, exposed through an in-process MCP server that delegates to VS Code's agent browser commands.
+- Added **task-flow persistence**: the CC task workflow snapshot is now cached to `.LLSOAI/task-flow.json` on every create/update, and is restored on the next VS Code launch with a "Resume unfinished task flow?" prompt so progress survives restarts.
+- Added a **past conversations panel** in the Chat header: list previous sessions, resume one to reload its full message history into the webview, and the header now shows the resumed session's title.
+- Replaced the Chat header **Copy source** and **Clear** buttons with a single **New chat** button that starts a fresh empty session.
+- Made session list/content retrieval **Windows-compatible**: project directory names are encoded exactly like the official Claude CLI (no truncation), `CLAUDE_CONFIG_DIR` is honored, and the read path matches the CLI's write `cwd`.
+- Fixed Chat model-picker refresh after adding or editing provider models: normal, expert, plan, review, and compaction model dropdowns now update without requiring a VS Code restart.
+- Anthropic direct providers no longer receive the OpenAI-style `stream_options.include_usage` request field; OpenAI-compatible streaming requests still keep usage options where supported.
 - Added token budget context compression for the built-in Chat: the token meter can trigger compression, large contexts auto-trigger compression near the configured threshold, tool call/tool result blocks are removed from the summary input, and the compressed summary is injected into a fresh hidden CLI session.
 - Native Claude `TodoWrite` todos now appear in a separate footer panel, independent from the CC task-flow Todo panel, so both can be shown and collapsed independently.
 - Tool call cards are collapsed by default: only the summary row (icon + name + status badge + chevron) is shown; clicking the row toggles the body. Collapse state is preserved across tool status updates.

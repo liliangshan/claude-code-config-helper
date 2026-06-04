@@ -11,7 +11,7 @@
     <div class="chat-root">
         <header class="chat-header">
             <div class="chat-header__main">
-                <h1>LLS CLAUDE CHAT</h1>
+                <h1 data-role="session-title" data-default-title="LLS CLAUDE CHAT">LLS CLAUDE CHAT</h1>
                 <p data-role="cli-status" data-i18n="statusInitializing">Initializing…</p>
                 <div class="chat-models" data-role="models-bar">
                     <span class="chat-models__item">
@@ -28,9 +28,9 @@
                 </div>
             </div>
             <div class="chat-actions">
-                <button type="button" data-role="copy-body-source" data-i18n="copySource" data-i18n-title="copySourceTitle" title="Copy current Webview body source">Copy source</button>
+                <button type="button" data-role="open-sessions" data-i18n="sessions" data-i18n-title="sessionsTitle" title="Past conversations">Sessions</button>
+                <button type="button" data-role="new-session" data-i18n="newSession" data-i18n-title="newSessionTitle" title="Start a new conversation">New chat</button>
                 <button type="button" data-role="restart-cli" data-i18n="restart" data-i18n-title="restartTitle" title="Restart CLI">Restart</button>
-                <button type="button" data-role="clear-session" data-i18n="clear" data-i18n-title="clearTitle" title="Clear chat history">Clear</button>
             </div>
         </header>
         <main class="chat-list" data-role="messages" aria-live="polite"></main>
@@ -129,6 +129,35 @@
             </footer>
         </form>
     </dialog>
+    <dialog class="task-restore" data-role="task-restore">
+        <div class="task-restore__body">
+            <header class="task-restore__header">
+                <h2 data-i18n="restoreTitle">Resume unfinished task flow?</h2>
+            </header>
+            <p class="task-restore__desc" data-role="task-restore-summary"></p>
+            <div class="task-restore__meta">
+                <span class="task-restore__name" data-role="task-restore-name"></span>
+                <span class="task-restore__progress" data-role="task-restore-progress"></span>
+            </div>
+            <footer class="task-restore__footer">
+                <button type="button" class="task-restore__btn task-restore__btn--ghost" data-role="task-restore-dismiss" data-i18n="restoreDismiss">Later</button>
+                <button type="button" class="task-restore__btn task-restore__btn--danger" data-role="task-restore-clear" data-i18n="restoreClear">Clear</button>
+                <button type="button" class="task-restore__btn task-restore__btn--primary" data-role="task-restore-continue" data-i18n="restoreContinue">Continue</button>
+            </footer>
+        </div>
+    </dialog>
+    <div class="session-panel" data-role="session-list" aria-hidden="true">
+        <div class="session-panel__backdrop" data-role="session-list-close"></div>
+        <div class="session-panel__drawer">
+            <header class="session-panel__header">
+                <h2 data-i18n="sessionsTitle">Past conversations</h2>
+                <button type="button" class="session-panel__close" data-role="session-list-close" aria-label="Close">×</button>
+            </header>
+            <div class="session-panel__content" data-role="session-list-content">
+                <p class="session-panel__empty" data-i18n="sessionsEmpty">No past conversations found.</p>
+            </div>
+        </div>
+    </div>
     <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
 </body>
 </html>
