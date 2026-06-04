@@ -225,6 +225,14 @@ export type ExtensionToWebview =
           /** 扩展设置解析后的实际界面语言。 */
           language: ChatUiLanguage;
       }
+    | {
+          /** 通知 Webview 浏览器工具自动放行（chat.tools.global.autoApprove）状态。 */
+          type: 'browser/autoApproveState';
+          /** 浏览器工具是否可用（桌面端 + 已开启 enableChatTools）。 */
+          supported: boolean;
+          /** chat.tools.global.autoApprove 是否已开启。 */
+          enabled: boolean;
+      }
     | { type: 'session/init'; messages: ChatMessage[]; cliPath: string }
     | { type: 'session/title'; title: string; sessionId: string }
     | { type: 'sessions/list/result'; sessions: SessionListItem[] }
@@ -557,6 +565,10 @@ export type WebviewToExtension =
     | {
           /** 打开 LLS CCAI / CC 任务流菜单，用于替代原状态栏中的 CC 任务流按钮。 */
           type: 'taskFlow/open';
+      }
+    | {
+          /** 请求开启 chat.tools.global.autoApprove，免去每次「Open Browser Page?」确认。 */
+          type: 'browser/enableAutoApprove';
       }
     | {
           /**

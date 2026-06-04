@@ -7,7 +7,7 @@ import { promises as fs } from 'fs';
 
 import { StreamJsonCliAdapter, type ParsedCliEvent, type ToolPermissionRequestEvent } from './chat/cli/cliAdapter';
 import { createBrowserToolRelayHandler, BROWSER_TOOL_RELAY_PORT_ENV } from './browserTools/httpBridge';
-import { BROWSER_MCP_SERVER_NAME, VSCODE_BROWSER_COMMANDS } from './browserTools/tools';
+import { BROWSER_MCP_SERVER_NAME } from './browserTools/tools';
 import { ChatCliConfigService } from './chat/cli/cliConfig';
 import type { ChatCliConfig } from './chat/cli/types';
 import { CliProcess } from './chat/cli/cliProcess';
@@ -2095,38 +2095,56 @@ function logBrowserMcpInjection(config: ChatCliConfig): void {
     }));
 }
 
-async function registerBrowserCommandWrappers(context: vscode.ExtensionContext): Promise<void> {
-    const existing = new Set(await vscode.commands.getCommands(true));
-    if (!existing.has(VSCODE_BROWSER_COMMANDS.open)) {
-        context.subscriptions.push(vscode.commands.registerCommand(VSCODE_BROWSER_COMMANDS.open, async (url: string) => {
-            return openBrowserPageFallback(url);
-        }));
-        Logger.info(`Browser command wrapper 已注册：${VSCODE_BROWSER_COMMANDS.open}`);
-    }
-    await promptEnableBrowserChatToolsIfNeeded();
+async function promptEnableBrowserChatToolsIfNeeded(): Promise<void> {
+    // 不再使用任何阻塞式弹窗（会卡住激活/加载）。浏览器相关设置统一由 Chat 输入框
+    // 下方「CC 任务流」按钮后的内联提示驱动：用户点击后一次性开启所需设置。
+    await postBrowserAutoApproveState();
 }
 
-async function promptEnableBrowserChatToolsIfNeeded(): Promise<void> {
-    if (!isVsCodeAtLeast(1, 110)) {
-        Logger.info(`Browser Chat Tools 设置检测跳过：VS Code ${vscode.version} < 1.110`);
-        return;
-    }
-    const config = vscode.workspace.getConfiguration('workbench.browser');
-    if (config.get<boolean>('enableChatTools', false) === true) {
-        Logger.info('Browser Chat Tools 设置已开启：workbench.browser.enableChatTools=true');
-        return;
-    }
-    const action = await vscode.window.showInformationMessage(
-        'LLS CCAI 的浏览器读取/自动化工具需要开启 VS Code 设置 workbench.browser.enableChatTools。是否现在开启？',
-        '开启',
-        '稍后'
-    );
-    if (action !== '开启') {
-        Logger.info('用户暂未开启 Browser Chat Tools 设置');
-        return;
-    }
-    await config.update('enableChatTools', true, vscode.ConfigurationTarget.Global);
-    Logger.info('Browser Chat Tools 设置已写入全局：workbench.browser.enableChatTools=true');
+const TOOL_AUTO_APPROVE_KEY = 'chat.tools.global.autoApprove';
+const BROWSER_ENABLE_CHAT_TOOLS_KEY = 'workbench.browser.enableChatTools';
+const VS_CODE_DESKTOP_UI_KIND = 1;
+
+/** 是否应在 Chat 中提供「免去浏览器确认」提示：仅要求 VS Code ≥ 1.110 且为桌面端。 */
+function isBrowserToolsSupported(): boolean {
+    if (!isVsCodeAtLeast(1, 110)) return false;
+    return vscode.env.uiKind === VS_CODE_DESKTOP_UI_KIND;
+}
+
+/** 浏览器自动放行所需的两项设置是否都已开启。 */
+function isBrowserFullyAutoApproved(): boolean {
+    const root = vscode.workspace.getConfiguration();
+    const autoApprove = root.get<boolean>(TOOL_AUTO_APPROVE_KEY, false) === true;
+    const enableChatTools = root.get<boolean>(BROWSER_ENABLE_CHAT_TOOLS_KEY, false) === true;
+    return autoApprove && enableChatTools;
+}
+
+/**
+ * 向 Chat Webview 推送浏览器工具自动放行状态，驱动 CC 任务流后的「免去浏览器确认」提示按钮显隐。
+ *
+ * 不再使用阻塞式弹窗（会卡住激活/加载）；改为前端在任务流按钮旁内联提示，用户点击后再开启。
+ */
+async function postBrowserAutoApproveState(): Promise<void> {
+    await chatViewHost?.postMessage({
+        type: 'browser/autoApproveState',
+        supported: isBrowserToolsSupported(),
+        enabled: isBrowserFullyAutoApproved()
+    });
+}
+
+/**
+ * 应前端「免去浏览器确认」提示点击，一次性开启浏览器工具所需的两项 VS Code 设置并回推最新状态。
+ *
+ * - workbench.browser.enableChatTools：开启内置浏览器工具；
+ * - chat.tools.global.autoApprove：免去每次「Open Browser Page?」确认（会放行所有 agent 工具，
+ *   含写文件、跑命令），因此仅在用户主动点击提示时才写入。
+ */
+async function enableBrowserAutoApprove(): Promise<void> {
+    const root = vscode.workspace.getConfiguration();
+    await root.update(BROWSER_ENABLE_CHAT_TOOLS_KEY, true, vscode.ConfigurationTarget.Global);
+    await root.update(TOOL_AUTO_APPROVE_KEY, true, vscode.ConfigurationTarget.Global);
+    Logger.info('已开启浏览器工具自动放行（来自 Chat 提示点击）：enableChatTools=true, chat.tools.global.autoApprove=true');
+    await postBrowserAutoApproveState();
 }
 
 function isVsCodeAtLeast(major: number, minor: number): boolean {
@@ -2134,25 +2152,6 @@ function isVsCodeAtLeast(major: number, minor: number): boolean {
     const currentMajor = Number.isFinite(parts[0]) ? parts[0] : 0;
     const currentMinor = Number.isFinite(parts[1]) ? parts[1] : 0;
     return currentMajor > major || (currentMajor === major && currentMinor >= minor);
-}
-
-async function openBrowserPageFallback(url: string): Promise<{ command: string; url: string }> {
-    const target = typeof url === 'string' ? url.trim() : '';
-    if (!target) {
-        throw new Error('url is required');
-    }
-    const failures: string[] = [];
-    for (const command of ['browser.openIntegratedBrowser', 'workbench.action.openIntegratedBrowser', 'simpleBrowser.show']) {
-        try {
-            await vscode.commands.executeCommand(command, target);
-            return { command, url: target };
-        } catch (err) {
-            failures.push(`${command}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-    }
-    Logger.warn(`Browser open fallback 未找到内置浏览器命令，改用外部浏览器：${failures.join('; ')}`);
-    await vscode.env.openExternal(vscode.Uri.parse(target));
-    return { command: 'vscode.env.openExternal', url: target };
 }
 
 /**
@@ -2424,6 +2423,7 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
             await postChatTaskFlowStatus();
             await postActiveEditorAttachmentToChat();
             await maybePostTaskFlowRestorePrompt();
+            await postBrowserAutoApproveState();
             return;
         case 'user/send':
             {
@@ -2462,6 +2462,9 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
             return;
         case 'taskFlow/open':
             await openLlsCcaiTaskMenu();
+            return;
+        case 'browser/enableAutoApprove':
+            await enableBrowserAutoApprove();
             return;
         case 'taskFlow/restoreChoice':
             await handleTaskFlowRestoreChoice(message.choice);
@@ -4777,6 +4780,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     Logger.warn(`刷新 Chat 权限模式失败：${err instanceof Error ? err.message : String(err)}`);
                 });
             }
+            if (
+                event.affectsConfiguration(TOOL_AUTO_APPROVE_KEY) ||
+                event.affectsConfiguration('workbench.browser.enableChatTools')
+            ) {
+                void postBrowserAutoApproveState().catch((err: unknown) => {
+                    Logger.warn(`刷新浏览器自动放行状态失败：${err instanceof Error ? err.message : String(err)}`);
+                });
+            }
         })
     );
 
@@ -4812,7 +4823,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         })
     );
 
-    await registerBrowserCommandWrappers(context);
+    await promptEnableBrowserChatToolsIfNeeded();
 
     // 当前活动编辑器选区变化时，按 Claude Code 方式同步行号/选区上下文。
     context.subscriptions.push(

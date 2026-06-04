@@ -2002,6 +2002,23 @@ select:focus-visible {
     transform: translateY(0);
 }
 
+/* CC 任务流后的「免去浏览器确认」提示按钮：用警示色描边以区别普通快捷按钮。 */
+.composer-shortcut-button--hint {
+    border-color: var(--lls-warning, #d2a106);
+    color: var(--lls-warning, #d2a106);
+}
+
+.composer-shortcut-button--hint::before {
+    content: '⚡';
+    margin-right: 4px;
+}
+
+.composer-shortcut-button--hint:hover {
+    background: var(--lls-warning, #d2a106);
+    border-color: var(--lls-warning, #d2a106);
+    color: var(--lls-bg, #1e1e1e);
+}
+
 /* 运行中禁用底部控件：模型选择、权限模式、专家模型、CC 任务流。
    通过原生 :disabled 命中即可，is-running-disabled 仅作语义标记。 */
 .composer-shortcut-button:disabled,

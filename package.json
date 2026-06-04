@@ -2,7 +2,7 @@
     "name": "claude-code-config-helper",
     "displayName": "%extension.displayName%",
     "description": "%extension.description%",
-    "version": "3.0.1",
+    "version": "3.1.0",
     "publisher": "liliangshan",
     "license": "MIT",
     "repository": {

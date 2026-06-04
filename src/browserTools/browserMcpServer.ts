@@ -1,6 +1,6 @@
 /** @file 浏览器工具 MCP server。 */
 
-import { BrowserToolHost, type BrowserToolResult } from './browserToolHost';
+import { BrowserToolHost, type BrowserToolExecutor, type BrowserToolResult } from './browserToolHost';
 import { createBrowserHttpHost, BROWSER_TOOL_RELAY_PORT_ENV } from './httpBridge';
 import { BROWSER_TOOL_SCHEMAS, isBrowserToolName } from './tools';
 
@@ -31,7 +31,7 @@ interface JsonRpcResponse {
 /** BrowserMcpServer 启动选项。 */
 export interface BrowserMcpServerOptions {
     /** 浏览器工具宿主执行器。 */
-    host?: BrowserToolHost;
+    host?: BrowserToolExecutor;
     /** 标准输入；缺省使用 process.stdin。 */
     stdin?: NodeJS.ReadableStream;
     /** 标准输出；缺省使用 process.stdout。 */
@@ -41,7 +41,7 @@ export interface BrowserMcpServerOptions {
 /** 一个最小 MCP stdio JSON-RPC server，暴露 browser_* 工具全集。 */
 export class BrowserMcpServer {
     /** 实际执行浏览器工具的宿主执行器。 */
-    private readonly host: BrowserToolHost;
+    private readonly host: BrowserToolExecutor;
 
     /** 标准输入流。 */
     private readonly stdin: NodeJS.ReadableStream;

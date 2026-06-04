@@ -6,13 +6,13 @@ export const BROWSER_MCP_SERVER_NAME = 'llsccaiBrowser' as const;
 /** Claude CLI 暴露给主模型时看到的完整工具名前缀。 */
 export const BROWSER_FULL_TOOL_PREFIX = `mcp__${BROWSER_MCP_SERVER_NAME}__` as const;
 
-/** 底层调用的 VS Code agent 浏览器命令名。 */
-export const VSCODE_BROWSER_COMMANDS = {
-    open: 'openBrowserPage',
-    navigate: 'navigatePage',
-    read: 'readPage',
-    screenshot: 'screenshotPage',
-    eval: 'runPlaywrightCode'
+/** 底层调用的 VS Code 内置 Language Model 浏览器工具名（snake_case，实测）。 */
+export const LM_BROWSER_TOOLS = {
+    open: 'open_browser_page',
+    navigate: 'navigate_page',
+    read: 'read_page',
+    screenshot: 'screenshot_page',
+    eval: 'run_playwright_code'
 } as const;
 
 /** 工具裸名（未加 mcp__<server>__ 前缀）。 */

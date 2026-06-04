@@ -1,19 +1,18 @@
-/** @file 浏览器工具宿主侧执行器。 */
+/** @file 浏览器工具宿主侧执行器（基于 vscode.lm.invokeTool 调用内置浏览器工具）。 */
 
 import type * as vscode from 'vscode';
 
-import { VSCODE_BROWSER_COMMANDS, isBrowserToolName, type BrowserToolName } from './tools';
+import { LM_BROWSER_TOOLS, isBrowserToolName, type BrowserToolName } from './tools';
+
+/** 执行浏览器工具的统一接口（真实宿主与 HTTP 转发宿主都实现）。 */
+export interface BrowserToolExecutor {
+    /** 执行一个浏览器工具并返回 MCP 结果。 */
+    execute(name: BrowserToolName, args?: Record<string, unknown>): Promise<BrowserToolResult>;
+}
 
 const VS_CODE_DESKTOP_UI_KIND = 1;
-const GET_CONTENT_SCRIPT = `return await page.evaluate(() => ({ title: document.title, url: location.href, text: document.body?.innerText || '', html: document.documentElement?.outerHTML || '' }))`;
-const GET_CONSOLE_SCRIPT = `return await page.evaluate(() => ({ title: document.title, url: location.href, note: 'Console logs are only available when VS Code exposes them through the browser agent runtime.' }))`;
-const SCREENSHOT_SCRIPT = `return await page.screenshot({ type: 'png', fullPage: false })`;
-const OPEN_BROWSER_COMMAND_CANDIDATES = [
-    'openBrowserPage',
-    'browser.openIntegratedBrowser',
-    'workbench.action.openIntegratedBrowser',
-    'simpleBrowser.show'
-] as const;
+const PAGE_ID_RE = /Page ID:\s*([0-9a-fA-F-]{36})/;
+const NO_PAGE_MESSAGE = 'No browser page is open. Call browser_open first.';
 
 /** MCP tool result 文本内容块。 */
 export interface BrowserTextContent {
@@ -44,12 +43,22 @@ export interface BrowserToolResult {
     content: BrowserToolContent[];
 }
 
-/** 宿主侧执行 vscode.commands 浏览器命令的最小接口。 */
-export interface BrowserCommandExecutor {
-    /** 执行 VS Code 命令并返回原始结果。 */
-    executeCommand<T = unknown>(command: string, ...args: unknown[]): Thenable<T>;
-    /** 枚举已注册命令；缺省时会直接尝试候选命令。 */
-    getCommands?(filterInternal?: boolean): Thenable<string[]>;
+/** 一次性 cancellation token 的最小形态。 */
+export interface DisposableToken {
+    /** 传给 invokeTool 的 token。 */
+    token: unknown;
+    /** 释放底层资源。 */
+    dispose(): void;
+}
+
+/** 调用 VS Code Language Model 工具的最小接口。 */
+export interface LmToolInvoker {
+    /** 调用内置/已注册的 LM 工具。 */
+    invokeTool(
+        name: string,
+        options: { input: Record<string, unknown>; toolInvocationToken?: unknown },
+        token?: unknown
+    ): Thenable<unknown>;
 }
 
 /** 宿主侧读取 VS Code UI kind 的最小接口。 */
@@ -60,27 +69,36 @@ export interface BrowserEnvironment {
 
 /** BrowserToolHost 构造参数。 */
 export interface BrowserToolHostOptions {
-    /** VS Code 命令执行器。 */
-    commands?: BrowserCommandExecutor;
+    /** LM 工具调用器。 */
+    lm?: LmToolInvoker;
     /** VS Code 环境信息。 */
     env?: BrowserEnvironment;
+    /** 创建一次性 cancellation token。 */
+    createCancellation?: () => DisposableToken;
 }
 
-/** 在扩展宿主进程执行浏览器工具并序列化为 MCP tool result。 */
-export class BrowserToolHost {
-    /** VS Code 命令执行器。 */
-    private readonly commands: BrowserCommandExecutor;
+/** 在扩展宿主进程通过 vscode.lm.invokeTool 执行浏览器工具并序列化为 MCP tool result。 */
+export class BrowserToolHost implements BrowserToolExecutor {
+    /** LM 工具调用器。 */
+    private readonly lm: LmToolInvoker;
 
     /** VS Code 环境信息。 */
     private readonly env: BrowserEnvironment;
 
+    /** 创建一次性 cancellation token。 */
+    private readonly createCancellation: () => DisposableToken;
+
+    /** 当前跟踪的浏览器页面 id（最近一次 open 的结果）。 */
+    private currentPageId?: string;
+
     /** 创建 BrowserToolHost。 */
     public constructor(options: BrowserToolHostOptions = {}) {
-        this.commands = options.commands ?? loadVscodeCommands();
+        this.lm = options.lm ?? loadVscodeLm();
         this.env = options.env ?? loadVscodeEnv();
+        this.createCancellation = options.createCancellation ?? loadVscodeCancellation();
     }
 
-    /** 按浏览器工具名分派到底层 VS Code agent 浏览器命令。 */
+    /** 按浏览器工具名分派到底层 VS Code 内置 LM 浏览器工具。 */
     public async execute(name: BrowserToolName, args: Record<string, unknown> = {}): Promise<BrowserToolResult> {
         if (!isBrowserToolName(name)) {
             return this.error(`Unknown tool: ${String(name)}`);
@@ -88,20 +106,23 @@ export class BrowserToolHost {
         if (this.env.uiKind !== VS_CODE_DESKTOP_UI_KIND) {
             return this.error('Browser tools are only available in VS Code desktop.');
         }
+        if (typeof this.lm?.invokeTool !== 'function') {
+            return this.error('vscode.lm.invokeTool is unavailable. Update VS Code to 1.110+ and enable workbench.browser.enableChatTools.');
+        }
         try {
             switch (name) {
                 case 'browser_open':
                     return await this.runOpen(args);
                 case 'browser_navigate':
-                    return await this.runRequiredStringArg(VSCODE_BROWSER_COMMANDS.navigate, args, 'url');
+                    return await this.runNavigate(args);
                 case 'browser_get_content':
-                    return await this.runText(VSCODE_BROWSER_COMMANDS.eval, GET_CONTENT_SCRIPT);
+                    return await this.runReadPage();
                 case 'browser_console':
-                    return await this.runText(VSCODE_BROWSER_COMMANDS.eval, GET_CONSOLE_SCRIPT);
+                    return await this.runConsole();
                 case 'browser_screenshot':
                     return await this.runScreenshot();
                 case 'browser_eval':
-                    return await this.runRequiredStringArg(VSCODE_BROWSER_COMMANDS.eval, args, 'script');
+                    return await this.runEval(args);
             }
         } catch (err) {
             return this.error(err instanceof Error ? err.message : String(err));
@@ -113,101 +134,89 @@ export class BrowserToolHost {
         if (!url) {
             return this.error('`url` is required and must be a non-empty string.');
         }
-        const command = await this.pickCommand(OPEN_BROWSER_COMMAND_CANDIDATES);
-        if (!command) {
-            return this.error('No VS Code browser open command is available. Enable the VS Code Integrated Browser or Simple Browser extension.');
+        const text = await this.invokeText(LM_BROWSER_TOOLS.open, { url });
+        const pageId = PAGE_ID_RE.exec(text)?.[1];
+        if (pageId) {
+            this.currentPageId = pageId;
         }
-        const raw = await this.commands.executeCommand<unknown>(command, url);
-        const suffix = command === VSCODE_BROWSER_COMMANDS.open
-            ? ''
-            : `\nOpened via fallback command \`${command}\`; browser automation commands such as screenshot/eval may not be available in this VS Code build.`;
-        return { content: [{ type: 'text', text: this.stringify(raw) + suffix }] };
+        return { content: [{ type: 'text', text }] };
     }
 
-    /** 执行需要非空字符串参数的命令。 */
-    private async runRequiredStringArg(
-        command: string,
-        args: Record<string, unknown>,
-        key: string
-    ): Promise<BrowserToolResult> {
-        const value = typeof args[key] === 'string' ? args[key].trim() : '';
-        if (!value) {
-            return this.error(`\`${key}\` is required and must be a non-empty string.`);
+    private async runNavigate(args: Record<string, unknown>): Promise<BrowserToolResult> {
+        const url = typeof args.url === 'string' ? args.url.trim() : '';
+        if (!url) {
+            return this.error('`url` is required and must be a non-empty string.');
         }
-        return this.runText(command, value);
-    }
-
-    private async pickCommand(candidates: readonly string[]): Promise<string | undefined> {
-        if (!this.commands.getCommands) {
-            return candidates[0];
+        const pageId = this.requirePageId();
+        if (!pageId) {
+            return this.error(NO_PAGE_MESSAGE);
         }
-        const available = new Set(await this.commands.getCommands(true));
-        return candidates.find((command) => available.has(command));
+        const text = await this.invokeText(LM_BROWSER_TOOLS.navigate, { pageId, type: 'url', url });
+        return { content: [{ type: 'text', text }] };
     }
 
-    /** 执行命令并将返回值序列化为文本内容。 */
-    private async runText(command: string, ...cmdArgs: unknown[]): Promise<BrowserToolResult> {
-        const raw = await this.commands.executeCommand<unknown>(command, ...cmdArgs);
-        return { content: [{ type: 'text', text: this.stringify(raw) }] };
+    private async runReadPage(): Promise<BrowserToolResult> {
+        const pageId = this.requirePageId();
+        if (!pageId) {
+            return this.error(NO_PAGE_MESSAGE);
+        }
+        const text = await this.invokeText(LM_BROWSER_TOOLS.read, { pageId });
+        return { content: [{ type: 'text', text }] };
     }
 
-    /** 执行截图命令并将返回值序列化为 MCP image content。 */
+    private async runConsole(): Promise<BrowserToolResult> {
+        const pageId = this.requirePageId();
+        if (!pageId) {
+            return this.error(NO_PAGE_MESSAGE);
+        }
+        const text = await this.invokeText(LM_BROWSER_TOOLS.read, { pageId });
+        return { content: [{ type: 'text', text: extractRecentEvents(text) }] };
+    }
+
     private async runScreenshot(): Promise<BrowserToolResult> {
-        const raw = await this.commands.executeCommand<unknown>(VSCODE_BROWSER_COMMANDS.eval, SCREENSHOT_SCRIPT);
-        const image = this.extractImage(raw);
-        if (!image) {
-            return this.error('Screenshot command returned no image data.');
+        const pageId = this.requirePageId();
+        if (!pageId) {
+            return this.error(NO_PAGE_MESSAGE);
         }
-        return { content: [{ type: 'image', data: image.data, mimeType: image.mimeType }] };
+        const raw = await this.invoke(LM_BROWSER_TOOLS.screenshot, { pageId });
+        const image = extractImage(raw);
+        if (image) {
+            return { content: [{ type: 'image', data: image.data, mimeType: image.mimeType }] };
+        }
+        const text = extractText(raw).trim();
+        return this.error(text || 'Screenshot returned no image data.');
     }
 
-    /** 从底层截图命令返回值中提取 base64 图片。 */
-    private extractImage(raw: unknown): { data: string; mimeType: string } | undefined {
-        if (typeof raw === 'string' && raw.trim().length > 0) {
-            return { data: this.stripDataUrlPrefix(raw.trim()), mimeType: this.inferMimeType(raw) };
+    private async runEval(args: Record<string, unknown>): Promise<BrowserToolResult> {
+        const code = typeof args.script === 'string' ? args.script.trim() : '';
+        if (!code) {
+            return this.error('`script` is required and must be a non-empty string.');
         }
-        if (!raw || typeof raw !== 'object') {
-            return undefined;
+        const pageId = this.requirePageId();
+        if (!pageId) {
+            return this.error(NO_PAGE_MESSAGE);
         }
-        const source = raw as Record<string, unknown>;
-        const data = typeof source.data === 'string'
-            ? source.data
-            : typeof source.base64 === 'string'
-                ? source.base64
-                : undefined;
-        if (!data || data.trim().length === 0) {
-            return undefined;
-        }
-        const mimeType = typeof source.mimeType === 'string' && source.mimeType.trim().length > 0
-            ? source.mimeType.trim()
-            : this.inferMimeType(data);
-        return { data: this.stripDataUrlPrefix(data.trim()), mimeType };
+        const text = await this.invokeText(LM_BROWSER_TOOLS.eval, { pageId, code });
+        return { content: [{ type: 'text', text }] };
     }
 
-    /** 去掉 data URL 头部，只保留 base64 数据。 */
-    private stripDataUrlPrefix(data: string): string {
-        const match = /^data:[^;]+;base64,(.*)$/i.exec(data);
-        return match ? match[1] : data;
+    /** 返回当前 pageId，不存在时返回 undefined。 */
+    private requirePageId(): string | undefined {
+        return this.currentPageId;
     }
 
-    /** 从 data URL 粗略推断 MIME 类型，无法推断时使用 image/png。 */
-    private inferMimeType(data: string): string {
-        const match = /^data:([^;]+);base64,/i.exec(data);
-        return match ? match[1] : 'image/png';
+    /** 调用 LM 工具并把结果内容拼成文本。 */
+    private async invokeText(name: string, input: Record<string, unknown>): Promise<string> {
+        return extractText(await this.invoke(name, input));
     }
 
-    /** 将未知返回值序列化为稳定文本。 */
-    private stringify(raw: unknown): string {
-        if (typeof raw === 'string') {
-            return raw;
-        }
-        if (raw === undefined) {
-            return 'null';
-        }
+    /** 调用 LM 工具，返回原始 LanguageModelToolResult。 */
+    private async invoke(name: string, input: Record<string, unknown>): Promise<unknown> {
+        const cancellation = this.createCancellation();
         try {
-            return JSON.stringify(raw ?? null);
-        } catch (err) {
-            return err instanceof Error ? err.message : String(raw);
+            return await this.lm.invokeTool(name, { input, toolInvocationToken: undefined }, cancellation.token);
+        } finally {
+            cancellation.dispose();
         }
     }
 
@@ -217,12 +226,104 @@ export class BrowserToolHost {
     }
 }
 
-function loadVscodeCommands(): BrowserCommandExecutor {
+/** 从 LanguageModelToolResult 抽取全部文本内容块拼接成字符串。 */
+function extractText(raw: unknown): string {
+    if (typeof raw === 'string') {
+        return raw;
+    }
+    const parts = toContentArray(raw);
+    const texts: string[] = [];
+    for (const part of parts) {
+        if (typeof part === 'string') {
+            texts.push(part);
+            continue;
+        }
+        if (part && typeof part === 'object') {
+            const value = (part as { value?: unknown }).value;
+            if (typeof value === 'string') {
+                texts.push(value);
+            }
+        }
+    }
+    return texts.join('\n');
+}
+
+/** 从 LanguageModelToolResult 抽取第一个二进制图片部件并 base64 编码。 */
+function extractImage(raw: unknown): { data: string; mimeType: string } | undefined {
+    for (const part of toContentArray(raw)) {
+        if (!part || typeof part !== 'object') {
+            continue;
+        }
+        const source = part as { data?: unknown; mimeType?: unknown };
+        const base64 = toBase64(source.data);
+        if (!base64) {
+            continue;
+        }
+        const mimeType = typeof source.mimeType === 'string' && source.mimeType.trim().length > 0
+            ? source.mimeType.trim()
+            : 'image/jpeg';
+        return { data: base64, mimeType };
+    }
+    return undefined;
+}
+
+/** 把 LanguageModelToolResult / 数组 / 单值统一成内容块数组。 */
+function toContentArray(raw: unknown): unknown[] {
+    if (Array.isArray(raw)) {
+        return raw;
+    }
+    if (raw && typeof raw === 'object') {
+        const content = (raw as { content?: unknown }).content;
+        if (Array.isArray(content)) {
+            return content;
+        }
+    }
+    return raw === undefined || raw === null ? [] : [raw];
+}
+
+/** 把多种二进制形态（Uint8Array / Buffer / {type:'Buffer',data} / VSBuffer.buffer）转成 base64，非二进制返回空。 */
+function toBase64(data: unknown): string {
+    if (!data) {
+        return '';
+    }
+    if (data instanceof Uint8Array) {
+        return data.byteLength > 0 ? Buffer.from(data).toString('base64') : '';
+    }
+    if (typeof data === 'object') {
+        const obj = data as { data?: unknown; buffer?: unknown };
+        if (Array.isArray(obj.data) && obj.data.length > 0) {
+            return Buffer.from(obj.data as number[]).toString('base64');
+        }
+        if (obj.buffer instanceof Uint8Array && obj.buffer.byteLength > 0) {
+            return Buffer.from(obj.buffer).toString('base64');
+        }
+    }
+    return '';
+}
+
+/** 从 read_page 文本里截取 `Recent events:` 段，没有则给出占位说明。 */
+function extractRecentEvents(text: string): string {
+    const idx = text.indexOf('Recent events:');
+    if (idx < 0) {
+        return 'No console events recorded for the current page.';
+    }
+    const rest = text.slice(idx);
+    const snapshotIdx = rest.indexOf('\nSnapshot:');
+    return (snapshotIdx >= 0 ? rest.slice(0, snapshotIdx) : rest).trim();
+}
+
+function loadVscodeLm(): LmToolInvoker {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require('vscode').commands as BrowserCommandExecutor;
+    return require('vscode').lm as LmToolInvoker;
 }
 
 function loadVscodeEnv(): BrowserEnvironment {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     return require('vscode').env as BrowserEnvironment;
+}
+
+function loadVscodeCancellation(): () => DisposableToken {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const vscodeApi = require('vscode') as { CancellationTokenSource: new () => { token: unknown; dispose(): void } };
+    return () => new vscodeApi.CancellationTokenSource();
 }

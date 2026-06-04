@@ -10,6 +10,53 @@ VS Code 里「在编辑区打开网页」有两套东西：
 - **Simple Browser**（老）——基于 `<iframe>`，跨平台、最稳，但不能登录认证、Google/GitHub 等站点打不开。
 - **Integrated Browser**（新，1.109 引入）——真正的内嵌浏览器（仅 desktop），可登录、带 DevTools、可调试、可被 agent 操作。
 
+## 实测结论（本扩展宿主探测，2026-06-04，VS Code 含 Copilot agent）
+
+> 在扩展宿主里枚举 `vscode.lm.tools`（87 个）与 `vscode.commands.getCommands(true)`（2887 个）实测，下列为硬结论：
+
+**A. agent 浏览器工具是 `vscode.lm` 的 Language Model Tool，不是命令。** 真实工具名是 **snake_case**：
+
+| 能力 | LM tool 名（实测） | 描述（节选） |
+| --- | --- | --- |
+| 打开页面 | `open_browser_page` | Open a new browser page in the integrated browser at the given URL. |
+| 导航 | `navigate_page` | Navigate a browser page by URL, history, or reload. |
+| 读页面 | `read_page` | Get a snapshot of the current browser page state. **比 screenshot 更好用**。 |
+| 截图 | `screenshot_page` | Capture a screenshot；不能基于截图做操作，要读状态用 `read_page`。 |
+| 点击 | `click_element` | Click on an element. |
+| 输入 | `type_in_page` | Type text or press keys. |
+| 悬停 | `hover_element` | — |
+| 拖拽 | `drag_element` | — |
+| 对话框 | `handle_dialog` | — |
+| Playwright | `run_playwright_code` | Run a Playwright snippet；**仅当其它工具不够时才用**。 |
+| 抓网页正文 | `copilot_fetchWebPage` | Fetch main content of a web page（非内嵌浏览器，纯抓取）。 |
+
+调用入口是 **`vscode.lm.invokeTool(name, { input, toolInvocationToken }, token)`**，不是 `vscode.commands.executeCommand`。
+
+**B. 这些 camelCase 名字作为命令全部不存在**（旧代码里 `executeCommand('openBrowserPage'/'runPlaywrightCode'/…)` 这条路是死的）：
+`openBrowserPage`、`navigatePage`、`readPage`、`screenshotPage`、`runPlaywrightCode`、`browser.openIntegratedBrowser`、`workbench.action.openIntegratedBrowser`、`simpleBrowser.show` —— 实测 **全部 `=> false`**（连 `simpleBrowser.show` 在该构建里也没有）。
+
+**C. 真实存在的是一组 `workbench.action.browser.*` UI 命令**（可 `executeCommand`）：
+`workbench.action.browser.open` / `.openOrList` / `.newTab` / `.goBack` / `.goForward` / `.reload` / `.hardReload` / `.addScreenshotToChat` / `.addFullPageScreenshotToChat` / `.addConsoleLogsToChat` / `.addElementToChat` / `.toggleDevTools` / `.pickDevicePreset` / `.showEmulationToolbar` / `.setUserAgent` / `.zoomIn` / `.zoomOut` …
+这些是**打开/导航/把截图或 console 加到 chat** 的 UI 动作；**读 DOM、跑 Playwright 没有对应命令，只能走 LM tool**。
+
+**D. 已验证（决定性）：方案 A 成立——外部无 chat token 也能 `vscode.lm.invokeTool` 内置浏览器工具。**
+实测（`toolInvocationToken: undefined`，扩展激活上下文，非 chat 请求）：
+
+- `invokeTool('open_browser_page', { input: { url } })` → **成功**。返回文本以 `Page ID: <uuid>` 开头，后跟 `Summary: / Page Title / URL / Snapshot:`（无障碍树，节点带 `[ref=eN]`、`[cursor=pointer]`，比裸 DOM 更适合点击定位）。
+- `invokeTool('read_page', { input: { pageId } })` → **成功**。返回 `Page Title / URL / Recent events（含 console 报错、requestFailed 等）/ Snapshot`。**`browser_console` 也应复用它**。
+- `invokeTool('screenshot_page', { input: { pageId } })` → **成功**。返回值是 VS Code 序列化的二进制部件，形如 `{"$mid":24,"mimeType":"image/jpeg","data":<bytes>}`——**MIME 是 `image/jpeg`，且数据不能 `JSON.stringify`**，要从结果内容块里取 `data`（Uint8Array/VSBuffer）再 base64。
+
+**关键入参名：`pageId`**（实测四种候选 `pageId`/`page_id`/`id`/`page` 中，仅 `pageId` 成功；其余 `read_page` 抛 `Cannot read properties of undefined (reading 'toString')`、`screenshot_page` 回 `No page ID provided. Use 'open_browser_page' first.`）。
+
+**调用约定（已坐实）：**
+1. `open_browser_page { url }` → 拿到 `pageId`（宿主侧需缓存为「当前页」）。
+2. 之后所有针对页面的工具都要带 `{ pageId }`：`read_page` / `screenshot_page` / `navigate_page` / `click_element` / `type_in_page` / `run_playwright_code` …
+3. 结果是 `LanguageModelToolResult`，`.content[]` 里是 `LanguageModelTextPart`（取 `.value`）或二进制图片部件（取 `.data` + `.mimeType`）。
+
+**改造结论：** 重写 `src/browserTools/browserToolHost.ts`——把 `commands.executeCommand(camelCase)` 全部换成 `vscode.lm.invokeTool(snake_case, { input })`，宿主维护 `currentPageId`，正确解析文本/图片内容块；删除失效的命令 wrapper 兜底与错误的 `VSCODE_BROWSER_COMMANDS` camelCase 映射。
+
+**待补 inputSchema（不阻塞核心）：** `navigate_page`（按 URL/历史/reload 导航的字段）与 `run_playwright_code`（代码字段名）的精确入参，从 `vscode.lm.tools[].inputSchema` 读取确认。
+
 ## 可用接口（实操，从简单到强）
 
 | 方式 | 调用 | 说明 |

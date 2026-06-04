@@ -1,36 +1,42 @@
-/** @file 浏览器 MCP 子进程到扩展宿主的 HTTP bridge。 */
+/** @file 浏览器 MCP 子进程到扩展宿主的 HTTP bridge（工具式协议 {name, arguments}）。 */
 
 import * as http from 'http';
 
-import { BrowserToolHost, type BrowserCommandExecutor, type BrowserEnvironment, type BrowserToolResult } from './browserToolHost';
-import { type BrowserToolName } from './tools';
+import { BrowserToolHost, type BrowserToolExecutor, type BrowserToolResult } from './browserToolHost';
+import { isBrowserToolName, type BrowserToolName } from './tools';
 
 export const BROWSER_TOOL_HTTP_PATH = '/llsccai/browser-tool';
 export const BROWSER_TOOL_RELAY_PORT_ENV = 'LLS_BROWSER_TOOL_RELAY_PORT';
 
-const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
+/** HTTP bridge 请求体：工具裸名 + 入参。 */
 export interface BrowserToolHttpRequestBody {
+    /** 工具裸名。 */
     name: BrowserToolName;
+    /** 工具入参。 */
     arguments?: Record<string, unknown>;
 }
 
-export class BrowserHttpCommandExecutor implements BrowserCommandExecutor {
+/** 子进程侧执行器：把 execute 转成 HTTP POST 给扩展宿主 relay。 */
+export class BrowserHttpForwardingHost implements BrowserToolExecutor {
+    /** 创建转发宿主。 */
     public constructor(private readonly port: number) {}
 
-    public async executeCommand<T = unknown>(command: string, ...args: unknown[]): Promise<T> {
-        return await postJson<T>(this.port, { command, args });
+    /** 把工具调用 POST 给宿主 relay，返回宿主侧 BrowserToolResult。 */
+    public async execute(name: BrowserToolName, args: Record<string, unknown> = {}): Promise<BrowserToolResult> {
+        const body: BrowserToolHttpRequestBody = { name, arguments: args };
+        return await postJson<BrowserToolResult>(this.port, body);
     }
 }
 
-export function createBrowserHttpHost(port: number): BrowserToolHost {
-    return new BrowserToolHost({
-        commands: new BrowserHttpCommandExecutor(port),
-        env: { uiKind: 1 as BrowserEnvironment['uiKind'] }
-    });
+/** 创建子进程侧 HTTP 转发宿主。 */
+export function createBrowserHttpHost(port: number): BrowserToolExecutor {
+    return new BrowserHttpForwardingHost(port);
 }
 
-export function createBrowserToolRelayHandler(host = new BrowserToolHost()) {
+/** 创建扩展宿主侧 relay handler，用真实 BrowserToolHost 执行工具。 */
+export function createBrowserToolRelayHandler(host: BrowserToolExecutor = new BrowserToolHost()) {
     return async (req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> => {
         const path = (req.url ?? '').split('?', 1)[0];
         if (path !== BROWSER_TOOL_HTTP_PATH) {
@@ -42,53 +48,21 @@ export function createBrowserToolRelayHandler(host = new BrowserToolHost()) {
         }
         try {
             const rawBody = await readRequestBody(req);
-            const body = JSON.parse(rawBody) as { command?: unknown; args?: unknown };
-            const command = typeof body.command === 'string' ? body.command : '';
-            const args = Array.isArray(body.args) ? body.args : [];
-            if (!command) {
-                writeJson(res, 400, { error: 'command_required' });
+            const body = JSON.parse(rawBody) as { name?: unknown; arguments?: unknown };
+            if (!isBrowserToolName(body.name)) {
+                writeJson(res, 400, { error: `unknown_tool: ${String(body.name)}` });
                 return true;
             }
-            const result = await executeHostCommand(host, command, args);
+            const args = (body.arguments && typeof body.arguments === 'object')
+                ? body.arguments as Record<string, unknown>
+                : {};
+            const result = await host.execute(body.name, args);
             writeJson(res, 200, result);
         } catch (err) {
             writeJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
         }
         return true;
     };
-}
-
-async function executeHostCommand(host: BrowserToolHost, command: string, args: unknown[]): Promise<unknown> {
-    const toolCall = mapCommandToToolCall(command, args);
-    const result = await host.execute(toolCall.name, toolCall.arguments);
-    if (result.isError) {
-        throw new Error(result.content[0]?.type === 'text' ? result.content[0].text : 'Browser tool failed.');
-    }
-    const content = result.content[0];
-    if (!content) return null;
-    if (content.type === 'image') return content;
-    try {
-        return JSON.parse(content.text);
-    } catch {
-        return content.text;
-    }
-}
-
-function mapCommandToToolCall(command: string, args: unknown[]): BrowserToolHttpRequestBody {
-    switch (command) {
-        case 'openBrowserPage':
-            return { name: 'browser_open', arguments: { url: args[0] } };
-        case 'navigatePage':
-            return { name: 'browser_navigate', arguments: { url: args[0] } };
-        case 'readPage':
-            return { name: 'browser_get_content', arguments: {} };
-        case 'screenshotPage':
-            return { name: 'browser_screenshot', arguments: {} };
-        case 'runPlaywrightCode':
-            return { name: 'browser_eval', arguments: { script: args[0] } };
-        default:
-            throw new Error(`Unknown browser command: ${command}`);
-    }
 }
 
 function postJson<T>(port: number, body: unknown): Promise<T> {

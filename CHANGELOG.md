@@ -2,6 +2,18 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.1.0] - 2026-06-05
+
+### Added
+
+- In-Chat **"Skip browser confirmation"** hint rendered right after the **CC task flow** button (multi-language: en/zh-cn/zh-tw/ko/ja/fr/de). It appears only on desktop VS Code when browser auto-approval is not yet fully enabled, and disappears once enabled.
+- A **webview confirmation dialog** for that hint: clicking it now opens an in-webview modal explaining the reason and the security trade-off, and only enables the settings after the user confirms. Confirming turns on both `workbench.browser.enableChatTools` and `chat.tools.global.autoApprove` so VS Code stops prompting "Open Browser Page?" on every browser page.
+
+### Changed
+
+- Reworked the **browser tool host** to invoke VS Code's built-in language-model browser tools through `vscode.lm.invokeTool` (with page-id threading) instead of the previous `executeCommand` path, and switched the HTTP bridge to a `{name, arguments}` protocol.
+- Removed the **blocking activation popups** that asked to enable `workbench.browser.enableChatTools` / `chat.tools.global.autoApprove`; those settings are now driven entirely by the non-blocking in-Chat hint.
+
 ## [3.0.1] - 2026-06-04
 
 ### Fixed

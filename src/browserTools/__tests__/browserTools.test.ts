@@ -1,5 +1,5 @@
 /**
- * @file Browser tools MCP server 与宿主执行器单元测试。
+ * @file Browser tools MCP server 与宿主执行器单元测试（lm.invokeTool 模型）。
  */
 
 import assert from 'node:assert/strict';
@@ -15,58 +15,64 @@ const { BrowserToolHost } = require('../browserToolHost') as typeof import('../b
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { BrowserMcpServer } = require('../browserMcpServer') as typeof import('../browserMcpServer');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { BROWSER_TOOL_SCHEMAS, VSCODE_BROWSER_COMMANDS } = require('../tools') as typeof import('../tools');
+const { BROWSER_TOOL_SCHEMAS, LM_BROWSER_TOOLS } = require('../tools') as typeof import('../tools');
 
 type BrowserToolResult = import('../browserToolHost').BrowserToolResult;
-type BrowserCommandExecutor = import('../browserToolHost').BrowserCommandExecutor;
+type LmToolInvoker = import('../browserToolHost').LmToolInvoker;
 type BrowserToolHostInstance = InstanceType<typeof BrowserToolHost>;
 
-/** 记录到底层 VS Code command executor 的一次调用。 */
-interface CommandCall {
-    /** 被调用的 VS Code 命令 id。 */
-    command: string;
-    /** 传递给命令的参数。 */
-    args: unknown[];
+const PAGE_ID = '11111111-2222-3333-4444-555555555555';
+
+/** 记录一次底层 lm.invokeTool 调用。 */
+interface ToolCall {
+    /** 被调用的 LM 工具名（snake_case）。 */
+    name: string;
+    /** 传入的 input。 */
+    input: Record<string, unknown>;
 }
 
-/** 构造可记录调用并返回固定结果的命令执行器。 */
-function makeCommandExecutor(
-    handler: (command: string, args: unknown[]) => unknown | Promise<unknown>,
-    commands?: string[]
-): {
-    executor: BrowserCommandExecutor;
-    calls: CommandCall[];
-} {
-    const calls: CommandCall[] = [];
-    const executor: BrowserCommandExecutor = {
-        async executeCommand<T = unknown>(command: string, ...args: unknown[]): Promise<T> {
-            calls.push({ command, args });
-            return await handler(command, args) as T;
-        }
-    };
-    if (commands) {
-        executor.getCommands = async () => commands;
-    }
-    return { calls, executor };
+/** 构造一个返回纯文本内容块的 LanguageModelToolResult。 */
+function textResult(text: string): unknown {
+    return { content: [{ value: text }] };
 }
 
-/** 构造可注入 desktop/web 环境和命令执行器的 BrowserToolHost。 */
+/** 构造可记录调用并按工具名返回固定结果的 lm.invokeTool 桩。 */
 function makeHost(options: {
     uiKind?: number;
-    handler?: (command: string, args: unknown[]) => unknown | Promise<unknown>;
-    commands?: string[];
-} = {}): { host: BrowserToolHostInstance; calls: CommandCall[] } {
-    const { executor, calls } = makeCommandExecutor(
-        options.handler ?? ((command) => `ok:${command}`),
-        options.commands
-    );
-    return {
-        calls,
-        host: new BrowserToolHost({
-            commands: executor,
-            env: { uiKind: (options.uiKind ?? 1) as import('vscode').UIKind }
-        })
+    results?: Partial<Record<string, unknown>>;
+    invokeTool?: LmToolInvoker['invokeTool'];
+} = {}): { host: BrowserToolHostInstance; calls: ToolCall[] } {
+    const calls: ToolCall[] = [];
+    const defaults: Record<string, unknown> = {
+        [LM_BROWSER_TOOLS.open]: textResult(`Page ID: ${PAGE_ID}\nSummary: ok`),
+        [LM_BROWSER_TOOLS.navigate]: textResult('navigated'),
+        [LM_BROWSER_TOOLS.read]: textResult('Page Title: T\nRecent events:\n  error X\nSnapshot:\n  node'),
+        [LM_BROWSER_TOOLS.eval]: textResult('"Title"')
     };
+    const lm: LmToolInvoker = {
+        invokeTool(name, opts) {
+            const input = (opts.input ?? {}) as Record<string, unknown>;
+            calls.push({ name, input });
+            const result = options.results?.[name] ?? defaults[name] ?? textResult(`ok:${name}`);
+            return Promise.resolve(result);
+        }
+    };
+    const host = new BrowserToolHost({
+        lm: options.invokeTool ? { invokeTool: options.invokeTool } : lm,
+        env: { uiKind: (options.uiKind ?? 1) as import('vscode').UIKind },
+        createCancellation: () => ({ token: {}, dispose() { /* noop */ } })
+    });
+    return { host, calls };
+}
+
+/** 先 open 拿到 pageId，再执行目标工具。 */
+async function openThen(
+    host: BrowserToolHostInstance,
+    name: Parameters<BrowserToolHostInstance['execute']>[0],
+    args: Record<string, unknown> = {}
+): Promise<BrowserToolResult> {
+    await host.execute('browser_open', { url: 'https://example.com' });
+    return host.execute(name, args);
 }
 
 /** 驱动 BrowserMcpServer 处理一组 NDJSON JSON-RPC 请求并收集响应。 */
@@ -111,100 +117,164 @@ test('tools/list: 暴露 browser_* 工具全集', async () => {
     assert.deepEqual(result.tools.map((tool) => tool.name), BROWSER_TOOL_SCHEMAS.map((tool) => tool.name));
 });
 
-test('tools/call: browser_open 分发到底层 openBrowserPage 命令', async () => {
+test('browser_open: 解析 Page ID 并存为 currentPageId', async () => {
     const { host, calls } = makeHost();
-    const responses = await driveServer(host, [
-        {
-            jsonrpc: '2.0',
-            id: 2,
-            method: 'tools/call',
-            params: { name: 'browser_open', arguments: { url: 'https://example.com' } }
-        }
-    ]);
-
-    const result = responses[0].result as BrowserToolResult;
-    assert.equal(result.content[0].type, 'text');
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].command, VSCODE_BROWSER_COMMANDS.open);
-    assert.deepEqual(calls[0].args, ['https://example.com']);
-});
-
-test('BrowserToolHost: browser_open 在 agent 命令缺失时回退到 integrated browser 命令', async () => {
-    const { host, calls } = makeHost({ commands: ['browser.openIntegratedBrowser'] });
     const result = await host.execute('browser_open', { url: 'https://example.com' });
 
     assert.equal(result.isError, undefined);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].command, 'browser.openIntegratedBrowser');
-    assert.deepEqual(calls[0].args, ['https://example.com']);
+    assert.equal(calls[0].name, LM_BROWSER_TOOLS.open);
+    assert.deepEqual(calls[0].input, { url: 'https://example.com' });
     assert.equal(result.content[0].type, 'text');
-    assert.match(result.content[0].type === 'text' ? result.content[0].text : '', /fallback command/);
 });
-test('BrowserToolHost: web 环境返回 desktop 门槛错误且不执行命令', async () => {
-    const { host, calls } = makeHost({ uiKind: 2 });
+
+test('browser_open: 缺失 url 时返回参数错误且不调用工具', async () => {
+    const { host, calls } = makeHost();
+    const result = await host.execute('browser_open', { url: '' });
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].type === 'text' ? result.content[0].text : '', /url/);
+    assert.equal(calls.length, 0);
+});
+
+test('browser_navigate: 携带 currentPageId 与 type=url 调用 navigate_page', async () => {
+    const { host, calls } = makeHost();
+    const result = await openThen(host, 'browser_navigate', { url: 'https://next.example' });
+
+    assert.equal(result.isError, undefined);
+    assert.equal(calls[1].name, LM_BROWSER_TOOLS.navigate);
+    assert.deepEqual(calls[1].input, { pageId: PAGE_ID, type: 'url', url: 'https://next.example' });
+});
+
+test('browser_get_content: 携带 pageId 调用 read_page', async () => {
+    const { host, calls } = makeHost();
+    const result = await openThen(host, 'browser_get_content');
+
+    assert.equal(result.isError, undefined);
+    assert.equal(calls[1].name, LM_BROWSER_TOOLS.read);
+    assert.deepEqual(calls[1].input, { pageId: PAGE_ID });
+    assert.match(result.content[0].type === 'text' ? result.content[0].text : '', /Snapshot/);
+});
+
+test('browser_console: 从 read_page 文本抽取 Recent events 段', async () => {
+    const { host } = makeHost();
+    const result = await openThen(host, 'browser_console');
+
+    assert.equal(result.isError, undefined);
+    const text = result.content[0].type === 'text' ? result.content[0].text : '';
+    assert.match(text, /Recent events:/);
+    assert.doesNotMatch(text, /Snapshot/);
+});
+
+test('browser_eval: 携带 pageId 与 code 调用 run_playwright_code', async () => {
+    const script = 'return page.evaluate(() => document.title)';
+    const { host, calls } = makeHost();
+    const result = await openThen(host, 'browser_eval', { script });
+
+    assert.equal(result.isError, undefined);
+    assert.equal(calls[1].name, LM_BROWSER_TOOLS.eval);
+    assert.deepEqual(calls[1].input, { pageId: PAGE_ID, code: script });
+});
+
+test('browser_eval: 缺失 script 时返回参数错误且不调用工具', async () => {
+    const { host, calls } = makeHost();
+    await host.execute('browser_open', { url: 'https://example.com' });
+    const result = await host.execute('browser_eval', { script: '' });
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].type === 'text' ? result.content[0].text : '', /script/);
+    assert.equal(calls.length, 1); // 只有 open
+});
+
+test('未先 open 时 read_page 返回 No browser page 错误', async () => {
+    const { host, calls } = makeHost();
     const result = await host.execute('browser_get_content', {});
 
     assert.equal(result.isError, true);
-    assert.equal(result.content[0].type, 'text');
+    assert.match(result.content[0].type === 'text' ? result.content[0].text : '', /Call browser_open first/);
+    assert.equal(calls.length, 0);
+});
+
+test('web 环境返回 desktop 门槛错误且不调用工具', async () => {
+    const { host, calls } = makeHost({ uiKind: 2 });
+    const result = await host.execute('browser_open', { url: 'https://example.com' });
+
+    assert.equal(result.isError, true);
     assert.match(result.content[0].type === 'text' ? result.content[0].text : '', /desktop/i);
     assert.equal(calls.length, 0);
 });
 
-test('BrowserToolHost: 底层命令失败时返回 isError 文本结果', async () => {
+test('invokeTool 不存在时返回升级提示错误', async () => {
+    const host = new BrowserToolHost({
+        lm: {} as LmToolInvoker,
+        env: { uiKind: 1 as import('vscode').UIKind },
+        createCancellation: () => ({ token: {}, dispose() { /* noop */ } })
+    });
+    const result = await host.execute('browser_open', { url: 'https://example.com' });
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].type === 'text' ? result.content[0].text : '', /invokeTool/);
+});
+
+test('invokeTool 抛错时包成 isError 文本结果', async () => {
     const { host } = makeHost({
-        handler: () => {
-            throw new Error('command missing');
-        }
+        invokeTool: () => Promise.reject(new Error('tool exploded'))
     });
-    const result = await host.execute('browser_get_content', {});
+    const result = await host.execute('browser_open', { url: 'https://example.com' });
 
     assert.equal(result.isError, true);
-    assert.equal(result.content[0].type, 'text');
-    assert.match(result.content[0].type === 'text' ? result.content[0].text : '', /command missing/);
+    assert.match(result.content[0].type === 'text' ? result.content[0].text : '', /tool exploded/);
 });
 
-test('BrowserToolHost: browser_get_content 通过 runPlaywrightCode 读取页面内容', async () => {
-    const { host, calls } = makeHost({ handler: () => ({ title: 'T', text: 'hello' }) });
-    const result = await host.execute('browser_get_content', {});
-
-    assert.equal(result.isError, undefined);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].command, VSCODE_BROWSER_COMMANDS.eval);
-    assert.equal(typeof calls[0].args[0], 'string');
-    assert.match(String(calls[0].args[0]), /document\.body/);
-    assert.equal(result.content[0].type, 'text');
-    assert.equal(result.content[0].type === 'text' ? result.content[0].text : '', '{"title":"T","text":"hello"}');
-});
-test('BrowserToolHost: browser_screenshot 返回 image content 并剥离 data URL 头', async () => {
-    const { host, calls } = makeHost({
-        handler: () => ({ data: 'data:image/jpeg;base64,abc123', mimeType: 'image/jpeg' })
+test('browser_screenshot: Uint8Array 二进制部件 base64 编码为 image content', async () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const { host } = makeHost({
+        results: { [LM_BROWSER_TOOLS.screenshot]: { content: [{ mimeType: 'image/jpeg', data: bytes }] } }
     });
-    const result = await host.execute('browser_screenshot', {});
+    const result = await openThen(host, 'browser_screenshot');
 
     assert.equal(result.isError, undefined);
-    assert.equal(calls[0].command, VSCODE_BROWSER_COMMANDS.eval);
-    assert.deepEqual(result.content[0], { type: 'image', data: 'abc123', mimeType: 'image/jpeg' });
+    assert.deepEqual(result.content[0], {
+        type: 'image',
+        data: Buffer.from(bytes).toString('base64'),
+        mimeType: 'image/jpeg'
+    });
 });
 
-test('BrowserToolHost: browser_eval 传递 script 参数到底层 runPlaywrightCode', async () => {
-    const script = 'return await page.evaluate(() => document.title)';
-    const { host, calls } = makeHost({ handler: () => ({ value: 'Title' }) });
-    const result = await host.execute('browser_eval', { script });
+test('browser_screenshot: {type:Buffer,data} 形态 base64 编码', async () => {
+    const data = [10, 20, 30];
+    const { host } = makeHost({
+        results: { [LM_BROWSER_TOOLS.screenshot]: { content: [{ mimeType: 'image/png', data: { type: 'Buffer', data } }] } }
+    });
+    const result = await openThen(host, 'browser_screenshot');
 
-    assert.equal(result.isError, undefined);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].command, VSCODE_BROWSER_COMMANDS.eval);
-    assert.deepEqual(calls[0].args, [script]);
-    assert.equal(result.content[0].type, 'text');
-    assert.equal(result.content[0].type === 'text' ? result.content[0].text : '', '{"value":"Title"}');
+    assert.deepEqual(result.content[0], {
+        type: 'image',
+        data: Buffer.from(data).toString('base64'),
+        mimeType: 'image/png'
+    });
 });
 
-test('BrowserToolHost: browser_eval 缺失 script 时返回参数错误且不执行命令', async () => {
-    const { host, calls } = makeHost();
-    const result = await host.execute('browser_eval', { script: '' });
+test('browser_screenshot: VSBuffer.buffer 形态 base64 编码并缺省 jpeg', async () => {
+    const bytes = new Uint8Array([7, 7, 7]);
+    const { host } = makeHost({
+        results: { [LM_BROWSER_TOOLS.screenshot]: { content: [{ data: { buffer: bytes } }] } }
+    });
+    const result = await openThen(host, 'browser_screenshot');
+
+    assert.deepEqual(result.content[0], {
+        type: 'image',
+        data: Buffer.from(bytes).toString('base64'),
+        mimeType: 'image/jpeg'
+    });
+});
+
+test('browser_screenshot: 无图片数据时返回 isError 文本', async () => {
+    const { host } = makeHost({
+        results: { [LM_BROWSER_TOOLS.screenshot]: textResult('no image here') }
+    });
+    const result = await openThen(host, 'browser_screenshot');
 
     assert.equal(result.isError, true);
-    assert.equal(result.content[0].type, 'text');
-    assert.match(result.content[0].type === 'text' ? result.content[0].text : '', /script/);
-    assert.equal(calls.length, 0);
+    assert.match(result.content[0].type === 'text' ? result.content[0].text : '', /no image here/);
 });

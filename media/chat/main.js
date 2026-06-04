@@ -158,6 +158,57 @@
         claudeTodoToggleAria: 'Claude TodoWrite-Todos ein-/ausklappen'
     });
 
+    /** 浏览器自动放行提示：点击后开启 chat.tools.global.autoApprove，免去每次「Open Browser Page?」确认。 */
+    Object.assign(chatTranslations.en, {
+        browserAutoApproveHint: 'Skip browser confirmation',
+        browserAutoApproveHintTitle: 'Enabling this turns on workbench.browser.enableChatTools and chat.tools.global.autoApprove so VS Code stops asking to confirm every browser page. Note: this auto-approves ALL agent tools (including writing files and running commands) — only enable on a trusted local machine.',
+        browserAutoApproveConfirmTitle: 'Skip browser confirmation?',
+        browserAutoApproveConfirmOk: 'Enable',
+        browserAutoApproveConfirmCancel: 'Cancel'
+    });
+    Object.assign(chatTranslations['zh-cn'], {
+        browserAutoApproveHint: '免去浏览器确认',
+        browserAutoApproveHintTitle: '开启后会打开 workbench.browser.enableChatTools 和 chat.tools.global.autoApprove，免去每次打开浏览器页面的「Open Browser Page?」确认。注意：会自动放行所有 agent 工具（含写文件、执行命令），建议仅在信任的本机环境开启。',
+        browserAutoApproveConfirmTitle: '免去浏览器确认弹窗？',
+        browserAutoApproveConfirmOk: '开启',
+        browserAutoApproveConfirmCancel: '取消'
+    });
+    Object.assign(chatTranslations['zh-tw'], {
+        browserAutoApproveHint: '免去瀏覽器確認',
+        browserAutoApproveHintTitle: '開啟後會打開 workbench.browser.enableChatTools 和 chat.tools.global.autoApprove，免去每次開啟瀏覽器頁面的「Open Browser Page?」確認。注意：會自動放行所有 agent 工具（含寫檔案、執行命令），建議僅在信任的本機環境開啟。',
+        browserAutoApproveConfirmTitle: '免去瀏覽器確認彈窗？',
+        browserAutoApproveConfirmOk: '開啟',
+        browserAutoApproveConfirmCancel: '取消'
+    });
+    Object.assign(chatTranslations.ko, {
+        browserAutoApproveHint: '브라우저 확인 생략',
+        browserAutoApproveHintTitle: '활성화하면 workbench.browser.enableChatTools와 chat.tools.global.autoApprove가 켜져 VS Code가 매번 브라우저 페이지 열기를 확인하지 않습니다. 주의: 모든 에이전트 도구(파일 쓰기, 명령 실행 포함)를 자동 승인하므로 신뢰할 수 있는 로컬 환경에서만 켜세요.',
+        browserAutoApproveConfirmTitle: '브라우저 확인을 생략할까요?',
+        browserAutoApproveConfirmOk: '켜기',
+        browserAutoApproveConfirmCancel: '취소'
+    });
+    Object.assign(chatTranslations.ja, {
+        browserAutoApproveHint: 'ブラウザ確認を省略',
+        browserAutoApproveHintTitle: '有効にすると workbench.browser.enableChatTools と chat.tools.global.autoApprove がオンになり、ブラウザページを開くたびの確認が省略されます。注意: すべてのエージェントツール（ファイル書き込みやコマンド実行を含む）が自動承認されるため、信頼できるローカル環境でのみ有効にしてください。',
+        browserAutoApproveConfirmTitle: 'ブラウザ確認を省略しますか？',
+        browserAutoApproveConfirmOk: '有効化',
+        browserAutoApproveConfirmCancel: 'キャンセル'
+    });
+    Object.assign(chatTranslations.fr, {
+        browserAutoApproveHint: 'Ignorer la confirmation du navigateur',
+        browserAutoApproveHintTitle: 'L’activation active workbench.browser.enableChatTools et chat.tools.global.autoApprove afin que VS Code cesse de demander confirmation à chaque page du navigateur. Remarque : cela approuve automatiquement TOUS les outils agent (y compris l’écriture de fichiers et l’exécution de commandes) — à activer uniquement sur une machine locale de confiance.',
+        browserAutoApproveConfirmTitle: 'Ignorer la confirmation du navigateur ?',
+        browserAutoApproveConfirmOk: 'Activer',
+        browserAutoApproveConfirmCancel: 'Annuler'
+    });
+    Object.assign(chatTranslations.de, {
+        browserAutoApproveHint: 'Browser-Bestätigung überspringen',
+        browserAutoApproveHintTitle: 'Beim Aktivieren werden workbench.browser.enableChatTools und chat.tools.global.autoApprove eingeschaltet, damit VS Code nicht jede Browser-Seite bestätigen lässt. Hinweis: Dadurch werden ALLE Agent-Werkzeuge automatisch genehmigt (einschließlich Dateien schreiben und Befehle ausführen) — nur auf einem vertrauenswürdigen lokalen Rechner aktivieren.',
+        browserAutoApproveConfirmTitle: 'Browser-Bestätigung überspringen?',
+        browserAutoApproveConfirmOk: 'Aktivieren',
+        browserAutoApproveConfirmCancel: 'Abbrechen'
+    });
+
     /** 补齐任务流恢复对话框文案：继续/清除/稍后三按钮。 */
     Object.assign(chatTranslations.en, {
         restoreTitle: 'Resume unfinished task flow?',
@@ -338,6 +389,9 @@
     const taskRestoreContinueEl = document.querySelector('[data-role="task-restore-continue"]');
     const taskRestoreClearEl = document.querySelector('[data-role="task-restore-clear"]');
     const taskRestoreDismissEl = document.querySelector('[data-role="task-restore-dismiss"]');
+    const browserAutoApproveDialogEl = document.querySelector('[data-role="browser-auto-approve-confirm"]');
+    const browserAutoApproveOkEl = document.querySelector('[data-role="browser-auto-approve-confirm-ok"]');
+    const browserAutoApproveCancelEl = document.querySelector('[data-role="browser-auto-approve-cancel"]');
     const routeBadgeEl = document.querySelector('[data-role="route-badge"]');
     const routeBadgeTextEl = document.querySelector('[data-role="route-badge-text"]');
     const composerNormalChipEl = document.querySelector('[data-role="composer-normal-chip"]');
@@ -396,6 +450,12 @@
     const claudeTodoState = {
         todos: [],
         collapsed: false
+    };
+    // 浏览器自动放行提示态：宿主端在浏览器工具可用且 chat.tools.global.autoApprove
+    // 关闭时推送 { supported:true, enabled:false }，前端据此在 CC 任务流按钮后展示提示。
+    const browserAutoApproveState = {
+        supported: false,
+        enabled: false
     };
     let activeResendEditor = null;
     let toastTimer = 0;
@@ -806,9 +866,63 @@
         }
 
         composerBox.insertAdjacentElement('afterend', shortcutBar);
+        renderBrowserAutoApproveHint();
         applyI18n();
         // 如果在运行中创建/重建此栏，立刻同步禁用态。
         applyRunningDisabledControls(composerState.chatRunning);
+    }
+
+    /**
+     * 在 CC 任务流按钮之后渲染/移除「免去浏览器确认」提示按钮。
+     *
+     * 仅在宿主端报告浏览器工具可用（supported）且 chat.tools.global.autoApprove
+     * 关闭（!enabled）时显示；点击后请求宿主开启该设置。
+     */
+    function renderBrowserAutoApproveHint() {
+        const shortcutBar = document.querySelector('[data-role="composer-shortcut-bar"]');
+        if (!(shortcutBar instanceof HTMLElement)) return;
+        const ccButton = shortcutBar.querySelector('[data-i18n="ccTaskFlow"]');
+        let hint = shortcutBar.querySelector('[data-role="browser-auto-approve-hint"]');
+        const shouldShow = browserAutoApproveState.supported && !browserAutoApproveState.enabled;
+        if (!shouldShow) {
+            if (hint) hint.remove();
+            return;
+        }
+        if (!(hint instanceof HTMLElement)) {
+            hint = document.createElement('button');
+            hint.type = 'button';
+            hint.className = 'composer-shortcut-button composer-shortcut-button--hint';
+            hint.dataset.role = 'browser-auto-approve-hint';
+            hint.dataset.i18n = 'browserAutoApproveHint';
+            hint.dataset.i18nTitle = 'browserAutoApproveHintTitle';
+            hint.addEventListener('click', openBrowserAutoApproveConfirm);
+            if (ccButton && ccButton.parentNode === shortcutBar) {
+                ccButton.insertAdjacentElement('afterend', hint);
+            } else {
+                shortcutBar.insertBefore(hint, shortcutBar.firstChild);
+            }
+        }
+        hint.textContent = t('browserAutoApproveHint');
+        hint.title = t('browserAutoApproveHintTitle');
+    }
+
+    /** 弹出「免去浏览器确认」二次确认对话框，说明开启原因后再由用户确认。 */
+    function openBrowserAutoApproveConfirm() {
+        if (!(browserAutoApproveDialogEl instanceof HTMLDialogElement)) {
+            // 兜底：对话框不可用时退回直接开启，避免功能完全不可达。
+            post({ type: 'browser/enableAutoApprove' });
+            return;
+        }
+        applyI18n();
+        if (!browserAutoApproveDialogEl.open) browserAutoApproveDialogEl.showModal();
+    }
+
+    /** 关闭「免去浏览器确认」对话框；confirmed 为真时请求宿主开启相关设置。 */
+    function closeBrowserAutoApproveConfirm(confirmed) {
+        if (browserAutoApproveDialogEl instanceof HTMLDialogElement && browserAutoApproveDialogEl.open) {
+            browserAutoApproveDialogEl.close();
+        }
+        if (confirmed) post({ type: 'browser/enableAutoApprove' });
     }
 
     /**
@@ -4560,6 +4674,11 @@
             case 'i18n/update':
                 setChatLanguage(message.language || DEFAULT_CHAT_LANGUAGE);
                 break;
+            case 'browser/autoApproveState':
+                browserAutoApproveState.supported = message.supported === true;
+                browserAutoApproveState.enabled = message.enabled === true;
+                renderBrowserAutoApproveHint();
+                break;
             case 'session/init':
                 setChatRunning(false);
                 currentCliPath = message.cliPath || '';
@@ -4986,6 +5105,12 @@
     taskRestoreDialogEl?.addEventListener('cancel', (event) => {
         event.preventDefault();
         resolveTaskRestore('dismiss');
+    });
+    browserAutoApproveOkEl?.addEventListener('click', () => closeBrowserAutoApproveConfirm(true));
+    browserAutoApproveCancelEl?.addEventListener('click', () => closeBrowserAutoApproveConfirm(false));
+    browserAutoApproveDialogEl?.addEventListener('cancel', (event) => {
+        event.preventDefault();
+        closeBrowserAutoApproveConfirm(false);
     });
     modelPickerFormEl?.addEventListener('submit', (event) => {
         event.preventDefault();
