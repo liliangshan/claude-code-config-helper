@@ -2,6 +2,12 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.0.1] - 2026-06-04
+
+### Fixed
+
+- The past-conversations list no longer drops brand-new sessions: when a session has no `customTitle`/`aiTitle`/`lastPrompt`/`summary` yet, it now falls back to the first user prompt as the list title so freshly created sessions still appear.
+
 ## [3.0.0] - 2026-06-04
 
 ### Added

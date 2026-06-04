@@ -2662,11 +2662,18 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
                                 const m = text.match(new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
                                 return m ? m[1].replace(/\\n/g, ' ').replace(/\\"/g, '"').trim() : undefined;
                             };
+                            const extractFirstUserText = (text: string): string | undefined => {
+                                const userIdx = text.indexOf('"role":"user"');
+                                if (userIdx < 0) return undefined;
+                                const m = text.slice(userIdx).match(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+                                return m ? m[1].replace(/\\n/g, ' ').replace(/\\"/g, '"').trim() : undefined;
+                            };
                             const summary =
                                 extract(tail, 'customTitle') ?? extract(head, 'customTitle') ??
                                 extract(tail, 'aiTitle') ?? extract(head, 'aiTitle') ??
                                 extract(tail, 'lastPrompt') ?? extract(tail, 'summary') ??
-                                extract(head, 'summary');
+                                extract(head, 'summary') ??
+                                extractFirstUserText(head);
                             if (!summary) return;
                             const gitBranchM = (tail.length > head.length ? tail : head + tail)
                                 .match(/"gitBranch"\s*:\s*"((?:[^"\\]|\\.)*)"/);
