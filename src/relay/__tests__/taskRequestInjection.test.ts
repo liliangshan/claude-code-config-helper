@@ -182,6 +182,31 @@ const tests: TestCase[] = [
         }
     },
     {
+        name: '最后一条 user 消息以 tool_result 开头时不得在其前面插入 text（避免破坏 Anthropic tool_use/tool_result 紧邻约束）',
+        run: () => {
+            const input = JSON.stringify({
+                model: 'm',
+                messages: [
+                    { role: 'user', content: 'hi' },
+                    { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'Read', input: {} }] },
+                    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }] }
+                ]
+            });
+            const result = injectLlsTaskRequestBody(input, undefined, { modelName: 'gpt-x' });
+            assert.strictEqual(result.injected, true);
+            const body = JSON.parse(result.bodyText) as {
+                messages?: Array<{ role: string; content?: Array<{ type?: string }> }>;
+            };
+            // 原工具往返消息保持不变：content[0] 仍是 tool_result，没有被 text 顶掉。
+            const toolResultMsg = body.messages?.[2];
+            assert.strictEqual(toolResultMsg?.content?.[0].type, 'tool_result');
+            // 兜底文本被追加为一条新的末尾 user 消息，而不是塞进 tool_result 消息里。
+            const appended = body.messages?.[3];
+            assert.strictEqual(appended?.role, 'user');
+            assert.strictEqual(appended?.content?.[0].type, 'text');
+        }
+    },
+    {
         name: '标题生成侧请求应跳过全部任务流注入',
         run: () => {
             const fakeDeps = {

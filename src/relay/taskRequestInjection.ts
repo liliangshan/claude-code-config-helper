@@ -335,11 +335,39 @@ export function appendUserControlMessage(parsed: Record<string, unknown>, rule: 
     }
     const lastMessage = messages[messages.length - 1];
     if (isAnthropicUserMessageRecord(lastMessage)) {
+        // 工具往返消息（content 以 tool_result 开头）不能在其前面插入 text block：
+        // Anthropic 协议要求 user 消息里的 tool_result 紧跟在上一条 assistant 的
+        // tool_use 之后，否则会报 `tool_use ids were found without tool_result
+        // blocks immediately after`。这类消息本就不是真正的"本轮用户输入"，
+        // 兜底注入既无意义又破坏协议约束，直接追加到末尾即可。
+        if (userMessageStartsWithToolResult(lastMessage)) {
+            parsed.messages = [...messages, { role: 'user', content: [{ type: 'text', text: rule }] }];
+            return;
+        }
         prependTextBlockToUserMessage(lastMessage, rule);
         parsed.messages = messages;
         return;
     }
     parsed.messages = [...messages, { role: 'user', content: [{ type: 'text', text: rule }] }];
+}
+
+/**
+ * 判断 user 消息的 content 是否以 `tool_result` 块开头。
+ *
+ * Anthropic 协议中，承载工具返回结果的 user 消息其 content 第一个 block 必须是
+ * `tool_result`，且需紧邻上一条 assistant 的 `tool_use`。识别出这类消息后，注入
+ * 逻辑应避免在其头部插入任何 text block。
+ *
+ * @param message 待检查的 user 消息。
+ * @returns content 以 tool_result 开头时返回 true。
+ */
+export function userMessageStartsWithToolResult(message: { role: 'user'; content?: unknown }): boolean {
+    const content = message.content;
+    if (!Array.isArray(content) || content.length === 0) return false;
+    const first = content[0];
+    return !!first
+        && typeof first === 'object'
+        && (first as { type?: unknown }).type === 'tool_result';
 }
 
 /**

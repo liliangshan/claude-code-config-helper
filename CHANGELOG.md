@@ -2,6 +2,12 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.1] - 2026-06-07
+
+### Fixed
+
+- Fixed an Anthropic protocol error (`tool_use ids were found without tool_result blocks immediately after`) raised during tool round-trips. The shared system/identity prompt injection prepended a text block to the **last** user message, but when that message carries a `tool_result` (which must immediately follow the previous assistant `tool_use`), the inserted text displaced the `tool_result` and broke the adjacency Anthropic requires. The injector now detects user messages whose content starts with a `tool_result` and appends the fallback prompt as a **new trailing user message** instead of prepending into the tool round-trip message.
+
 ## [3.2.0] - 2026-06-06
 
 ### Fixed
