@@ -20,13 +20,16 @@ import {
     CHAT_PLAN_APPEND_SYSTEM_PROMPT_KEY,
     CHAT_REVIEW_APPEND_SYSTEM_PROMPT_KEY,
     CHAT_TRANSPORT_KEY,
-    CONFIG_NAMESPACE
+    CONFIG_NAMESPACE,
+    VSCODE_TOOLS_GET_ERRORS_ENABLED_KEY
 } from '../../constants';
 import { ConfigManager } from '../../configManager';
 import { readCompactionConfigFromVscode, readExpertConfigFromVscode, readPlanConfigFromVscode, readReviewConfigFromVscode } from '../../expertMode/expertConfig';
 import { ASK_EXPERT_MCP_SERVER_NAME } from '../../expertMode/askExpertMcpServer';
 import { BROWSER_MCP_SERVER_NAME } from '../../browserTools/tools';
 import { BROWSER_TOOL_RELAY_PORT_ENV } from '../../browserTools/httpBridge';
+import { VSCODE_MCP_SERVER_NAME } from '../../vscodeTools/tools';
+import { VSCODE_TOOL_RELAY_PORT_ENV } from '../../vscodeTools/httpBridge';
 import {
     loadAllVscodeMcpJsons,
     mergeMcpServers,
@@ -299,9 +302,14 @@ export class ChatCliConfigService {
         const reviewMode = readReviewConfigFromVscode();
         const browserToolsEnabled = config.get<boolean>(CHAT_BROWSER_TOOLS_ENABLED_KEY, true) !== false
             && vscode.env.uiKind === vscode.UIKind.Desktop;
-        const finalMcpServers = injectBrowserMcpServer(
-            stripExpertServerFromMcp(mergedMcpServers),
-            browserToolsEnabled,
+        const vscodeToolsGetErrorsEnabled = config.get<boolean>(VSCODE_TOOLS_GET_ERRORS_ENABLED_KEY, true) !== false;
+        const finalMcpServers = injectVscodeMcpServer(
+            injectBrowserMcpServer(
+                stripExpertServerFromMcp(mergedMcpServers),
+                browserToolsEnabled,
+                undefined
+            ),
+            vscodeToolsGetErrorsEnabled,
             undefined
         );
         return {
@@ -371,10 +379,15 @@ export class ChatCliConfigService {
             ? DISPATCHER_PLAN_ROUTING_PRIORITY + '\n' + DISPATCHER_PLAN_REVIEW_PROMPT
             : '';
         const browserToolsEnabled = baseConfig.mcpServers?.[BROWSER_MCP_SERVER_NAME] !== undefined;
+        const vscodeToolsGetErrorsEnabled = baseConfig.mcpServers?.[VSCODE_MCP_SERVER_NAME] !== undefined;
         const normal: ChatCliConfig = {
             ...baseConfig,
             mcpServers: injectAskExpertMcpServer(
-                injectBrowserMcpServer(baseConfig.mcpServers, browserToolsEnabled, relayPort),
+                injectVscodeMcpServer(
+                    injectBrowserMcpServer(baseConfig.mcpServers, browserToolsEnabled, relayPort),
+                    vscodeToolsGetErrorsEnabled,
+                    relayPort
+                ),
                 expertAvailable
             ),
             appendSystemPrompt: dispatcherPrompt + planSuffix
@@ -917,4 +930,46 @@ function injectBrowserMcpServer(
 function buildBrowserMcpEntrypointScript(): string {
     const entry = require.resolve('../../browserTools/browserMcpServer');
     return `require(${JSON.stringify(entry)}).startBrowserMcpServer();`;
+}
+
+/**
+ * 根據 VS Code get_errors 開關向 mcpServers 字典注入 llsccaiVscode MCP server。
+ *
+ * @param mcpServers 已規範化的 MCP server 字典。
+ * @param enabled 是否允許注入 VS Code get_errors 工具。
+ * @param relayPort 本地 HTTP 中轉服務實際監聽端口。
+ * @returns 注入 VS Code MCP server 後的字典；沒有任何 server 時返回 undefined。
+ */
+function injectVscodeMcpServer(
+    mcpServers: ChatCliConfig['mcpServers'],
+    enabled: boolean,
+    relayPort: number | undefined
+): ChatCliConfig['mcpServers'] {
+    if (!enabled) {
+        return mcpServers;
+    }
+    const next: NonNullable<ChatCliConfig['mcpServers']> = { ...(mcpServers ?? {}) };
+    if (!next[VSCODE_MCP_SERVER_NAME]) {
+        next[VSCODE_MCP_SERVER_NAME] = {
+            type: 'stdio',
+            command: process.execPath,
+            args: ['-e', buildVscodeMcpEntrypointScript()],
+            env: relayPort ? { [VSCODE_TOOL_RELAY_PORT_ENV]: String(relayPort) } : undefined
+        };
+    } else if (relayPort) {
+        next[VSCODE_MCP_SERVER_NAME] = {
+            ...next[VSCODE_MCP_SERVER_NAME],
+            env: {
+                ...(next[VSCODE_MCP_SERVER_NAME].env ?? {}),
+                [VSCODE_TOOL_RELAY_PORT_ENV]: String(relayPort)
+            }
+        };
+    }
+    return next;
+}
+
+/** 建立 llsccaiVscode MCP server 子行程入口腳本。 */
+function buildVscodeMcpEntrypointScript(): string {
+    const entry = require.resolve('../../vscodeTools/vscodeMcpServer');
+    return `require(${JSON.stringify(entry)}).startVscodeMcpServer();`;
 }

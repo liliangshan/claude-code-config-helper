@@ -1,6 +1,7 @@
 /** @file LLS CCAI 任务流响应与 SSE 工具调用拦截器。 */
 
 import { Logger } from '../logger';
+import { isFileOpenToolName } from '../editorAutoOpen';
 import type { AutoContinueScheduler } from './autoContinue';
 import type { LlsTaskService } from './service';
 import {
@@ -15,6 +16,8 @@ export interface LlsTaskInterceptorDeps {
     service: LlsTaskService;
     /** 自动续推调度器。 */
     autoContinueScheduler: AutoContinueScheduler;
+    /** 文件工具观察回调。 */
+    onFileTool?: (toolName: string, input: unknown) => void;
 }
 
 /** 响应拦截结果。 */
@@ -134,6 +137,7 @@ function interceptJsonResponse(body: string, deps: LlsTaskInterceptorDeps): Inte
                 return { type: 'text', text: message };
             }
             sawNonLocalTool = true;
+            if (isFileOpenToolName(name)) deps.onFileTool?.(name, block.input);
             return block;
         });
         if (handledWorkflowTool) {
@@ -212,6 +216,9 @@ function interceptSseResponse(body: string, deps: LlsTaskInterceptorDeps): Inter
                 if (typeof payload.delta?.partial_json === 'string') acc.inputJson += payload.delta.partial_json;
                 continue;
             }
+            if (acc && isFileOpenToolName(acc.name) && typeof payload.delta?.partial_json === 'string') {
+                acc.inputJson += payload.delta.partial_json;
+            }
         }
 
         if (payload.type === 'content_block_stop') {
@@ -232,6 +239,7 @@ function interceptSseResponse(body: string, deps: LlsTaskInterceptorDeps): Inter
                 continue;
             }
             accumulators.delete(index);
+            if (acc && isFileOpenToolName(acc.name)) deps.onFileTool?.(acc.name, parseToolInput(acc.inputJson));
         }
 
         if (payload.type === 'message_delta' && payload.delta?.stop_reason === 'tool_use') {

@@ -45,6 +45,7 @@ import {
     PROVIDERS_VIEW_ID
 } from './constants';
 import { readCompactionConfigFromVscode, readPlanConfigFromVscode, readReviewConfigFromVscode, readExpertSubturnOptions } from './expertMode/expertConfig';
+import { EditorAutoOpener, extractFilePathFromToolInput } from './editorAutoOpen';
 import { ExpertSubturnService } from './expertMode/expertSubturnService';
 import { Logger } from './logger';
 import { AutoContinueScheduler } from './llsTask/autoContinue';
@@ -53,6 +54,8 @@ import { pasteToClaudeCode } from './llsTask/paster';
 import { LlsTaskService } from './llsTask/service';
 import { TaskFlowStore } from './llsTask/store';
 import type { LlsTaskItem } from './llsTask/types';
+import { createVscodeToolRelayHandler, VSCODE_TOOL_RELAY_PORT_ENV } from './vscodeTools/httpBridge';
+import { VSCODE_MCP_SERVER_NAME } from './vscodeTools/tools';
 import { AnthropicProxyAdapter } from './relay/anthropicProxy';
 import { DebugRecorder } from './relay/debugRecorder';
 import { OpenAIChatProxyAdapter } from './relay/openaiChatProxy';
@@ -1764,6 +1767,7 @@ async function startChatCliPair(options: { forceRestart?: boolean } = {}): Promi
         }));
         chatCliCancelRequested = false;
         logBrowserMcpInjection(normalLaunchConfig);
+        logVscodeMcpInjection(normalLaunchConfig);
         logMcpToolsBeforeCliStart();
         await normalCliProcess.start(normalLaunchConfig);
         rebuildNormalAdapter();
@@ -2092,6 +2096,23 @@ function logBrowserMcpInjection(config: ChatCliConfig): void {
         hasEntrypointScript: Array.isArray(server.args) && server.args[0] === '-e' && typeof server.args[1] === 'string' && server.args[1].includes('browserMcpServer'),
         relayPort: server.env?.[BROWSER_TOOL_RELAY_PORT_ENV] || '',
         toolPrefix: `mcp__${BROWSER_MCP_SERVER_NAME}__`
+    }));
+}
+
+function logVscodeMcpInjection(config: ChatCliConfig): void {
+    const server = config.mcpServers?.[VSCODE_MCP_SERVER_NAME];
+    if (!server) {
+        Logger.info('VS Code MCP 注入状态：disabled');
+        return;
+    }
+    Logger.info('VS Code MCP 注入状态：' + JSON.stringify({
+        serverName: VSCODE_MCP_SERVER_NAME,
+        type: server.type,
+        command: server.command || '',
+        argsCount: Array.isArray(server.args) ? server.args.length : 0,
+        hasEntrypointScript: Array.isArray(server.args) && server.args[0] === '-e' && typeof server.args[1] === 'string' && server.args[1].includes('vscodeMcpServer'),
+        relayPort: server.env?.[VSCODE_TOOL_RELAY_PORT_ENV] || '',
+        toolPrefix: `mcp__${VSCODE_MCP_SERVER_NAME}__`
     }));
 }
 
@@ -4674,7 +4695,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }
     };
     void buildUsageSink; // 保留工厂以便未来按 provider 实例化；当前用 sessionId 反查更稳。
+    const editorAutoOpener = new EditorAutoOpener();
+    const observeFileTool = (toolName: string, input: unknown): void => {
+        const filePath = extractFilePathFromToolInput(toolName, input);
+        if (!filePath) return;
+        void editorAutoOpener.observeToolUse({ toolName, filePath });
+    };
     const browserToolRelayHandler = createBrowserToolRelayHandler();
+    const vscodeToolRelayHandler = createVscodeToolRelayHandler();
     const chatRelayHandler = createRelayRouter({
         configManager,
         llsTaskService,
@@ -4684,19 +4712,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 debugRecorder,
                 { configManager, llsTaskService, autoContinueScheduler },
                 (report) => usageSinkRef.sink(report),
-                tokenBudgetService
+                tokenBudgetService,
+                observeFileTool
             ),
             new OpenAIChatProxyAdapter(
                 debugRecorder,
                 { configManager, llsTaskService, autoContinueScheduler },
                 (report) => usageSinkRef.sink(report),
-                tokenBudgetService
+                tokenBudgetService,
+                observeFileTool
             ),
             new OpenAIResponsesProxyAdapter(
                 debugRecorder,
                 { configManager, llsTaskService, autoContinueScheduler },
                 (report) => usageSinkRef.sink(report),
-                tokenBudgetService
+                tokenBudgetService,
+                observeFileTool
             )
         ],
         onUpstreamTimeout: (kind) => {
@@ -4713,6 +4744,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     });
     relayServer.setHandler(async (req, res) => {
         if (await browserToolRelayHandler(req, res)) return;
+        if (await vscodeToolRelayHandler(req, res)) return;
         await chatRelayHandler(req, res);
     });
 

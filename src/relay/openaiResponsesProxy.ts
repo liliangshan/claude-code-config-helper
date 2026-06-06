@@ -12,6 +12,7 @@ import { URL } from 'url';
 
 import { Logger } from '../logger';
 import { interceptAnthropicResponse } from '../llsTask/interceptor';
+import type { LlsTaskInterceptorDeps } from '../llsTask/interceptor';
 import { LlsTaskStreamingInterceptor } from '../llsTask/streamingInterceptor';
 import type { ApiType } from '../types';
 import { convertAnthropicToOpenAIResponses } from './converters/anthropicToOpenAIResponses';
@@ -55,7 +56,8 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
         private readonly recorder?: DebugRecorder,
         private readonly taskDeps?: OpenAIResponsesProxyTaskDeps,
         private readonly usageSink?: UsageSink,
-        private readonly tokenBudget?: TokenBudgetService
+        private readonly tokenBudget?: TokenBudgetService,
+        private readonly fileOpenObserver?: (toolName: string, input: unknown) => void
     ) {}
 
     /**
@@ -527,11 +529,12 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
      *
      * @returns 响应拦截器依赖。
      */
-    private toInterceptorDeps(): { service: NonNullable<OpenAIResponsesProxyTaskDeps>['llsTaskService']; autoContinueScheduler: NonNullable<OpenAIResponsesProxyTaskDeps>['autoContinueScheduler'] } {
+    private toInterceptorDeps(): LlsTaskInterceptorDeps {
         if (!this.taskDeps) throw new Error('任务流依赖不存在');
         return {
             service: this.taskDeps.llsTaskService,
-            autoContinueScheduler: this.taskDeps.autoContinueScheduler
+            autoContinueScheduler: this.taskDeps.autoContinueScheduler,
+            onFileTool: this.fileOpenObserver
         };
     }
 

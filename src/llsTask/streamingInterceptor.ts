@@ -9,6 +9,7 @@
  */
 
 import type { AutoContinueScheduler } from './autoContinue';
+import { isFileOpenToolName } from '../editorAutoOpen';
 import {
     classifyLocalToolKind,
     executeLocalToolByKind,
@@ -44,6 +45,8 @@ export interface LlsTaskStreamingInterceptorDeps {
     service: LlsTaskService;
     /** 自动续推调度器。 */
     autoContinueScheduler: AutoContinueScheduler;
+    /** 文件工具观察回调。 */
+    onFileTool?: (toolName: string, input: unknown) => void;
 }
 
 /** 流式拦截器最终状态。 */
@@ -68,6 +71,9 @@ export class LlsTaskStreamingInterceptor {
 
     /** 本地工具 block 状态，按原始 block index 记录。 */
     private readonly localBlocks = new Map<number, LocalToolBlockState>();
+
+    /** 非本地文件工具 block 状态，按原始 block index 记录。 */
+    private readonly fileToolBlocks = new Map<number, { name: string; inputJson: string }>();
 
     /** 是否出现任意 tool_use。 */
     private sawToolUse = false;
@@ -178,6 +184,7 @@ export class LlsTaskStreamingInterceptor {
         const kind = classifyLocalToolKind(name);
         if (!kind) {
             this.sawNonLocalTool = true;
+            if (isFileOpenToolName(name)) this.fileToolBlocks.set(index, { name, inputJson: '' });
             return formatSseEvent(record);
         }
         if (kind === 'workflow') this.handledWorkflowTool = true;
@@ -201,7 +208,12 @@ export class LlsTaskStreamingInterceptor {
     private handleContentBlockDelta(payload: Record<string, unknown>): string {
         const index = Number(payload.index ?? 0);
         const block = this.localBlocks.get(index);
-        if (!block) return formatSseEvent({ event: 'content_block_delta', data: JSON.stringify(payload) });
+        if (!block) {
+            const fileBlock = this.fileToolBlocks.get(index);
+            const delta = isRecord(payload.delta) ? payload.delta : {};
+            if (fileBlock && typeof delta.partial_json === 'string') fileBlock.inputJson += delta.partial_json;
+            return formatSseEvent({ event: 'content_block_delta', data: JSON.stringify(payload) });
+        }
         const delta = isRecord(payload.delta) ? payload.delta : {};
         if (typeof delta.partial_json === 'string') block.inputJson += delta.partial_json;
         return '';
@@ -217,7 +229,14 @@ export class LlsTaskStreamingInterceptor {
     private handleContentBlockStop(record: SseEventRecord, payload: Record<string, unknown>): string {
         const index = Number(payload.index ?? 0);
         const block = this.localBlocks.get(index);
-        if (!block) return formatSseEvent(record);
+        if (!block) {
+            const fileBlock = this.fileToolBlocks.get(index);
+            if (fileBlock) {
+                this.deps.onFileTool?.(fileBlock.name, parseToolInput(fileBlock.inputJson));
+                this.fileToolBlocks.delete(index);
+            }
+            return formatSseEvent(record);
+        }
         const message = executeLocalToolByKind(block.kind, block.name, parseToolInput(block.inputJson), this.toInterceptorDeps());
         this.localBlocks.delete(index);
         return formatSseEvent({
@@ -278,7 +297,8 @@ export class LlsTaskStreamingInterceptor {
     private toInterceptorDeps(): LlsTaskInterceptorDeps {
         return {
             service: this.deps.service,
-            autoContinueScheduler: this.deps.autoContinueScheduler
+            autoContinueScheduler: this.deps.autoContinueScheduler,
+            onFileTool: this.deps.onFileTool
         };
     }
 }

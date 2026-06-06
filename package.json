@@ -2,7 +2,7 @@
     "name": "claude-code-config-helper",
     "displayName": "%extension.displayName%",
     "description": "%extension.description%",
-    "version": "3.1.0",
+    "version": "3.2.0",
     "publisher": "liliangshan",
     "license": "MIT",
     "repository": {
@@ -368,6 +368,18 @@
                     "type": "boolean",
                     "default": true,
                     "description": "%configuration.chat.browserTools.enabled.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.editor.autoOpenReadWriteFiles": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "%configuration.editor.autoOpenReadWriteFiles.description%",
+                    "scope": "resource"
+                },
+                "claudeCodeConfigHelper.vscodeTools.getErrors.enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "%configuration.vscodeTools.getErrors.enabled.description%",
                     "scope": "resource"
                 },
                 "claudeCodeConfigHelper.chat.currentModel": {

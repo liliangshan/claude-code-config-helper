@@ -19,15 +19,55 @@ interface TestCase {
 /** 请求注入测试集合。 */
 const tests: TestCase[] = [
     {
-        name: '无任务流时不应注入任何 tools 或 system 规则',
+        name: '无任务流时仍应注入内置身份 system 提示词（system 字段 + 末尾 user 兜底）',
         run: () => {
             const input = JSON.stringify({
                 model: 'm',
                 messages: [{ role: 'user', content: 'hello' }]
             });
-            const result = injectLlsTaskRequestBody(input, undefined);
-            assert.strictEqual(result.injected, false);
-            assert.strictEqual(result.bodyText, input);
+            const result = injectLlsTaskRequestBody(input, undefined, { modelName: 'gpt-x' });
+            assert.strictEqual(result.injected, true);
+            const body = JSON.parse(result.bodyText) as {
+                system?: unknown;
+                messages?: Array<{ content?: Array<{ text?: string }> }>;
+            };
+            // system 字段应包含内置身份提示词。
+            assert.strictEqual(typeof body.system, 'string');
+            assert.ok(String(body.system).includes('lls: gpt-x'));
+            // 末尾 user 消息兜底前置同一段提示词，原始文本保留在其后。
+            assert.ok(Array.isArray(body.messages?.[0].content));
+            assert.ok(body.messages?.[0].content?.[0].text?.includes('lls: gpt-x'));
+            assert.strictEqual(body.messages?.[0].content?.[1].text, 'hello');
+        }
+    },
+    {
+        name: '普通对话（无任务流）也应注入用户全局/工作区共享提示词',
+        run: () => {
+            const fakeDeps = {
+                configManager: {
+                    getResolvedUiLanguage: () => 'en' as const,
+                    getGlobalSystemPrompt: () => 'global-rule',
+                    getWorkspaceSystemPrompt: () => 'workspace-rule'
+                },
+                llsTaskService: {
+                    hasActiveWorkflow: () => false,
+                    hasPendingWorkflowCreation: () => false,
+                    getSnapshot: () => ({ workflow: undefined })
+                },
+                autoContinueScheduler: {
+                    cancel: () => undefined
+                }
+            };
+            const result = injectLlsTaskRequestBody(JSON.stringify({
+                model: 'm',
+                system: 'base-system',
+                messages: [{ role: 'user', content: 'hello' }]
+            }), fakeDeps as never);
+            assert.strictEqual(result.injected, true);
+            const body = JSON.parse(result.bodyText) as { system?: unknown };
+            assert.ok(String(body.system).includes('base-system'));
+            assert.ok(String(body.system).includes('[Global System Prompt]\nglobal-rule'));
+            assert.ok(String(body.system).includes('[Workspace System Prompt]\nworkspace-rule'));
         }
     },
     {
@@ -133,9 +173,12 @@ const tests: TestCase[] = [
             }), fakeDeps as never);
             const body = JSON.parse(result.bodyText) as { messages?: Array<{ content?: Array<{ text?: string }> }> };
             assert.ok(Array.isArray(body.messages?.[0].content));
+            // 注入顺序：任务流控制规则在最前，其次是内置 system 兜底文本，最后才是原始用户文本。
             assert.ok(body.messages?.[0].content?.[0].text?.includes('Active llsccai-task workflow'));
             assert.ok(body.messages?.[0].content?.[0].text?.includes('Workflow JSON'));
-            assert.strictEqual(body.messages?.[0].content?.[1].text, '你是什么模型');
+            assert.ok(body.messages?.[0].content?.[1].text?.includes('lls:'));
+            const content = body.messages?.[0].content ?? [];
+            assert.strictEqual(content[content.length - 1].text, '你是什么模型');
         }
     },
     {

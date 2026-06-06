@@ -25,6 +25,10 @@ const stub: VscodeStubConfig = installVscodeStub({
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { ChatCliConfigService } = require('../cli/cliConfig') as typeof import('../cli/cliConfig');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { ASK_EXPERT_MCP_SERVER_NAME } = require('../../expertMode/askExpertMcpServer') as typeof import('../../expertMode/askExpertMcpServer');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { VSCODE_MCP_SERVER_NAME } = require('../../vscodeTools/tools') as typeof import('../../vscodeTools/tools');
 type ChatCliConfig = import('../cli/types').ChatCliConfig;
 
 /**
@@ -75,7 +79,10 @@ test('getDualConfigsWithRelayEnv: expertMode 关闭时只产出 normal', async (
     assert.ok(result.normal);
     assert.equal(result.normal.cliEnv.LLS_CHAT_ROLE, undefined);
     assert.equal(result.normal.cliEnv.ANTHROPIC_BASE_URL, 'http://127.0.0.1:12345/normal');
-    assert.ok(typeof result.normal.appendSystemPrompt === 'string' && result.normal.appendSystemPrompt.includes('@llsExpert'));
+    assert.ok(typeof result.normal.appendSystemPrompt === 'string' && result.normal.appendSystemPrompt.includes('ask_expert'));
+    assert.equal(result.normal.mcpServers?.[ASK_EXPERT_MCP_SERVER_NAME], undefined);
+    assert.ok(result.normal.mcpServers?.[VSCODE_MCP_SERVER_NAME]);
+    assert.equal(result.normal.mcpServers?.[VSCODE_MCP_SERVER_NAME]?.env?.LLS_VSCODE_TOOL_RELAY_PORT, '12345');
     // 未启用方案模型时 dispatcher 提示词不得出现 `@llsPlanTask` 诱导。
     assert.equal(result.normal.appendSystemPrompt?.includes('@llsPlanTask'), false);
     assert.equal(result.normal.appendSystemPrompt?.includes('Routing priority'), false);
@@ -94,7 +101,7 @@ test('getDualConfigsWithRelayEnv: planMode 关闭时 dispatcher 提示词不含 
     const service = makeService({ providerId: 'pNormal', modelId: 'mNormal' });
     const result = await service.getDualConfigsWithRelayEnv(12346);
 
-    assert.ok(result.normal.appendSystemPrompt?.includes('@llsExpert'));
+    assert.ok(result.normal.appendSystemPrompt?.includes('ask_expert'));
     assert.equal(result.normal.appendSystemPrompt?.includes('@llsPlanTask'), false);
     assert.equal(result.normal.appendSystemPrompt?.includes('Routing priority'), false);
     assert.equal(result.normal.appendSystemPrompt?.includes('HIGHEST PRIORITY plan/review'), false);
@@ -132,23 +139,18 @@ test('getDualConfigsWithRelayEnv: 启用专家时产出两条配置且 expert �
     const service = makeService({ providerId: 'pNormal', modelId: 'mNormal' });
     const result = await service.getDualConfigsWithRelayEnv(9999);
 
-    assert.ok(result.expert);
-    const expert = result.expert as ChatCliConfig;
-    assert.equal(expert.model, 'pExpert/mExpert');
-    assert.equal(expert.cliEnv.ANTHROPIC_MODEL, 'pExpert/mExpert');
-    assert.equal(expert.cliEnv.LLS_CHAT_ROLE, undefined);
-    assert.equal(expert.strictMcpConfig, true);
-    assert.ok(typeof expert.appendSystemPrompt === 'string' && expert.appendSystemPrompt.includes('expert model'));
+    assert.equal(result.expert, undefined);
+    assert.ok(result.normal.mcpServers?.[ASK_EXPERT_MCP_SERVER_NAME]);
+    assert.equal(result.normal.mcpServers?.[ASK_EXPERT_MCP_SERVER_NAME]?.args?.[0], '__LLS_ASK_EXPERT_PLACEHOLDER__');
+    assert.ok(result.normal.mcpServers?.[VSCODE_MCP_SERVER_NAME]);
+    assert.equal(result.normal.mcpServers?.[VSCODE_MCP_SERVER_NAME]?.env?.LLS_VSCODE_TOOL_RELAY_PORT, '9999');
 
     assert.equal(result.normal.model, 'pNormal/mNormal');
     assert.equal(result.normal.cliEnv.LLS_CHAT_ROLE, undefined);
-    assert.notEqual(result.normal.appendSystemPrompt, expert.appendSystemPrompt);
 
-    // dispatcher / expert 默认提示词都应包含 Write 工具使用纪律
+    // dispatcher 默认提示词应包含 Write 工具使用纪律
     assert.ok(result.normal.appendSystemPrompt?.includes('Write tool discipline'));
     assert.ok(result.normal.appendSystemPrompt?.includes('seed segment'));
-    assert.ok(expert.appendSystemPrompt?.includes('Write tool discipline'));
-    assert.ok(expert.appendSystemPrompt?.includes('seed segment'));
 });
 
 // ---------------------------------------------------------------------------
@@ -176,11 +178,8 @@ test('getDualConfigsWithRelayEnv: 残留 llsExpert MCP 应在两条配置上都�
     assert.ok(result.normal.mcpServers);
     assert.equal(result.normal.mcpServers?.llsExpert, undefined);
     assert.ok(result.normal.mcpServers?.memory);
-
-    const expert = result.expert as ChatCliConfig;
-    assert.ok(expert.mcpServers);
-    assert.equal(expert.mcpServers?.llsExpert, undefined);
-    assert.ok(expert.mcpServers?.memory);
+    assert.ok(result.normal.mcpServers?.[ASK_EXPERT_MCP_SERVER_NAME]);
+    assert.ok(result.normal.mcpServers?.[VSCODE_MCP_SERVER_NAME]);
 });
 
 // ---------------------------------------------------------------------------
@@ -210,12 +209,8 @@ test('getDualConfigsWithRelayEnv: 启用 plan/review 时产出四路配置', asy
     assert.equal(result.normal.cliEnv.ANTHROPIC_BASE_URL, 'http://127.0.0.1:9998/normal');
     assert.ok(result.normal.appendSystemPrompt?.includes('@llsPlanTask'));
 
-    const expert = result.expert as ChatCliConfig;
-    assert.equal(expert.model, 'pExpert/mExpert');
-    assert.equal(expert.cliEnv.ANTHROPIC_MODEL, 'pExpert/mExpert');
-    assert.equal(expert.cliEnv.LLS_CHAT_ROLE, undefined);
-    assert.equal(expert.cliEnv.ANTHROPIC_BASE_URL, 'http://127.0.0.1:9998/expert');
-    assert.equal(expert.strictMcpConfig, true);
+    assert.equal(result.expert, undefined);
+    assert.ok(result.normal.mcpServers?.[ASK_EXPERT_MCP_SERVER_NAME]);
 
     const plan = result.plan as ChatCliConfig;
     assert.equal(plan.model, 'pPlan/mPlan');

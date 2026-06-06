@@ -197,16 +197,18 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
     /**
      * 创建 Anthropic 透传适配器。
      *
-    * @param recorder 可选的调试记录器；提供后会按天聚合写入 messages。
-    * @param taskDeps 可选任务流依赖；提供后才会执行任务流注入与拦截。
-    * @param usageSink 可选 token 使用量上报回调；提供后会从上游响应抽取 usage 并上报到 Chat UI。
-    * @param tokenBudget 可选 token 预算服务；提供后在每次发送前/接收后做 token 累计与自动压缩判定。
+     * @param recorder 可选的调试记录器；提供后会按天聚合写入 messages。
+     * @param taskDeps 可选任务流依赖；提供后才会执行任务流注入与拦截。
+     * @param usageSink 可选 token 使用量上报回调；提供后会从上游响应抽取 usage 并上报到 Chat UI。
+     * @param tokenBudget 可选 token 预算服务；提供后在每次发送前/接收后做 token 累计与自动压缩判定。
+     * @param fileOpenObserver 可选文件工具观察回调。
      */
     public constructor(
         private readonly recorder?: DebugRecorder,
         private readonly taskDeps?: AnthropicProxyTaskDeps,
         private readonly usageSink?: UsageSink,
-        private readonly tokenBudget?: TokenBudgetService
+        private readonly tokenBudget?: TokenBudgetService,
+        private readonly fileOpenObserver?: (toolName: string, input: unknown) => void
     ) {}
 
     /**
@@ -346,7 +348,8 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                 const streamInterceptor = isStream && this.taskDeps
                     ? new LlsTaskStreamingInterceptor({
                         service: this.taskDeps.llsTaskService,
-                        autoContinueScheduler: this.taskDeps.autoContinueScheduler
+                        autoContinueScheduler: this.taskDeps.autoContinueScheduler,
+                        onFileTool: this.fileOpenObserver
                     })
                     : undefined;
                 // 将上游状态码与响应头透传给 Claude Code。
@@ -403,7 +406,8 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                         const finalBody = this.taskDeps
                             ? interceptAnthropicResponse(rawResponseBody, upstreamRes.headers['content-type'], {
                                 service: this.taskDeps.llsTaskService,
-                                autoContinueScheduler: this.taskDeps.autoContinueScheduler
+                                autoContinueScheduler: this.taskDeps.autoContinueScheduler,
+                                onFileTool: this.fileOpenObserver
                             }).body
                             : rawResponseBody;
                         usageReporter.feedJson(finalBody);

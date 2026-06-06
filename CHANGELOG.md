@@ -2,6 +2,17 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.0] - 2026-06-06
+
+### Fixed
+
+- The **`llsccaiVscode` MCP server** (exposing the `get_errors` VS Code diagnostics tool) now starts correctly as a CLI child process. Its module chain statically imported the real `vscode` module (via `diagnosticsHost`), which crashed the child process at load time so `get_errors` never appeared in the tool list. `DiagnosticsHost` is now lazily required only on the extension-host side, so the child entry loads without a `vscode` runtime.
+- **Global / workspace shared system prompts** (`openapicopilot.systemPrompt`) are now forwarded to the model in **every** non-side-track request. Previously they were only injected during task-flow scenarios, so in normal chat the configured prompts were silently dropped. The builtin identity prompt and shared prompts are now injected into both the `system` field and (as a fallback) prepended to the last user message.
+
+### Added
+
+- Startup log line **`VS Code MCP 注入状态`** mirroring the existing browser MCP log, so the injection state of `llsccaiVscode` (server name, entrypoint, relay port, tool prefix) is visible in the output channel before the CLI starts.
+
 ## [3.1.0] - 2026-06-05
 
 ### Added

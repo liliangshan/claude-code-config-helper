@@ -128,29 +128,39 @@ export function injectLlsTaskRequestBody(
         const originalTools = parsed.tools;
         parsed.tools = filterAnthropicToolsByName(parsed.tools, ALWAYS_BLOCKED_CHAT_TOOL_NAMES);
         const didFilterAlwaysBlockedTools = parsed.tools !== originalTools;
-        if (!shouldInjectWorkflowExecution && !shouldInjectWorkflowCreation) {
-            return didFilterAlwaysBlockedTools
-                ? { bodyText: JSON.stringify(parsed), injected: true }
-                : { bodyText, injected: false };
-        }
+
+        // 侧轨请求（会话标题生成等内部并发请求）不注入任何 system 提示词或任务流
+        // 工具，仅保留 always-blocked 工具过滤结果，按原意图透传。
         if (isClaudeCodeSideTrackRequest(parsed)) {
             Logger.info('[LlsTask] 跳过侧轨请求注入（会话标题生成等内部请求）');
             return didFilterAlwaysBlockedTools
                 ? { bodyText: JSON.stringify(parsed), injected: true }
                 : { bodyText, injected: false };
         }
+
+        // 内置身份提示词 + 用户全局/工作区共享提示词与任务流无关：只要不是侧轨
+        // 请求，每一轮都应注入，否则普通对话里这些提示词会丢失。采用 system 字段
+        // 为主、末尾 user 消息兜底前置的双重注入，兼顾弱遵循 system 的上游模型。
+        const baseSystemRules: string[] = [buildBuiltinChatSystemPrompt(options.modelName)];
+        const sharedSystemPrompt = buildSharedSystemPrompt(deps?.configManager);
+        if (sharedSystemPrompt) {
+            baseSystemRules.push(sharedSystemPrompt);
+        }
+        const baseSystemText = baseSystemRules.join('\n\n');
+        appendSystemRule(parsed, baseSystemText);
+        appendUserControlMessage(parsed, baseSystemText);
+
+        // 任务流工具/控制消息注入与 system 提示词解耦：仅在任务流活跃或触发创建时执行。
+        if (!shouldInjectWorkflowExecution && !shouldInjectWorkflowCreation) {
+            return { bodyText: JSON.stringify(parsed), injected: true };
+        }
+
         // 通过侧轨过滤后才取消自动续推定时器，避免标题生成等并发请求误把
         // 主对话刚刚登记的"缺失工具调用"续推计划清掉。
         deps?.autoContinueScheduler.cancel('任务流请求开始，避免旧定时器重复续推');
         const language = deps?.configManager.getResolvedUiLanguage();
         const builtIns: AnthropicToolDefinition[] = [];
-        const systemRules: string[] = [];
         const userControlRules: string[] = [];
-        systemRules.push(buildBuiltinChatSystemPrompt(options.modelName));
-        const sharedSystemPrompt = buildSharedSystemPrompt(deps?.configManager);
-        if (sharedSystemPrompt) {
-            systemRules.push(sharedSystemPrompt);
-        }
         // 工具列表中需要剔除的同名/冲突工具，按场景累加。
         //
         // **永久剔除项**：
@@ -179,17 +189,13 @@ export function injectLlsTaskRequestBody(
             userControlRules.push(buildCreateLlsCcaiTaskSystemRule(language));
         }
         if (builtIns.length === 0) {
-            return didFilterAlwaysBlockedTools
-                ? { bodyText: JSON.stringify(parsed), injected: true }
-                : { bodyText, injected: false };
+            // system 提示词已在上方注入，此处即便没有任务流工具也算改写成功。
+            return { bodyText: JSON.stringify(parsed), injected: true };
         }
         parsed.tools = mergeAnthropicTools(
             filterAnthropicToolsByName(parsed.tools, blockedToolNames) as unknown,
             builtIns
         );
-        if (systemRules.length > 0) {
-            appendSystemRule(parsed, systemRules.join('\n\n'));
-        }
         if (userControlRules.length > 0) {
             appendUserControlMessage(parsed, userControlRules.join('\n\n'));
         }

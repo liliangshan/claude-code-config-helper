@@ -138,6 +138,9 @@ export const CHAT_CLI_SKILLS_KEY = 'chat.skills';
 /** 浏览器工具 MCP 总开关：claudeCodeConfigHelper.chat.browserTools.enabled。 */
 export const CHAT_BROWSER_TOOLS_ENABLED_KEY = 'chat.browserTools.enabled';
 
+/** VS Code get_errors MCP 工具總開關：claudeCodeConfigHelper.vscodeTools.getErrors.enabled。 */
+export const VSCODE_TOOLS_GET_ERRORS_ENABLED_KEY = 'vscodeTools.getErrors.enabled';
+
 /**
  * 是否合并读取 VS Code 风格的 `mcp.json` 配置：claudeCodeConfigHelper.chat.includeVscodeMcpJson。
  *
