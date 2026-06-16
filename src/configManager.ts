@@ -15,7 +15,10 @@ import {
     PROVIDERS_STATE_KEY,
     TASK_FLOW_BYPASS_PERMISSIONS_KEY,
     TASK_FLOW_TARGET_KEY,
-    CHAT_CLI_PATH_KEY
+    CHAT_CLI_PATH_KEY,
+    CHAT_CACHE_TTL_STATE_KEY,
+    CHAT_CACHE_TTL_DEFAULT,
+    type ChatCacheTtl
 } from './constants';
 import type {
     AppLanguage,
@@ -174,6 +177,30 @@ export class ConfigManager implements vscode.Disposable {
             .getConfiguration(CCAI_NAMESPACE)
             .get<string>(CHAT_CLI_PATH_KEY, '')
             .trim();
+    }
+
+    /**
+     * 读取 Anthropic 提示词缓存时长选择（持久化于 globalState）。
+     *
+     * 取值 `'default'`（不改写、沿用客户端原样）、`'5m'` 或 `'1h'`；未设置或非法值
+     * 时回退到 {@link CHAT_CACHE_TTL_DEFAULT}（`'default'`）。该选择由 Chat 模型
+     * 选择弹窗里的下拉控制，不再暴露为 VS Code 设置项。
+     *
+     * @returns 规范化后的缓存时长选择。
+     */
+    public getChatCacheTtl(): ChatCacheTtl {
+        const raw = this.context.globalState.get<string>(CHAT_CACHE_TTL_STATE_KEY, CHAT_CACHE_TTL_DEFAULT);
+        return raw === '5m' || raw === '1h' || raw === 'default' ? raw : CHAT_CACHE_TTL_DEFAULT;
+    }
+
+    /**
+     * 持久化 Anthropic 提示词缓存时长选择到 globalState。
+     *
+     * @param ttl 目标缓存时长选择；非法值回退到默认。
+     */
+    public async setChatCacheTtl(ttl: ChatCacheTtl): Promise<void> {
+        const normalized: ChatCacheTtl = ttl === '5m' || ttl === '1h' || ttl === 'default' ? ttl : CHAT_CACHE_TTL_DEFAULT;
+        await this.context.globalState.update(CHAT_CACHE_TTL_STATE_KEY, normalized);
     }
 
     /** 读取全部提供商配置。 */

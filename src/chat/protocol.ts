@@ -198,6 +198,9 @@ export interface ChatModelOption {
 /** Chat 输入框快捷权限模式选项。 */
 export type ChatQuickPermissionMode = 'acceptEdits' | 'bypassPermissions';
 
+/** 模型选择弹窗里的缓存时长选项。`default` 表示不改写、沿用客户端原样（系统默认 5m）。 */
+export type ChatCacheTtlOption = 'default' | '5m' | '1h';
+
 /** Chat 底部专家下拉框的当前选择状态。 */
 export interface ChatExpertModelSelection {
     /** 是否启用专家；false 表示「关闭专家」。 */
@@ -295,6 +298,7 @@ export type ExtensionToWebview =
     | { type: 'composer/addAttachments'; attachments: ChatComposerAttachment[]; focus?: boolean }
     | { type: 'composer/replaceAttachment'; clientId: string; attachment: ChatComposerAttachment; focus?: boolean }
     | { type: 'permissionMode/current'; mode: ChatQuickPermissionMode }
+    | { type: 'cacheTtl/current'; ttl: ChatCacheTtlOption }
     | {
           /**
            * 推送 Chat 输入框上方「当前模型」下拉框可选项与已选状态。
@@ -532,6 +536,7 @@ export type WebviewToExtension =
     | { type: 'file/uploadBlob'; clientId: string; name: string; displayName?: string; size: number; mime: string; base64: string }
     | { type: 'model/select'; providerId: string; modelId: string }
     | { type: 'permissionMode/select'; mode: ChatQuickPermissionMode }
+    | { type: 'cacheTtl/select'; ttl: ChatCacheTtlOption }
     | {
           /**
            * 保存专家模型下拉框选择。

@@ -2,6 +2,20 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.2] - 2026-06-16
+
+### Fixed
+
+- Fixed the Anthropic prompt-cache 400 error (`a ttl='1h' cache_control block must not come after a ttl='5m' cache_control block`) raised by the built-in Chat CLI. The relay used to force every outbound `cache_control` breakpoint to `ttl='1h'`, but an upstream gateway injects its own `ttl='5m'` breakpoints (and prepends extra messages) before reaching Anthropic, so the rewritten `1h` ended up after the gateway's `5m` and got rejected. The cache TTL now defaults to **Default (follow client)**, which leaves the request's `cache_control` untouched and avoids the ordering conflict.
+
+### Added
+
+- A **Prompt cache TTL** selector inside the model-picker dialog with three options — **Default (follow client)** / **5 minutes** / **1 hour** — and a hint reading *"If requests error, switch back to Default."* The choice is persisted in global state and applies to the relay immediately without a reload. Translations are provided for all seven UI languages (en/zh-cn/zh-tw/ko/ja/fr/de).
+
+### Changed
+
+- Removed the old `claudeCodeConfigHelper.chat.cacheTtl` VS Code setting (and its nls strings); the cache TTL is now controlled entirely from the model-picker dialog.
+
 ## [3.2.1] - 2026-06-07
 
 ### Fixed

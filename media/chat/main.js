@@ -264,6 +264,7 @@
     Object.assign(chatTranslations.en, {
         modelsBarNormal: 'Normal:', modelsBarExpert: 'Expert:', openModelPicker: 'Choose models',
         pickerTitle: 'Select Chat models', pickerNormalSection: 'Normal task model', pickerExpertSection: 'Expert task model', pickerPlanSection: 'Plan task model', pickerReviewSection: 'Review task model', pickerCompactionSection: 'Compaction model',
+        pickerCacheTtlSection: 'Prompt cache TTL', pickerCacheTtlDefault: 'Default (follow client)', pickerCacheTtl5m: '5 minutes', pickerCacheTtl1h: '1 hour', pickerCacheTtlHint: 'If requests error, switch back to Default.',
         pickerSave: 'Save and restart CLI', pickerCancel: 'Cancel',
         expertNotConfigured: 'Disable expert', expertNotConfiguredToast: 'Expert model is not configured. Open the model picker to select one.',
         expertUnavailable: 'Not configured',
@@ -272,6 +273,7 @@
     Object.assign(chatTranslations['zh-cn'], {
         modelsBarNormal: '普通：', modelsBarExpert: '专家：', openModelPicker: '选择模型',
         pickerTitle: '选择 Chat 模型', pickerNormalSection: '普通任务模型', pickerExpertSection: '专家任务模型', pickerPlanSection: '方案任务模型', pickerReviewSection: '审查任务模型', pickerCompactionSection: '压缩模型',
+        pickerCacheTtlSection: '提示词缓存时长', pickerCacheTtlDefault: '默认（沿用客户端）', pickerCacheTtl5m: '5 分钟', pickerCacheTtl1h: '1 小时', pickerCacheTtlHint: '如果请求报错，切回默认。',
         pickerSave: '保存并重启 CLI', pickerCancel: '取消',
         expertNotConfigured: '关闭专家', expertNotConfiguredToast: '尚未配置专家模型，请在「选择模型」弹窗中选择。',
         expertUnavailable: '未配置',
@@ -280,6 +282,7 @@
     Object.assign(chatTranslations['zh-tw'], {
         modelsBarNormal: '一般：', modelsBarExpert: '專家：', openModelPicker: '選擇模型',
         pickerTitle: '選擇 Chat 模型', pickerNormalSection: '一般任務模型', pickerExpertSection: '專家任務模型', pickerPlanSection: '方案任務模型', pickerReviewSection: '審查任務模型', pickerCompactionSection: '壓縮模型',
+        pickerCacheTtlSection: '提示詞快取時長', pickerCacheTtlDefault: '預設（沿用用戶端）', pickerCacheTtl5m: '5 分鐘', pickerCacheTtl1h: '1 小時', pickerCacheTtlHint: '若請求發生錯誤，請切回預設。',
         pickerSave: '儲存並重新啟動 CLI', pickerCancel: '取消',
         expertNotConfigured: '關閉專家', expertNotConfiguredToast: '尚未設定專家模型，請在「選擇模型」對話框中選擇。',
         expertUnavailable: '未設定',
@@ -288,6 +291,7 @@
     Object.assign(chatTranslations.ko, {
         modelsBarNormal: '일반:', modelsBarExpert: '전문가:', openModelPicker: '모델 선택',
         pickerTitle: 'Chat 모델 선택', pickerNormalSection: '일반 작업 모델', pickerExpertSection: '전문가 작업 모델', pickerPlanSection: '계획 작업 모델', pickerReviewSection: '검토 작업 모델', pickerCompactionSection: '압축 모델',
+        pickerCacheTtlSection: '프롬프트 캐시 TTL', pickerCacheTtlDefault: '기본값(클라이언트 따름)', pickerCacheTtl5m: '5분', pickerCacheTtl1h: '1시간', pickerCacheTtlHint: '요청이 오류가 나면 기본값으로 되돌리세요.',
         pickerSave: '저장 후 CLI 재시작', pickerCancel: '취소',
         expertNotConfigured: '전문가 비활성화', expertNotConfiguredToast: '전문가 모델이 설정되지 않았습니다. 모델 선택 대화 상자에서 선택하세요.',
         expertUnavailable: '미설정',
@@ -296,6 +300,7 @@
     Object.assign(chatTranslations.ja, {
         modelsBarNormal: '通常:', modelsBarExpert: 'エキスパート:', openModelPicker: 'モデルを選択',
         pickerTitle: 'Chat モデルを選択', pickerNormalSection: '通常タスクモデル', pickerExpertSection: 'エキスパートタスクモデル', pickerPlanSection: 'プランタスクモデル', pickerReviewSection: 'レビ��ータスクモデル', pickerCompactionSection: '圧縮モデル',
+        pickerCacheTtlSection: 'プロンプトキャッシュ TTL', pickerCacheTtlDefault: 'デフォルト（クライアントに従う）', pickerCacheTtl5m: '5 分', pickerCacheTtl1h: '1 時間', pickerCacheTtlHint: 'リクエストがエラーになる場合はデフォルトに戻してください。',
         pickerSave: '保存して CLI を再起動', pickerCancel: 'キャンセル',
         expertNotConfigured: 'エキスパートを無効化', expertNotConfiguredToast: 'エキスパートモデルが設定されていません。モデル選択ダイアログで選択してください。',
         expertUnavailable: '未設定',
@@ -304,6 +309,7 @@
     Object.assign(chatTranslations.fr, {
         modelsBarNormal: 'Normal :', modelsBarExpert: 'Expert :', openModelPicker: 'Choisir les modèles',
         pickerTitle: 'Sélectionner les modèles Chat', pickerNormalSection: 'Modèle de tâche normal', pickerExpertSection: 'Modèle de tâche expert', pickerPlanSection: 'Modèle de tâche plan', pickerReviewSection: 'Modèle de tâche revue',
+        pickerCacheTtlSection: 'TTL du cache de prompt', pickerCacheTtlDefault: 'Par défaut (suivre le client)', pickerCacheTtl5m: '5 minutes', pickerCacheTtl1h: '1 heure', pickerCacheTtlHint: 'En cas d’erreur de requête, revenez à Par défaut.',
         pickerSave: 'Enregistrer et redémarrer le CLI', pickerCancel: 'Annuler',
         expertNotConfigured: 'Désactiver l’expert', expertNotConfiguredToast: 'Le modèle expert n’est pas configuré. Choisissez-en un dans le sélecteur de modèles.',
         expertUnavailable: 'Non configuré',
@@ -312,6 +318,7 @@
     Object.assign(chatTranslations.de, {
         modelsBarNormal: 'Normal:', modelsBarExpert: 'Experte:', openModelPicker: 'Modelle wählen',
         pickerTitle: 'Chat-Modelle auswählen', pickerNormalSection: 'Normales Aufgabenmodell', pickerExpertSection: 'Experten-Aufgabenmodell', pickerPlanSection: 'Plan-Aufgabenmodell', pickerReviewSection: 'Review-Aufgabenmodell',
+        pickerCacheTtlSection: 'Prompt-Cache-TTL', pickerCacheTtlDefault: 'Standard (Client folgen)', pickerCacheTtl5m: '5 Minuten', pickerCacheTtl1h: '1 Stunde', pickerCacheTtlHint: 'Bei Anfragefehlern auf Standard zurückschalten.',
         pickerSave: 'Speichern und CLI neu starten', pickerCancel: 'Abbrechen',
         routeAutoSwitched: 'Die nächste Nachricht wird über die Experten-Route gesendet',
         expertNotConfigured: 'Experte deaktivieren', expertNotConfiguredToast: 'Das Expertenmodell ist nicht konfiguriert. Bitte wählen Sie eines im Modell-Auswahldialog.',
@@ -379,6 +386,7 @@
     const modelPickerPlanSelectEl = document.querySelector('[data-role="model-picker-plan-select"]');
     const modelPickerReviewSelectEl = document.querySelector('[data-role="model-picker-review-select"]');
     const modelPickerCompactionSelectEl = document.querySelector('[data-role="model-picker-compaction-select"]');
+    const modelPickerCacheTtlSelectEl = document.querySelector('[data-role="model-picker-cache-ttl-select"]');
     const modelPickerCancelEls = Array.prototype.slice.call(
         document.querySelectorAll('[data-role="model-picker-cancel"], [data-role="model-picker-cancel-btn"]')
     );
@@ -436,6 +444,7 @@
         expertAvailable: false,
         expertAvailableModelName: '',
         permissionMode: 'acceptEdits',
+        cacheTtl: 'default',
         defaultAttachmentPaths: new Set(),
         dragDepth: 0,
         chatRunning: false,
@@ -1709,6 +1718,15 @@
         const mode = composerState.permissionMode === 'bypassPermissions' ? 'bypassPermissions' : 'acceptEdits';
         permissionModeSelectEl.value = mode;
         permissionModeSelectEl.title = mode === 'bypassPermissions' ? t('permissionBypass') : t('permissionAcceptEdits');
+    }
+
+    /**
+     * 将模型弹窗里的缓存时长下拉框同步为 composerState.cacheTtl 当前值。
+     */
+    function renderCacheTtlSelect() {
+        if (!(modelPickerCacheTtlSelectEl instanceof HTMLSelectElement)) return;
+        const ttl = composerState.cacheTtl === '5m' || composerState.cacheTtl === '1h' ? composerState.cacheTtl : 'default';
+        modelPickerCacheTtlSelectEl.value = ttl;
     }
 
     /**
@@ -4813,6 +4831,10 @@
                 composerState.permissionMode = message.mode === 'bypassPermissions' ? 'bypassPermissions' : 'acceptEdits';
                 renderPermissionModeSelect();
                 break;
+            case 'cacheTtl/current':
+                composerState.cacheTtl = message.ttl === '5m' || message.ttl === '1h' ? message.ttl : 'default';
+                renderCacheTtlSelect();
+                break;
             case 'taskFlow/status':
                 updateTaskFlowTodoStatus(message.snapshot);
                 break;
@@ -5128,6 +5150,13 @@
         composerState.permissionMode = mode;
         renderPermissionModeSelect();
         post({ type: 'permissionMode/select', mode });
+    });
+    modelPickerCacheTtlSelectEl?.addEventListener('change', () => {
+        if (!(modelPickerCacheTtlSelectEl instanceof HTMLSelectElement)) return;
+        const ttl = modelPickerCacheTtlSelectEl.value === '5m' || modelPickerCacheTtlSelectEl.value === '1h' ? modelPickerCacheTtlSelectEl.value : 'default';
+        composerState.cacheTtl = ttl;
+        renderCacheTtlSelect();
+        post({ type: 'cacheTtl/select', ttl });
     });
     tokenMeterEl?.addEventListener('click', (event) => {
         event.stopPropagation();

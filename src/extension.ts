@@ -44,6 +44,7 @@ import {
     CONFIG_NAMESPACE,
     PROVIDERS_VIEW_ID
 } from './constants';
+import type { ChatCacheTtl } from './constants';
 import { readCompactionConfigFromVscode, readPlanConfigFromVscode, readReviewConfigFromVscode, readExpertSubturnOptions } from './expertMode/expertConfig';
 import { EditorAutoOpener, extractFilePathFromToolInput } from './editorAutoOpen';
 import { ExpertSubturnService } from './expertMode/expertSubturnService';
@@ -2441,6 +2442,7 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
             await postModelsSnapshot();
             await chatViewHost?.postMessage({ type: 'route/changed', route: activeRoute });
             await postChatPermissionMode();
+            await postChatCacheTtl();
             await postChatTaskFlowStatus();
             await postActiveEditorAttachmentToChat();
             await maybePostTaskFlowRestorePrompt();
@@ -2471,6 +2473,9 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
             return;
         case 'permissionMode/select':
             await selectChatPermissionMode(message.mode);
+            return;
+        case 'cacheTtl/select':
+            await selectChatCacheTtl(message.ttl);
             return;
         case 'expert/model/select':
             await selectChatExpertModel(message.modelId);
@@ -2991,6 +2996,14 @@ async function postChatPermissionMode(): Promise<void> {
 }
 
 /**
+ * 读取当前缓存时长选择并推送到 Chat Webview，用于回填模型选择弹窗里的下拉框。
+ */
+async function postChatCacheTtl(): Promise<void> {
+    if (!configManager) return;
+    await chatViewHost?.postMessage({ type: 'cacheTtl/current', ttl: configManager.getChatCacheTtl() });
+}
+
+/**
  * 读取当前 LLS CCAI / CC 任务流快照并推送到 Chat Webview。
  *
  * Webview 会根据该状态在聊天上方显示或隐藏 Todo 状态卡片；任务流创建、更新、
@@ -3123,6 +3136,21 @@ async function selectChatPermissionMode(mode: ChatQuickPermissionMode): Promise<
     Logger.info(`Chat 输入框切换权限模式：${mode}，将通过 --permission-mode 重启 CLI`);
     await restartChatCli({ silent: true });
     await showChatToast('success', `权限模式已切换为：${mode}`);
+}
+
+/**
+ * 保存模型选择弹窗里的缓存时长选择。
+ *
+ * 仅写入 globalState 并回推当前值给 Webview；缓存时长在每次请求时由 relay 实时读取，
+ * 无需重启 CLI 或重载窗口即可生效。
+ *
+ * @param ttl 缓存时长选择：`'default'` 不改写、`'5m'` 归一化为 5 分钟、`'1h'` 归一化为 1 小时。
+ */
+async function selectChatCacheTtl(ttl: ChatCacheTtl): Promise<void> {
+    if (!configManager) throw new Error('配置管理器尚未初始化');
+    await configManager.setChatCacheTtl(ttl);
+    await postChatCacheTtl();
+    Logger.info(`Chat 模型弹窗切换缓存时长：${ttl}`);
 }
 
 /**

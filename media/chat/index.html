@@ -123,6 +123,15 @@
                 <h3 data-i18n="pickerCompactionSection">Compaction model</h3>
                 <select class="model-picker__select" data-role="model-picker-compaction-select"></select>
             </section>
+            <section class="model-picker__section">
+                <h3 data-i18n="pickerCacheTtlSection">Prompt cache TTL</h3>
+                <select class="model-picker__select" data-role="model-picker-cache-ttl-select">
+                    <option value="default" data-i18n="pickerCacheTtlDefault">Default (follow client)</option>
+                    <option value="5m" data-i18n="pickerCacheTtl5m">5 minutes</option>
+                    <option value="1h" data-i18n="pickerCacheTtl1h">1 hour</option>
+                </select>
+                <p class="model-picker__hint" data-i18n="pickerCacheTtlHint">If requests error, switch back to Default.</p>
+            </section>
             <footer class="model-picker__footer">
                 <button type="button" class="model-picker__cancel" data-role="model-picker-cancel-btn" data-i18n="pickerCancel">Cancel</button>
                 <button type="submit" class="model-picker__save" data-role="model-picker-save" data-i18n="pickerSave">Save and restart CLI</button>

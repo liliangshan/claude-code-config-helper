@@ -77,19 +77,55 @@ export interface DebugRecordEntry {
  */
 export class DebugRecorder {
     /**
-     * 把最终请求 body 覆盖写入 `.LLSOAI/test.json`。
+     * 把最终请求 body 写入 `.LLSOAI/test-<时间戳>-<随机>.json`。
+     *
+     * 改为「每次请求一个独立文件」而非覆盖写 `test.json`：调试 400 等偶发错误时，
+     * 出错请求体不会被下一条请求覆盖，可在目录里逐个比对各请求的缓存断点 ttl。
      *
      * @param bodyText 已注入工具、即将发送到上游的请求体文本。
      */
     public async recordRequestBody(bodyText: string): Promise<void> {
         try {
             const dir = await this.resolveDir();
-            const filePath = path.join(dir, 'test.json');
+            const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            const filePath = path.join(dir, `test-${stamp}.json`);
             const formatted = this.formatJsonText(bodyText);
             await fs.writeFile(filePath, `${formatted}\n`, 'utf-8');
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             Logger.warn(`写入 Relay 请求 body 失败：${message}`);
+        }
+    }
+
+    /**
+     * 上游返回非 2xx 时，把「实际发出的请求体 + 上游响应」成对落盘到
+     * `.LLSOAI/error-<状态码>-<时间戳>.json`，用于定位 400（如缓存断点 ttl 混用）
+     * 等错误对应的确切出站请求，避免被后续请求覆盖、且不依赖二次复现。
+     *
+     * @param status 上游 HTTP 状态码。
+     * @param requestBody 实际发送到上游的请求体文本。
+     * @param responseBody 上游返回的响应体文本。
+     */
+    public async recordUpstreamError(
+        status: number,
+        requestBody: string,
+        responseBody: string
+    ): Promise<void> {
+        try {
+            const dir = await this.resolveDir();
+            const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            const filePath = path.join(dir, `error-${status}-${stamp}.json`);
+            let requestJson: unknown = requestBody;
+            try {
+                requestJson = JSON.parse(requestBody);
+            } catch {
+                // 保底：解析失败时按原始字符串落盘。
+            }
+            const payload = { status, response: responseBody, request: requestJson };
+            await fs.writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            Logger.warn(`写入 Relay 上游错误快照失败：${message}`);
         }
     }
 

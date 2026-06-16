@@ -391,6 +391,11 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                 upstreamRes.on('end', () => {
                     if (!res.writableEnded) {
                         const rawResponseBody = Buffer.concat(responseChunks).toString('utf-8');
+                        // 上游非 2xx 时把「实际出站请求体 + 响应」成对落盘，便于定位
+                        // 400（缓存断点 ttl 混用等）对应的确切请求，不依赖二次复现。
+                        if (typeof responseStatus === 'number' && responseStatus >= 400 && this.recorder) {
+                            void this.recorder.recordUpstreamError(responseStatus, bodyText, rawResponseBody);
+                        }
                         if (isStream) {
                             const tail = streamInterceptor?.end() ?? '';
                             if (tail) {

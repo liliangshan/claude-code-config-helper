@@ -1,11 +1,12 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.1
+**Version:** 3.2.2
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
 
 ## Highlights
 
+- Fixed the Anthropic prompt-cache **400** error (`a ttl='1h' cache_control block must not come after a ttl='5m' cache_control block`) in the built-in Chat CLI: the relay no longer force-rewrites outbound `cache_control` breakpoints to `1h`, which conflicted with `5m` breakpoints injected by an upstream gateway. The cache TTL now defaults to **Default (follow client)**, configurable through a new selector in the model-picker dialog (**Default / 5 minutes / 1 hour**) with a "switch back to Default on errors" hint, persisted in global state and applied to the relay without a reload.
 - Added an in-Chat **"Skip browser confirmation"** hint after the CC task-flow button: when browser tools are usable but VS Code still prompts "Open Browser Page?" on every page, the hint offers a one-click, in-webview confirmation that enables `workbench.browser.enableChatTools` and `chat.tools.global.autoApprove` together — no blocking activation popup.
 - Reworked the **browser tool suite** to call VS Code's built-in language-model browser tools via `vscode.lm.invokeTool` with page-id threading (`browser_open`, `browser_navigate`, `browser_get_content`, `browser_screenshot`, `browser_console`, `browser_eval`), exposed through the in-process `browser` MCP server.
 - Added **task-flow persistence**: the CC task workflow snapshot is now cached to `.LLSOAI/task-flow.json` on every create/update, and is restored on the next VS Code launch with a "Resume unfinished task flow?" prompt so progress survives restarts.

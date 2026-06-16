@@ -83,6 +83,15 @@ export const CHAT_ENABLED_KEY = 'chat.enabled';
 /** Chat CLI 可执行文件路径配置字段：claudeCodeConfigHelper.chat.cliPath。 */
 export const CHAT_CLI_PATH_KEY = 'chat.cliPath';
 
+/** Chat 缓存时长在 globalState 中的持久化 key（不再暴露为 VS Code 设置项）。 */
+export const CHAT_CACHE_TTL_STATE_KEY = 'claudeRouter.chatCacheTtl';
+
+/** Chat 缓存时长允许的取值。`default` 表示不改写、沿用客户端原样（系统默认 5m）。 */
+export type ChatCacheTtl = 'default' | '1h' | '5m';
+
+/** Chat 缓存时长缺省值：default 即不改写请求里的缓存断点，规避上游网关注入 5m 引发的 1h-after-5m 400。 */
+export const CHAT_CACHE_TTL_DEFAULT: ChatCacheTtl = 'default';
+
 /** Chat CLI 附加参数配置字段：claudeCodeConfigHelper.chat.cliArgs。 */
 export const CHAT_CLI_ARGS_KEY = 'chat.cliArgs';
 
