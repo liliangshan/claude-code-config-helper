@@ -26,9 +26,19 @@ export function extractAnthropicSessionId(parsedBody: unknown): string {
 /** 判断 Anthropic 请求最后一条 user 消息是否为 Claude CLI 原生压缩指令。 */
 export function isClaudeCompactCommandRequest(parsedBody: unknown): boolean {
     const lastText = readLastUserMessageText(parsedBody).trim();
-    if (lastText.includes(CLAUDE_COMPACT_COMMAND_MARKER) || lastText === '/compact') return true;
-    if (!isClaudeCompactSummaryPrompt(lastText)) return false;
-    return readAllUserMessageText(parsedBody).includes(CLAUDE_COMPACT_COMMAND_MARKER);
+    // 路径一：最后一条 user 消息本身就是 /compact 指令（TUI 标记或纯文本）。
+    if (containsCompactCommandMarker(lastText) || lastText === '/compact') return true;
+    // 路径二：最后一条是 Claude CLI 压缩摘要 prompt。该 prompt 文案高度特定，
+    // 足以单独判定为压缩请求；不再要求 user 消息里另带 command marker —— 因为
+    // token-budget 程序化发送的 /compact、以及新版 CLI 的摘要请求可能不携带该标记，
+    // 旧逻辑会把这类摘要请求误判为普通请求、回退到主模型而非压缩专用模型。
+    return isClaudeCompactSummaryPrompt(lastText);
+}
+
+/** 容错匹配 /compact 指令标记：兼容有无前导斜杠、大小写差异等形态。 */
+function containsCompactCommandMarker(text: string): boolean {
+    if (text.includes(CLAUDE_COMPACT_COMMAND_MARKER)) return true;
+    return /<command-name>\s*\/?compact\s*<\/command-name>/i.test(text);
 }
 
 /** 读取 Anthropic 请求最后一条 user 消息文本。 */
@@ -41,20 +51,6 @@ function readLastUserMessageText(parsedBody: unknown): string {
     const record = last as { role?: unknown; content?: unknown };
     if (record.role !== 'user') return '';
     return readTextContent(record.content);
-}
-
-function readAllUserMessageText(parsedBody: unknown): string {
-    if (!parsedBody || typeof parsedBody !== 'object') return '';
-    const messages = (parsedBody as { messages?: unknown }).messages;
-    if (!Array.isArray(messages)) return '';
-    const parts: string[] = [];
-    for (const message of messages) {
-        if (!message || typeof message !== 'object') continue;
-        const record = message as { role?: unknown; content?: unknown };
-        if (record.role !== 'user') continue;
-        parts.push(readTextContent(record.content));
-    }
-    return parts.join('\n');
 }
 
 function isClaudeCompactSummaryPrompt(text: string): boolean {

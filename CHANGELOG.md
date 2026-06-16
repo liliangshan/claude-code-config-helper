@@ -2,6 +2,24 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.5] - 2026-06-16
+
+### Fixed
+
+- Fixed Mac Chinese (IME) input where pressing **Enter to confirm a candidate** would wrongly send the message. macOS Pinyin commits per character (`compositionend` fires early) while the candidate window stays open, and the confirming Enter arrives with `isComposing=false`, so composition-state checks could not catch it. The composer and the in-place resend editor now use an arrow-key state machine: pressing an arrow key (the typical "page through candidates" action) marks the next Enter as a candidate confirmation that does not send, while any other key resets the state so a plain Enter sends normally.
+
+## [3.2.4] - 2026-06-16
+
+### Fixed
+
+- Compaction requests now route to the configured **compaction model** even when the Claude CLI summary request carries no `<command-name>/compact</command-name>` marker. The relay used to require that marker to be present alongside the summary prompt, but token-budget-triggered `/compact` (sent programmatically via stream-json) and newer CLI versions emit the summary request without it, so those requests fell back to the main model. The summary prompt itself is now a sufficient signal, and the `/compact` marker match is tolerant of leading-slash and case variations.
+
+## [3.2.3] - 2026-06-16
+
+### Changed
+
+- Packaged the extension with its production dependencies (`js-tiktoken`, `base64-js`) bundled into the VSIX so the token-budget tokenizer works without a separate install step.
+
 ## [3.2.2] - 2026-06-16
 
 ### Fixed

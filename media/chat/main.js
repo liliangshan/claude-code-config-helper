@@ -1824,6 +1824,46 @@
     }
 
     /**
+     * 为文本输入元素安装「回车发送」护栏，规避 Mac 中文输入用回车选字时误发送。
+     *
+     * 背景：macOS 简体拼音等输入法会逐字提交（compositionend 提前触发），候选词窗口仍
+     * 可能开着，但 DOM 与 isComposing 都给不出「候选窗开启」信号，单看合成态无法区分
+     * 「选字回车」与「发送回车」。实测用户翻页选字的操作序列是：先按方向键移动候选高亮、
+     * 再按回车确认。据此用方向键状态机识别：按过方向键后紧跟的回车判为「选字确认」，
+     * 不发送并复位；按下任何非方向键则复位状态，使后续回车恢复正常发送语义。
+     *
+     * @param {Element|null} el 目标输入元素（textarea/input）。
+     * @param {() => void} onSend 判定为真实发送意图时执行的回调。
+     * @returns {(event: KeyboardEvent) => void} 传入 keydown 事件进行处理。
+     */
+    function installImeEnterGuard(el, onSend) {
+        // 最近一次 keydown 是否为方向键：用于识别「方向键选字 → 回车确认」序列。
+        let arrowPressed = false;
+        const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+        return (event) => {
+            // 合成态内的回车始终用于选字/确认，直接放行默认行为、不发送。
+            if (event.isComposing || event.keyCode === 229) return;
+            if (arrowKeys.indexOf(event.key) !== -1) {
+                // 记录方向键，等待其后是否紧跟回车（典型的翻页选字动作）。
+                arrowPressed = true;
+                return;
+            }
+            if (event.key === 'Enter' && !event.shiftKey) {
+                if (arrowPressed) {
+                    // 紧跟方向键的回车判为「选字确认」：不发送，并复位状态。
+                    arrowPressed = false;
+                    return;
+                }
+                event.preventDefault();
+                onSend();
+                return;
+            }
+            // 其它任意按键都复位方向键状态，使后续回车恢复正常发送语义。
+            arrowPressed = false;
+        };
+    }
+
+    /**
      * 根据 textarea 内容自动调整输入框高度。
      */
     function autoResizeComposer() {
@@ -4253,16 +4293,18 @@
         sendBtn.addEventListener('click', function () { submitResendEditor(message, textarea); });
         cancelBtn.addEventListener('click', closeActiveResendEditor);
         textarea.addEventListener('input', function () { autoResizeResendEditor(textarea); });
+        const resendImeGuard = installImeEnterGuard(textarea, function () {
+            submitResendEditor(message, textarea);
+        });
         textarea.addEventListener('keydown', function (event) {
             if (event.key === 'Escape') {
                 event.preventDefault();
                 closeActiveResendEditor();
                 return;
             }
-            if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                submitResendEditor(message, textarea);
-            }
+            if (event.shiftKey && event.key === 'Enter') return; // Shift+Enter 保留换行。
+            // 其余按键交给护栏：跟踪方向键状态，识别「方向键选字 → 回车确认」。
+            resendImeGuard(event);
         });
 
         toolbar.append(sendBtn, cancelBtn);
@@ -5193,11 +5235,10 @@
     }
     contextClearEl?.addEventListener('click', clearAttachments);
     installAssistantMessageNormalizer();
+    const composerImeGuard = installImeEnterGuard(composerEl, sendComposerText);
     composerEl?.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' && !event.shiftKey) {
-            event.preventDefault();
-            sendComposerText();
-        }
+        // 所有按键都交给护栏：它需要跟踪方向键状态以识别「方向键选字 → 回车确认」。
+        composerImeGuard(event);
     });
     composerEl?.addEventListener('input', autoResizeComposer);
     document.addEventListener('paste', (event) => {
