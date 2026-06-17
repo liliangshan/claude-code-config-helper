@@ -2,6 +2,12 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.6] - 2026-06-17
+
+### Changed
+
+- Stopped the relay from writing a per-request `.LLSOAI/test-<timestamp>.json` debug snapshot for every outbound request. That dump was only useful for chasing intermittent 400s and otherwise piled up large single-request files in the workspace. The error snapshot (`error-<status>-*.json`) and the daily deduplicated messages log (`yyyy-MM-dd.json`) are kept.
+
 ## [3.2.5] - 2026-06-16
 
 ### Fixed

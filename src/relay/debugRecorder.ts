@@ -77,24 +77,15 @@ export interface DebugRecordEntry {
  */
 export class DebugRecorder {
     /**
-     * 把最终请求 body 写入 `.LLSOAI/test-<时间戳>-<随机>.json`。
+     * 兼容旧调用的空实现：不再把出站请求 body 落盘为 `test-<时间戳>.json`。
      *
-     * 改为「每次请求一个独立文件」而非覆盖写 `test.json`：调试 400 等偶发错误时，
-     * 出错请求体不会被下一条请求覆盖，可在目录里逐个比对各请求的缓存断点 ttl。
+     * 该调试落盘仅用于排查偶发 400 等问题，正式使用时会在 `.LLSOAI/` 里堆积大量
+     * 单请求文件，故移除写盘逻辑，仅保留方法签名以兼容现有调用点。
      *
      * @param bodyText 已注入工具、即将发送到上游的请求体文本。
      */
     public async recordRequestBody(bodyText: string): Promise<void> {
-        try {
-            const dir = await this.resolveDir();
-            const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-            const filePath = path.join(dir, `test-${stamp}.json`);
-            const formatted = this.formatJsonText(bodyText);
-            await fs.writeFile(filePath, `${formatted}\n`, 'utf-8');
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            Logger.warn(`写入 Relay 请求 body 失败：${message}`);
-        }
+        void bodyText;
     }
 
     /**
@@ -260,20 +251,6 @@ export class DebugRecorder {
                 Logger.warn(`读取 Relay 调试 messages 失败，将重建文件：${err instanceof Error ? err.message : String(err)}`);
             }
             return { date: dateText, messages: [] };
-        }
-    }
-
-    /**
-     * 把请求体文本格式化为 JSON。
-     *
-     * @param text 请求体文本。
-     * @returns 可读性更好的 JSON 文本，解析失败时返回原文。
-     */
-    private formatJsonText(text: string): string {
-        try {
-            return JSON.stringify(JSON.parse(text), null, 2);
-        } catch {
-            return text;
         }
     }
 
