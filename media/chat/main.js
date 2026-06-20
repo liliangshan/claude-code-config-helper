@@ -63,6 +63,28 @@
         resendCancel: '取消重发编辑',
         resendEditorAria: '编辑后重发消息'
     });
+    /** 补齐会话标题编辑弹窗文案。 */
+    Object.assign(chatTranslations.en, {
+        sessionTitleEditLabel: 'Edit conversation title', confirm: 'OK', cancel: 'Cancel'
+    });
+    Object.assign(chatTranslations['zh-cn'], {
+        sessionTitleEditLabel: '修改会话标题', confirm: '确定', cancel: '取消'
+    });
+    Object.assign(chatTranslations['zh-tw'], {
+        sessionTitleEditLabel: '修改會話標題', confirm: '確定', cancel: '取消'
+    });
+    Object.assign(chatTranslations.ko, {
+        sessionTitleEditLabel: '대화 제목 편집', confirm: '확인', cancel: '취소'
+    });
+    Object.assign(chatTranslations.ja, {
+        sessionTitleEditLabel: '会話タイトルを編集', confirm: 'OK', cancel: 'キャンセル'
+    });
+    Object.assign(chatTranslations.fr, {
+        sessionTitleEditLabel: 'Modifier le titre de la conversation', confirm: 'OK', cancel: 'Annuler'
+    });
+    Object.assign(chatTranslations.de, {
+        sessionTitleEditLabel: 'Gesprächstitel bearbeiten', confirm: 'OK', cancel: 'Abbrechen'
+    });
     /** 补齐任务流顶部 Todo 状态卡片文案，避免静态翻译长行继续膨胀。 */
     Object.assign(chatTranslations.en, {
         taskTodoTitle: 'Todos',
@@ -417,6 +439,12 @@
     const tokenMeterBarReservedEl = document.querySelector('[data-role="token-meter-bar-reserved"]');
     const statusEl = document.querySelector('[data-role="cli-status"]');
     const sessionTitleEl = document.querySelector('[data-role="session-title"]');
+    /** 当前会话标题的完整文本（未截断），用于内联编辑时回填。 */
+    let currentSessionTitleFull = '';
+    /** 当前会话 ID，内联编辑标题写回时随消息回传给扩展宿主。 */
+    let currentSessionTitleId = '';
+    /** 标题是否正处于内联编辑态，避免编辑期间被 session/title 推送覆盖。 */
+    let sessionTitleEditing = false;
     const restartCliEl = document.querySelector('[data-role="restart-cli"]');
     const newSessionEl = document.querySelector('[data-role="new-session"]');
     const openSessionsEl = document.querySelector('[data-role="open-sessions"]');
@@ -4926,7 +4954,7 @@
                 renderSessionList(message.sessions || []);
                 break;
             case 'session/title':
-                applySessionTitle(message.title || '');
+                applySessionTitle(message.title || '', message.sessionId || '');
                 break;
             default:
                 break;
@@ -4936,17 +4964,102 @@
     /**
      * 把会话标题应用到顶部 H1。
      *
-     * 标题为空时回退到默认标题（data-default-title）。同时设置 title 属性，
-     * 便于长标题被 CSS 省略后悬停查看完整内容。
+     * 标题为空时回退到默认标题（data-default-title）。显示时截断到 10 个字符并追加
+     * 省略号，完整标题写入 title 属性与内部状态，便于悬停查看与内联编辑回填。
+     * 编辑态下跳过应用，避免推送覆盖正在编辑的输入框。
      *
      * @param {string} title 会话标题，空字符串表示无标题。
+     * @param {string} [sessionId] 该标题所属会话 ID，用于编辑写回。
      */
-    function applySessionTitle(title) {
+    function applySessionTitle(title, sessionId) {
         if (!sessionTitleEl) return;
+        if (typeof sessionId === 'string') {
+            currentSessionTitleId = sessionId;
+        }
+        if (sessionTitleEditing) return;
         const fallback = sessionTitleEl.getAttribute('data-default-title') || 'LLS CLAUDE CHAT';
         const text = (title || '').trim();
-        sessionTitleEl.textContent = text || fallback;
-        sessionTitleEl.title = text || fallback;
+        currentSessionTitleFull = text;
+        const display = text || fallback;
+        const truncated = display.length > 25 ? display.slice(0, 25) + '…' : display;
+        sessionTitleEl.textContent = truncated;
+        sessionTitleEl.title = display;
+    }
+
+    /**
+     * 弹出会话标题编辑对话框。
+     *
+     * 用一个临时创建的原生 <dialog> 承载输入框与确定/取消按钮，回填完整标题并
+     * 全选。回车或点确定提交，Esc 或点取消放弃。提交时把新标题通过
+     * session/set-title 回传给扩展宿主写回 JSONL，并乐观地本地应用截断显示。
+     * 无活动会话 ID 时不弹出。对话框关闭后从 DOM 移除，避免堆积。
+     */
+    function beginSessionTitleEdit() {
+        if (!sessionTitleEl || sessionTitleEditing) return;
+        if (!currentSessionTitleId) return;
+        if (typeof HTMLDialogElement === 'undefined') return;
+        sessionTitleEditing = true;
+
+        const dialog = document.createElement('dialog');
+        dialog.className = 'session-title-dialog';
+
+        const titleLabel = document.createElement('div');
+        titleLabel.className = 'session-title-dialog__label';
+        titleLabel.textContent = t('sessionTitleEditLabel');
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'session-title-dialog__input';
+        input.value = currentSessionTitleFull;
+        input.maxLength = 60;
+
+        const actions = document.createElement('div');
+        actions.className = 'session-title-dialog__actions';
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'session-title-dialog__btn';
+        cancelBtn.textContent = t('cancel');
+        const okBtn = document.createElement('button');
+        okBtn.type = 'button';
+        okBtn.className = 'session-title-dialog__btn session-title-dialog__btn--primary';
+        okBtn.textContent = t('confirm');
+        actions.appendChild(cancelBtn);
+        actions.appendChild(okBtn);
+
+        dialog.appendChild(titleLabel);
+        dialog.appendChild(input);
+        dialog.appendChild(actions);
+        document.body.appendChild(dialog);
+
+        let settled = false;
+        const cleanup = () => {
+            sessionTitleEditing = false;
+            if (dialog.open) dialog.close();
+            dialog.remove();
+        };
+        const finish = (commit) => {
+            if (settled) return;
+            settled = true;
+            const next = (input.value || '').trim();
+            if (commit && next !== currentSessionTitleFull) {
+                post({ type: 'session/set-title', title: next, sessionId: currentSessionTitleId });
+                applySessionTitle(next, currentSessionTitleId);
+            }
+            cleanup();
+        };
+
+        okBtn.addEventListener('click', () => finish(true));
+        cancelBtn.addEventListener('click', () => finish(false));
+        input.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') { ev.preventDefault(); finish(true); }
+        });
+        // 原生 dialog 的 Esc / 取消由 cancel 事件统一处理为放弃。
+        dialog.addEventListener('cancel', (ev) => { ev.preventDefault(); finish(false); });
+        dialog.addEventListener('close', () => finish(false));
+
+        dialog.showModal();
+        input.focus();
+        input.select();
     }
 
     /**
@@ -5223,7 +5336,8 @@
         closeTokenMeterPopover();
     });
     restartCliEl?.addEventListener('click', () => post({ type: 'cli/restart' }));
-    newSessionEl?.addEventListener('click', () => { applySessionTitle(''); post({ type: 'session/clear' }); });
+    newSessionEl?.addEventListener('click', () => { applySessionTitle('', ''); post({ type: 'session/clear' }); });
+    sessionTitleEl?.addEventListener('click', beginSessionTitleEdit);
     openSessionsEl?.addEventListener('click', openSessions);
     sessionListCloseEls.forEach((el) => {
         if (el instanceof HTMLElement) el.addEventListener('click', closeSessionList);

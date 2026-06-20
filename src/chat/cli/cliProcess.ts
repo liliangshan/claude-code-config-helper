@@ -63,6 +63,7 @@ export class CliProcess implements vscode.Disposable {
             argsCount: args.length,
             model: argValue('--model'),
             permissionMode: argValue('--permission-mode'),
+            dangerouslySkip: args.includes('--dangerously-skip-permissions'),
             hasMcpConfig: args.includes('--mcp-config'),
             hasAppendSystemPrompt: args.includes('--append-system-prompt'),
             hasResume: args.includes('--resume')
@@ -355,10 +356,18 @@ export class CliProcess implements vscode.Disposable {
         const args = ['--print', '--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json', ...cliArgs];
         if (this.currentConfig?.model && !this.hasModelArgument(args)) args.push('--model', this.currentConfig.model);
         const permissionMode = this.currentConfig?.permissionMode;
-        if (permissionMode && !this.hasPermissionModeArgument(args)) {
-            args.push('--permission-mode', permissionMode);
-        }
-        if (permissionMode !== 'bypassPermissions') {
+        if (permissionMode === 'bypassPermissions') {
+            // 非交互（--print）模式下，仅传 `--permission-mode bypassPermissions` 在部分
+            // CLI 版本上仍会对工具要求授权（无应答通道时甚至卡住）。改用官方
+            // `--dangerously-skip-permissions`：它才是 print 模式下真正「全部跳过授权」
+            // 的开关。此时不再追加 `--permission-mode`，也不接 stdio 授权工具。
+            if (!this.hasDangerouslySkipPermissionsArgument(args)) {
+                args.push('--dangerously-skip-permissions');
+            }
+        } else {
+            if (permissionMode && !this.hasPermissionModeArgument(args)) {
+                args.push('--permission-mode', permissionMode);
+            }
             this.appendPermissionPromptToolArgs(args);
         }
         this.appendMcpArgs(args);
@@ -527,6 +536,19 @@ export class CliProcess implements vscode.Disposable {
      */
     private hasPermissionModeArgument(args: string[]): boolean {
         return args.some((arg) => arg === '--permission-mode' || arg.startsWith('--permission-mode='));
+    }
+
+    /**
+     * 判断启动参数中是否已经包含 `--dangerously-skip-permissions`。
+     *
+     * 用于 bypassPermissions 分支去重，避免与用户在 `chat.cliArgs` 里手动写入的
+     * 同名开关重复。
+     *
+     * @param args 待检查的启动参数。
+     * @returns 已存在 `--dangerously-skip-permissions` 时返回 true。
+     */
+    private hasDangerouslySkipPermissionsArgument(args: string[]): boolean {
+        return args.some((arg) => arg === '--dangerously-skip-permissions');
     }
 
     /**

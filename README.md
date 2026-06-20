@@ -1,6 +1,6 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.6
+**Version:** 3.2.9
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
 

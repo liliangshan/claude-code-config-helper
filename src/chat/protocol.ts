@@ -532,6 +532,20 @@ export type WebviewToExtension =
           text?: string;
       }
     | { type: 'session/clear' }
+    | {
+          /**
+           * 用户在 Chat 顶部内联编辑会话标题后回传。
+           *
+           * 扩展宿主会把 `title` 写回 `<sessionId>.jsonl` 的 `customTitle` 字段；
+           * `title` 为空字符串表示删除自定义标题，回退到自动派生标题
+           * （aiTitle > lastPrompt > summary）。
+           */
+          type: 'session/set-title';
+          /** 新的会话标题；空字符串表示清除自定义标题。 */
+          title: string;
+          /** 目标会话 ID；为空时扩展端使用当前活动会话。 */
+          sessionId: string;
+      }
     | { type: 'file/pick' }
     | { type: 'file/uploadBlob'; clientId: string; name: string; displayName?: string; size: number; mime: string; base64: string }
     | { type: 'model/select'; providerId: string; modelId: string }

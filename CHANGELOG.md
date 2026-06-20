@@ -2,6 +2,18 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.9] - 2026-06-20
+
+### Added
+
+- Editable Chat session title: the header title is now truncated to 25 characters (full text on hover) and can be clicked to open a popup dialog for renaming the conversation. Confirming with Enter or OK writes the new name back to the session `<sessionId>.jsonl` as a dedicated `{type:"custom-title"}` meta record, which `extractSessionTitle` reads with top priority; an empty title clears the custom name and falls back to the auto-derived title (ai-title > last-prompt > summary). Escape or Cancel discards the edit. New `session/set-title` webview→extension protocol message.
+
+## [3.2.7] - 2026-06-17
+
+### Fixed
+
+- Built-in Chat now passes `--dangerously-skip-permissions` (instead of `--permission-mode bypassPermissions`) when the permission mode is `bypassPermissions`. In the non-interactive `--print` stream-json transport the extension uses, `--permission-mode bypassPermissions` alone still left some CLI versions (notably the Linux builds) prompting for tool authorization — and with no interactive approval channel those calls could stall. The official `--dangerously-skip-permissions` flag is the real "skip all authorization" switch for print mode; in that branch the extension no longer appends `--permission-mode` or the stdio permission-prompt tool. The startup log now includes a `dangerouslySkip` field for verification.
+
 ## [3.2.6] - 2026-06-17
 
 ### Changed

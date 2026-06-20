@@ -1038,6 +1038,53 @@ async function pushSessionTitleToWebview(cwd: string, sessionId: string): Promis
 }
 
 /**
+ * 把用户内联编辑的会话标题写回 JSONL，并刷新 Webview 顶部标题。
+ *
+ * 标题以独立的 `{type:"custom-title", customTitle, sessionId}` 元记录持久化：
+ * 文件中已存在该记录时原地替换，否则追加到文件末尾。`customTitle` 在
+ * extractSessionTitle 中优先级最高，因此写回后会立即成为展示标题。传入空标题
+ * 表示清除自定义标题：删除已有 custom-title 记录，回退到自动派生标题。
+ *
+ * @param cwd 工作区目录，用于推导 projectKey。
+ * @param sessionId 目标会话 ID。
+ * @param title 新标题；空字符串表示清除自定义标题。
+ */
+async function writeSessionCustomTitle(cwd: string, sessionId: string, title: string): Promise<void> {
+    if (!sessionId) return;
+    const jsonlPath = path.join(resolveClaudeProjectDir(cwd), `${sessionId}.jsonl`);
+    let raw: string;
+    try {
+        raw = await fs.readFile(jsonlPath, 'utf8');
+    } catch (e) {
+        Logger.warn('[session/set-title] 读取会话文件失败：' + (e instanceof Error ? e.message : String(e)));
+        return;
+    }
+    const trimmedTitle = (title || '').trim();
+    const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+    const lines = raw.split(/\r?\n/);
+    // 过滤掉已有 custom-title 记录，稍后按需重新追加，确保最终只保留一条。
+    const kept: string[] = [];
+    for (const line of lines) {
+        if (!line.trim()) { kept.push(line); continue; }
+        let isCustomTitle = false;
+        try { isCustomTitle = (JSON.parse(line) as { type?: string }).type === 'custom-title'; } catch { isCustomTitle = false; }
+        if (!isCustomTitle) kept.push(line);
+    }
+    // 去掉尾部空行，避免重复追加后留下多余空白。
+    while (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop();
+    if (trimmedTitle) {
+        kept.push(JSON.stringify({ type: 'custom-title', customTitle: trimmedTitle, sessionId }));
+    }
+    try {
+        await fs.writeFile(jsonlPath, kept.join(eol) + eol, 'utf8');
+    } catch (e) {
+        Logger.warn('[session/set-title] 写回会话文件失败：' + (e instanceof Error ? e.message : String(e)));
+        return;
+    }
+    await pushSessionTitleToWebview(cwd, sessionId);
+}
+
+/**
  * 计划保存 Chat 会话到 workspaceState。
  *
  * 使用短防抖减少流式输出期间的频繁写入；真正写入由 {@link flushPersistedChatSession} 完成。
@@ -2569,6 +2616,20 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
                 cliPath: chatCliConfigService?.getConfig().cliPath ?? ''
             });
             return;
+        case 'session/set-title': {
+            const cwd = chatCliConfigService?.getConfig().cwd;
+            if (!cwd) {
+                Logger.warn('[session/set-title] 无 cwd，跳过写回');
+                return;
+            }
+            const targetId = (message.sessionId || lastKnownChatCliSessionId || '').trim();
+            if (!targetId) {
+                Logger.warn('[session/set-title] 无可用 sessionId，跳过写回');
+                return;
+            }
+            await writeSessionCustomTitle(cwd, targetId, message.title || '');
+            return;
+        }
         case 'session/resume': {
             const targetSessionId = message.sessionId;
             Logger.info(`[session/resume] 切换到历史会话：sessionId=${targetSessionId}`);
