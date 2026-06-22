@@ -4680,17 +4680,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     AutoContinueScheduler.setSubmitter(async (text) => {
         await appendUserMessageAndSend(text);
     });
-    AutoContinueScheduler.setBeforeSubmit(async () => {
-        if (!llsTaskService?.hasActiveWorkflow()) return;
-        const sessionId = getSessionIdForRoute('normal');
-        if (!sessionId || !tokenBudgetServiceRef) {
-            Logger.warn('[LlsTask][AutoContinue] 续推前压缩跳过：normal session 或 tokenBudgetService 不可用');
-            return;
-        }
-        llsTaskService.markPreContinueCompactionPending();
-        const result = await tokenBudgetServiceRef.compactNowAndWait(sessionId, { timeoutMs: 60_000 });
-        Logger.info(`[LlsTask][AutoContinue] 续推前压缩完成：${result}`);
-    });
+    // 任务流续推前不再强制压缩/清空上下文：之前这里会注入 beforeSubmit 触发
+    // compactNowAndWait，由 Relay 把整段对话替换成一句占位 summary（等于清空续推前
+    // 上下文）。现按需求移除该前置压缩，续推时保留完整上下文；正常的 token 预算
+    // 压缩仍由 TokenBudgetService 在阈值触达时独立执行，且其 summary 会保留对话要点。
+    // 不注入 beforeSubmit（保持 undefined），runIfCurrent 即跳过前置压缩。
     configViewProvider = new ConfigWebviewViewProvider(context, configManager);
     settingsWriter = new SettingsWriter();
     relayServer = new RelayServer({ desiredPort: 0 });

@@ -2,6 +2,12 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.10] - 2026-06-22
+
+### Changed
+
+- Task-flow auto-continuation no longer compacts/clears the conversation context before each continuation. Previously a `beforeSubmit` hook forced a `compactNowAndWait` whose result was replaced by the relay with a one-line placeholder `<summary>`, effectively wiping the pre-continuation context. The pre-continue compaction is removed so continuations keep the full context. Normal token-budget compaction is unaffected — `TokenBudgetService` still runs `/compact` when the threshold is reached, and its summary preserves the conversation's key points. (Side effect: the now-unreached task-flow placeholder-summary interception in the relay router stays inert, so a normal `/compact` is no longer hijacked and produces a real summary.)
+
 ## [3.2.9] - 2026-06-20
 
 ### Added
