@@ -4820,6 +4820,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         },
         onUpstreamRequestStart: ({ route }) => {
             setRelayRouteBusy(route, true, 'relay_request_start');
+            // 新请求进来说明 CLI 仍在活动：撤销命中非任务流工具后武装的空闲看门狗，
+            // 避免在 CLI 自己发起 tool_result 往返时还兜底续推，造成抢跑。
+            if (route === 'normal') autoContinueScheduler?.notifyRequestStarted();
         },
         onUpstreamRequestEnd: ({ route }) => {
             setRelayRouteBusy(route, false, 'relay_request_end');

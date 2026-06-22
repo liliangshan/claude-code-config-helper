@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 
 import type { ConfigManager } from '../configManager';
 import { getLlsCcaiTaskTexts } from './messages';
+import { LLS_CCAI_TASK_TOOL_NAME } from './tools';
 import type { TaskFlowStore } from './store';
 import type {
     LlsTaskSnapshot,
@@ -217,15 +218,23 @@ export class LlsTaskService implements vscode.Disposable {
     }
 
     /**
-     * 构造主模型继续推进提示。
+     * 构造主模型继续推进提示（自包含续推消息）。
      *
-     * 当上一轮主对话只回了文本却没有调用任何工具时（{@link workflowUpdateMissing}
-     * 为 true），会在基础 continuePrompt 后再拼接一段更强约束的补充提示，要求
-     * 本轮必须以 tool_use 工具调用形式执行，避免模型再次"幻觉"地用文字声称
-     * 已完成任务。
+     * 该提示由 {@link AutoContinueScheduler} 经 submitter 直接作为一条普通用户消息发送给
+     * CLI，因此必须「自包含」——把续推所需的全部上下文都写进文本，而不再依赖请求体里
+     * 注入的任务流 system 规则或 Workflow JSON 快照（那会让每轮请求前缀变化、击穿缓存）。
+     *
+     * 文本包含两部分：
+     * 1. 只点名「下一个待执行任务」一条（带原始序号 + 状态 + 标题 + 描述），不再罗列完整
+     *    序列，保持续推消息精简、稳定，避免模型重复已完成任务或反复询问；
+     * 2. 明确指示：执行后必须调用 {@link LLS_CCAI_TASK_TOOL_NAME} 回写状态，禁止只用
+     *    文字声称完成，禁止询问是否继续。
+     *
+     * 当上一轮只回文本未调用任何工具（{@link workflowUpdateMissing} 为 true）时，再追加
+     * 一段强约束提示，要求本轮必须以真实 tool_use 执行。
      *
      * @param snapshot 可选快照；未传时使用当前快照。
-     * @returns 注入到 Claude Code 输入框的任务流上下文提示。
+     * @returns 注入到 Claude Code 输入框的自包含续推提示。
      */
     public buildContinuePrompt(snapshot: LlsTaskSnapshot = this.snapshot): string {
         const workflow = snapshot.workflow;
@@ -233,16 +242,34 @@ export class LlsTaskService implements vscode.Disposable {
         if (!workflow) {
             return texts.startPrompt;
         }
-        const base = this.workflowUpdateMissing
-            ? `${texts.continuePrompt}\n\n${texts.continuePromptWhenToolMissing}`
-            : texts.continuePrompt;
+        const nextIndex = workflow.tasks.findIndex(
+            (task) => task.status === 'pending' || task.status === 'in_progress'
+        );
+        const nextTask = nextIndex >= 0 ? workflow.tasks[nextIndex] : undefined;
+        const nextLine = nextTask
+            ? `${texts.continueNextTaskLabel}: ${nextIndex + 1}. [${nextTask.status}] ${nextTask.title}`
+            : '';
+        const descriptionLine = nextTask && nextTask.description.trim()
+            ? nextTask.description.trim()
+            : '';
+        const updateInstruction = texts.continueUpdateInstruction.replace('{{tool}}', LLS_CCAI_TASK_TOOL_NAME);
         const pathSuffix = snapshot.planningDocumentPath
             ? `\n\n${texts.planningPathLabel}: ${snapshot.planningDocumentPath}`
             : '';
-        const promptSuffix = !snapshot.planningDocumentPath && snapshot.originalUserPrompt
+        const promptSuffix = snapshot.originalUserPrompt
             ? `\n\nOriginal request: ${snapshot.originalUserPrompt}`
             : '';
-        return `${base}${pathSuffix}${promptSuffix}`;
+        const missingSuffix = this.workflowUpdateMissing
+            ? `\n\n${texts.continuePromptWhenToolMissing}`
+            : '';
+        const lines = [
+            texts.continuePrompt,
+            ...(nextLine ? ['', nextLine] : []),
+            ...(descriptionLine ? [descriptionLine] : []),
+            '',
+            updateInstruction
+        ];
+        return `${lines.join('\n')}${pathSuffix}${promptSuffix}${missingSuffix}`;
     }
 
     /**

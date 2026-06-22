@@ -282,7 +282,16 @@ export class LlsTaskStreamingInterceptor {
                 this.deps.autoContinueScheduler.cancel('任务流工具处理后 workflow 已完成或不存在');
             }
         } else if (this.sawNonLocalTool) {
+            // 命中真正的非本地工具（Write/Edit 等）说明模型本轮在实际干活，是健康路径：
+            // 重置"连续缺失工具"计数，避免跨工具轮累计的纯文本轮把熔断器过早触发，
+            // 导致任务流后续卡住不再续推。
+            this.deps.autoContinueScheduler.resetMissingToolCounter('命中非任务流工具，本轮在实际执行');
+            // 不立即续推：本应由 Claude Code 自己发 tool_result 往返继续干活。但部分
+            // 情况下 CLI 这轮结束后不自动续做剩余工作，任务流卡在半截。改用空闲看门狗：
+            // 先取消旧续推定时器，再武装 4 秒看门狗——期间有新请求则撤销（CLI 仍在活动），
+            // 4 秒内无新请求则判定 CLI 已停，兜底续推一次。
             this.deps.autoContinueScheduler.cancel('响应包含非任务流工具调用，等待 Claude Code 工具结果');
+            this.deps.autoContinueScheduler.armIdleWatchdog();
         } else if (this.deps.service.hasActiveWorkflow()) {
             this.deps.service.markWorkflowUpdateMissing();
             this.deps.autoContinueScheduler.schedule();

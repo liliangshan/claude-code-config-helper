@@ -45,8 +45,11 @@ function buildInterceptorDeps(onFileTool?: (toolName: string, input: unknown) =>
         autoContinueScheduler: {
             schedule() {},
             scheduleAfterWorkflowTool() {},
+            resetMissingToolCounter() {},
+            armIdleWatchdog() {},
+            notifyRequestStarted() {},
             cancel() {}
-        } as Parameters<typeof interceptAnthropicResponse>[2]['autoContinueScheduler'],
+        } as unknown as Parameters<typeof interceptAnthropicResponse>[2]['autoContinueScheduler'],
         onFileTool
     };
 }

@@ -152,7 +152,7 @@ const tests: TestCase[] = [
         }
     },
     {
-        name: '任务流用户控制消息应插入最后一条 user content 的索引 0',
+        name: '任务流活跃时只注入 update 工具，不再把控制规则或 Workflow JSON 快照写进 system/messages',
         run: () => {
             const fakeDeps = {
                 configManager: {
@@ -173,13 +173,55 @@ const tests: TestCase[] = [
                 model: 'm',
                 messages: [{ role: 'user', content: '你是什么模型' }]
             }), fakeDeps as never);
-            const body = JSON.parse(result.bodyText) as { messages?: Array<{ content?: Array<{ text?: string }> }> };
-            assert.ok(Array.isArray(body.messages?.[0].content));
-            // 注入顺序：任务流控制规则在最前，最后是原始用户文本；基础身份规则只进入 system。
-            assert.ok(body.messages?.[0].content?.[0].text?.includes('Active llsccai-task workflow'));
-            assert.ok(body.messages?.[0].content?.[0].text?.includes('Workflow JSON'));
-            const content = body.messages?.[0].content ?? [];
-            assert.strictEqual(content[content.length - 1].text, '你是什么模型');
+            const serialized = result.bodyText;
+            const body = JSON.parse(serialized) as {
+                tools?: Array<{ name?: string }>;
+                messages?: Array<{ content?: unknown }>;
+            };
+            // 续推执行阶段只注入 update 工具定义，请求体保持稳定缓存前缀。
+            assert.ok(body.tools?.some((tool) => tool.name === 'update_llsccai_task_workflow'),
+                '应注入 update_llsccai_task_workflow 工具');
+            // 易变的任务流控制规则与 Workflow JSON 快照不应再进入请求体的任何位置。
+            assert.ok(!serialized.includes('Active llsccai-task workflow'),
+                '请求体不应再包含任务流控制规则');
+            assert.ok(!serialized.includes('Workflow JSON'),
+                '请求体不应再包含易变的 Workflow JSON 快照');
+            // user 消息原文应原样保留。
+            assert.strictEqual(body.messages?.[0].content, '你是什么模型');
+        }
+    },
+    {
+        name: '任务流活跃时不再向历史消息追加易变缓存断点（续推改由自包含用户消息驱动）',
+        run: () => {
+            const fakeDeps = {
+                configManager: {
+                    getResolvedUiLanguage: () => 'en' as const,
+                    getGlobalSystemPrompt: () => '',
+                    getWorkspaceSystemPrompt: () => ''
+                },
+                llsTaskService: {
+                    hasActiveWorkflow: () => true,
+                    hasPendingWorkflowCreation: () => false,
+                    getSnapshot: () => ({ workflow: { title: 't', tasks: [] } })
+                },
+                autoContinueScheduler: {
+                    cancel: () => undefined
+                }
+            };
+            const result = injectLlsTaskRequestBody(JSON.stringify({
+                model: 'm',
+                messages: [{
+                    role: 'user',
+                    content: [{ type: 'text', text: '继续执行任务流' }]
+                }]
+            }), fakeDeps as never);
+            const body = JSON.parse(result.bodyText) as {
+                messages?: Array<{ content?: Array<{ cache_control?: unknown }> }>;
+            };
+            const lastContent = body.messages?.[0].content ?? [];
+            const lastBlock = lastContent[lastContent.length - 1];
+            // 不再注入任何缓存断点，保持历史消息字节稳定以命中前缀缓存。
+            assert.strictEqual(lastBlock?.cache_control, undefined);
         }
     },
     {

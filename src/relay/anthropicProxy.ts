@@ -24,7 +24,6 @@ import type { ApiType, ProviderConfig } from '../types';
 import type { DebugRecorder } from './debugRecorder';
 import { buildForwardHeaders, redactHeaders } from './forwardHeadersCommon';
 import type { UpstreamAdapter, UpstreamRequestContext } from './router';
-import { extractAnthropicSessionId } from './summCommand';
 import { injectLlsTaskRequestBody, type LlsTaskRequestInjectionDeps } from './taskRequestInjection';
 import type { TokenBudgetService } from './tokenBudget/service';
 import { UPSTREAM_FIRST_BYTE_TIMEOUT_MS, UPSTREAM_STREAM_IDLE_TIMEOUT_MS } from './upstreamTimeouts';
@@ -138,10 +137,98 @@ export function rewriteRequestBody(
     if (parsedBody && typeof parsedBody === 'object') {
         const cloned: Record<string, unknown> = { ...(parsedBody as Record<string, unknown>) };
         cloned.model = modelId;
+        sanitizeReplayedThinkingBlocks(cloned);
         return JSON.stringify(cloned);
     }
     // 解析失败时退回原样；保证调用方拿到字符串。
     return rawBody;
+}
+
+/**
+ * 清理回放历史里过期 / 非法的 thinking、redacted_thinking 块，避免 Anthropic
+ * 直连时报 `Invalid signature in thinking block`。
+ *
+ * thinking 块的 signature 按「签发模型 + 内容」绑定。两类块会触发 400：
+ *   1. 历史中途切换过模型，旧 assistant 轮的真实签名对新模型失效；
+ *   2. 经转换器 / 其它 provider 注入的伪签名（如 UUID 形态），根本不是
+ *      Anthropic 签发的。
+ *
+ * Anthropic 仅要求保留「最近一个正在续推的 tool_use 轮」的 thinking 块，更早
+ * 轮次的 thinking 块服务端本就会忽略，可安全剥离。因此本函数：
+ *   - 仅在「最后一个 assistant 轮」且其包含 tool_use 时，作为活跃续推轮保留其
+ *     thinking 块，且签名必须形如合法 Anthropic 签名；
+ *   - 其余所有 assistant 轮的 thinking / redacted_thinking 一律剥离。
+ *
+ * 用 map + 浅拷贝只替换被改动的消息，绝不就地修改共享的 messages 对象。
+ *
+ * @param body 已克隆的 Anthropic 请求体对象。
+ */
+function sanitizeReplayedThinkingBlocks(body: Record<string, unknown>): void {
+    const messages = body.messages;
+    if (!Array.isArray(messages)) return;
+    const activeTurnIndex = findActiveToolUseTurnIndex(messages);
+    let mutated = false;
+    const next = messages.map((message, i) => {
+        if (!isObject(message) || message.role !== 'assistant' || !Array.isArray(message.content)) return message;
+        const keepValidThinking = i === activeTurnIndex;
+        const filtered = message.content.filter((block) => {
+            if (!isObject(block)) return true;
+            if (block.type === 'thinking') return keepValidThinking && isLikelyAnthropicSignature(block.signature);
+            if (block.type === 'redacted_thinking') return keepValidThinking;
+            return true;
+        });
+        if (filtered.length === message.content.length) return message;
+        mutated = true;
+        return { ...message, content: filtered };
+    });
+    if (mutated) body.messages = next;
+}
+
+/**
+ * 定位「最近一个正在续推的 tool_use 轮」的下标。
+ *
+ * 取数组中最后一个 assistant 消息：若它包含 tool_use 块，则视为活跃续推轮
+ * （其后通常紧跟 tool_result 的 user 轮），返回其下标；否则返回 -1 表示没有
+ * 需要保留 thinking 的活跃轮。
+ *
+ * @param messages 请求体 messages 数组。
+ * @returns 活跃 tool_use 轮下标；无则 -1。
+ */
+function findActiveToolUseTurnIndex(messages: unknown[]): number {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const message = messages[i];
+        if (!isObject(message) || message.role !== 'assistant') continue;
+        if (Array.isArray(message.content) && message.content.some((block) => isObject(block) && block.type === 'tool_use')) {
+            return i;
+        }
+        return -1;
+    }
+    return -1;
+}
+
+/**
+ * 粗略判断 signature 是否形如合法 Anthropic 思考签名。
+ *
+ * 真实 Anthropic 签名是数百字符的 base64 串；转换器 / 其它 provider 注入的伪
+ * 签名常为 UUID（36 字符、含连字符）或过短字符串。据此排除明显非法的签名。
+ *
+ * @param signature 待判断的签名值。
+ * @returns 形如合法 Anthropic 签名时返回 true。
+ */
+function isLikelyAnthropicSignature(signature: unknown): boolean {
+    if (typeof signature !== 'string' || signature.length < 64) return false;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    return !uuid.test(signature);
+}
+
+/**
+ * 判断未知值是否为普通对象。
+ *
+ * @param value 待判断值。
+ * @returns 是否为非数组对象。
+ */
+function isObject(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 /** Anthropic Proxy 可选任务流依赖。 */

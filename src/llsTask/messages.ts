@@ -22,6 +22,16 @@ export interface LlsCcaiTaskTexts {
      * 实际未发出任何 tool_use；用本段加重提示强制本轮必须以工具调用形式执行。
      */
     continuePromptWhenToolMissing: string;
+    /** 续推消息中「下一个待执行任务」标签。 */
+    continueNextTaskLabel: string;
+    /**
+     * 续推消息中要求回写任务状态的指示文案。
+     *
+     * 文案内含 `{{tool}}` 占位符，调用方会替换为实际的状态更新工具名
+     * （update_llsccai_task_workflow），指示模型执行后必须调用该工具回写状态、
+     * 禁止只用文字声称完成、禁止询问是否继续。
+     */
+    continueUpdateInstruction: string;
     /** 规划文件路径标签。 */
     planningPathLabel: string;
     /** 启动任务流占位提示。 */
@@ -60,6 +70,8 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         failed: 'Task flow failed',
         continuePrompt: 'Continue executing the active llsccai-task workflow.',
         continuePromptWhenToolMissing: 'In the previous turn you only produced text without actually invoking any tool. This turn you MUST execute via real tool calls (e.g. update_llsccai_task_workflow, Write, Edit, Bash). Do NOT claim a task is finished or the status is updated using plain text only.',
+        continueNextTaskLabel: 'Next task to execute',
+        continueUpdateInstruction: 'Execute the next pending or in-progress task directly. After the work is actually done, you MUST call the {{tool}} tool to update its status. Do not only describe the step, do not claim completion in text without calling the tool, and do not ask whether to continue, start, or proceed.',
         planningPathLabel: 'Planning file path',
         startPrompt: '@llsccai-task Please open a Markdown planning document in the IDE, or delete this sentence and use your own prompt.',
         openMarkdownOrEditPrompt: 'Please open a Markdown planning document in the IDE, or modify the prompt after @llsccai-task and try again.',
@@ -79,6 +91,8 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         failed: '任务流失败',
         continuePrompt: '请继续执行当前 llsccai-task 任务流。',
         continuePromptWhenToolMissing: '上一轮你只输出了文字，没有真正调用任何工具。本轮必须以真实的 tool_use 工具调用形式执行（如 update_llsccai_task_workflow、Write、Edit、Bash），禁止只用文字声称已完成任务或已更新状态。',
+        continueNextTaskLabel: '下一个待执行任务',
+        continueUpdateInstruction: '请直接执行下一个 pending 或 in_progress 的任务。任务实际完成后，必须调用 {{tool}} 工具回写其状态。不要只描述步骤，不要在未调用工具的情况下用文字声称已完成，也不要询问是否继续、是否开始、是否推进。',
         planningPathLabel: '方案文件路径',
         startPrompt: '@llsccai-task 请先在 IDE 中打开 Markdown 文档，或者删除这段使用自己的提示词',
         openMarkdownOrEditPrompt: '请先在 IDE 中打开 Markdown 方案规划文档，或者修改 @llsccai-task 后面的提示词再试。',
@@ -98,6 +112,8 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         failed: '任務流失敗',
         continuePrompt: '請繼續執行目前 llsccai-task 任務流。',
         continuePromptWhenToolMissing: '上一輪你只輸出了文字，沒有真正呼叫任何工具。本輪必須以真實的 tool_use 工具呼叫形式執行（如 update_llsccai_task_workflow、Write、Edit、Bash），禁止只用文字宣稱已完成任務或已更新狀態。',
+        continueNextTaskLabel: '下一個待執行任務',
+        continueUpdateInstruction: '請直接執行下一個 pending 或 in_progress 的任務。任務實際完成後，必須呼叫 {{tool}} 工具回寫其狀態。不要只描述步驟，不要在未呼叫工具的情況下用文字宣稱已完成，也不要詢問是否繼續、是否開始、是否推進。',
         planningPathLabel: '方案檔案路徑',
         startPrompt: '@llsccai-task 請先在 IDE 中開啟 Markdown 方案規劃文件，或刪除此句並使用自己的提示詞',
         openMarkdownOrEditPrompt: '請先在 IDE 中開啟 Markdown 方案規劃文件，或修改 @llsccai-task 後面的提示詞再試。',
@@ -117,6 +133,8 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         failed: '작업 흐름 실패',
         continuePrompt: '현재 llsccai-task 작업 흐름을 계속 실행하세요.',
         continuePromptWhenToolMissing: '이전 턴에서는 텍스트만 출력하고 실제 도구를 호출하지 않았습니다. 이번 턴에서는 반드시 실제 tool_use 호출(update_llsccai_task_workflow, Write, Edit, Bash 등)로 실행하세요. 텍스트만으로 작업 완료나 상태 업데이트를 주장하지 마세요.',
+        continueNextTaskLabel: '다음 실행할 작업',
+        continueUpdateInstruction: 'pending 또는 in_progress 상태의 다음 작업을 바로 실행하세요. 작업이 실제로 완료되면 반드시 {{tool}} 도구를 호출하여 상태를 갱신해야 합니다. 단계만 설명하지 말고, 도구를 호출하지 않은 채 텍스트로 완료를 주장하지 말며, 계속·시작·진행 여부를 묻지 마세요.',
         planningPathLabel: '계획 파일 경로',
         startPrompt: '@llsccai-task IDE에서 Markdown 계획 문서를 열거나 이 문장을 삭제하고 직접 프롬프트를 입력하세요.',
         openMarkdownOrEditPrompt: 'IDE에서 Markdown 계획 문서를 열거나 @llsccai-task 뒤의 프롬프트를 수정한 뒤 다시 시도하세요.',
@@ -136,6 +154,8 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         failed: 'タスクフロー失敗',
         continuePrompt: '現在の llsccai-task タスクフローを続行してください。',
         continuePromptWhenToolMissing: '前回のターンではテキストのみを出力し、実際にツールを呼び出していません。今回のターンでは必ず実際の tool_use 呼び出し（update_llsccai_task_workflow、Write、Edit、Bash など）で実行してください。テキストだけでタスク完了やステータス更新を主張してはいけません。',
+        continueNextTaskLabel: '次に実行するタスク',
+        continueUpdateInstruction: 'pending または in_progress の次のタスクを直接実行してください。タスクが実際に完了したら、必ず {{tool}} ツールを呼び出してステータスを更新してください。手順を説明するだけにせず、ツールを呼び出さずにテキストで完了を主張せず、続行・開始・進行の可否を尋ねないでください。',
         planningPathLabel: '計画ファイルパス',
         startPrompt: '@llsccai-task IDE で Markdown 計画ドキュメントを開くか、この文を削除して独自のプロンプトを入力してください。',
         openMarkdownOrEditPrompt: 'IDE で Markdown 計画ドキュメントを開くか、@llsccai-task の後ろのプロンプトを変更してから再試行してください。',
@@ -155,6 +175,8 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         failed: 'Échec du flux de tâches',
         continuePrompt: 'Continuez à exécuter le flux de tâches llsccai-task actif.',
         continuePromptWhenToolMissing: 'Au tour précédent vous n’avez produit que du texte sans appeler aucun outil. Ce tour-ci vous DEVEZ exécuter via de vrais appels d’outils (update_llsccai_task_workflow, Write, Edit, Bash, etc.). N’affirmez jamais qu’une tâche est terminée ou que le statut est mis à jour uniquement en texte.',
+        continueNextTaskLabel: 'Prochaine tâche à exécuter',
+        continueUpdateInstruction: 'Exécutez directement la prochaine tâche pending ou in_progress. Une fois le travail réellement effectué, vous DEVEZ appeler l’outil {{tool}} pour mettre à jour son statut. Ne vous contentez pas de décrire l’étape, n’affirmez pas l’achèvement en texte sans appeler l’outil, et ne demandez pas s’il faut continuer, démarrer ou poursuivre.',
         planningPathLabel: 'Chemin du fichier de planification',
         startPrompt: '@llsccai-task Ouvrez un document de planification Markdown dans l’IDE, ou supprimez cette phrase et utilisez votre propre prompt.',
         openMarkdownOrEditPrompt: 'Ouvrez un document de planification Markdown dans l’IDE, ou modifiez le prompt après @llsccai-task puis réessayez.',
@@ -174,6 +196,8 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         failed: 'Task-Flow fehlgeschlagen',
         continuePrompt: 'Führen Sie den aktiven llsccai-task Task-Flow weiter aus.',
         continuePromptWhenToolMissing: 'In der letzten Runde haben Sie nur Text ausgegeben und kein Tool wirklich aufgerufen. In dieser Runde MÜSSEN Sie über echte Tool-Aufrufe (update_llsccai_task_workflow, Write, Edit, Bash usw.) ausführen. Behaupten Sie nicht nur in Text, dass eine Aufgabe abgeschlossen oder der Status aktualisiert wurde.',
+        continueNextTaskLabel: 'Nächste auszuführende Aufgabe',
+        continueUpdateInstruction: 'Führen Sie die nächste Aufgabe mit Status pending oder in_progress direkt aus. Sobald die Arbeit tatsächlich erledigt ist, MÜSSEN Sie das Tool {{tool}} aufrufen, um den Status zu aktualisieren. Beschreiben Sie nicht nur den Schritt, behaupten Sie den Abschluss nicht in Text ohne Tool-Aufruf, und fragen Sie nicht, ob fortgefahren, begonnen oder weitergemacht werden soll.',
         planningPathLabel: 'Pfad der Planungsdatei',
         startPrompt: '@llsccai-task Öffnen Sie ein Markdown-Planungsdokument in der IDE, oder löschen Sie diesen Satz und verwenden Sie Ihren eigenen Prompt.',
         openMarkdownOrEditPrompt: 'Öffnen Sie ein Markdown-Planungsdokument in der IDE, oder ändern Sie den Prompt nach @llsccai-task und versuchen Sie es erneut.',

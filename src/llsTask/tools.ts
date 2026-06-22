@@ -2,7 +2,6 @@
 
 import { getLlsCcaiTaskTexts } from './messages';
 import type { ResolvedAppLanguage } from '../types';
-import type { LlsTaskWorkflow } from './types';
 
 /** LLS CCAI 任务流状态回写工具名称。 */
 export const LLS_CCAI_TASK_TOOL_NAME = 'update_llsccai_task_workflow';
@@ -129,56 +128,6 @@ export function mergeAnthropicTools(
         ...existingTools.filter((tool) => !builtInNames.has(tool.name)),
         ...builtIns
     ];
-}
-
-/**
- * 构造注入给主模型的任务流系统规则。
- *
- * @param language 当前 UI 语言。
- * @param workflow 当前任务流；存在时会被序列化进 system 让模型每轮都能看到。
- * @param planningDocumentPath 触发任务流时 IDE 打开的方案文档路径；
- *                             非空时追加为 `Planning document path: <path>`，
- *                             作为"原始用户上下文"锚点，避免多轮续推后丢失意图。
- * @param originalUserPrompt 用户在 `@llsccai-task` 后面手输入的原始提示词；
- *                           非空时追加为 `Original user request: <text>`，
- *                           让模型在没有文档的场景下也能记住最初的需求。
- * @returns system 规则文本。
- */
-export function buildLlsCcaiTaskSystemRule(
-    language: ResolvedAppLanguage,
-    workflow?: LlsTaskWorkflow,
-    planningDocumentPath?: string,
-    originalUserPrompt?: string
-): string {
-    const texts = getLlsCcaiTaskTexts(language);
-    const trimmedPath = (planningDocumentPath || '').trim();
-    const trimmedPrompt = !trimmedPath ? (originalUserPrompt || '').trim() : '';
-    const lines = [
-        'Active llsccai-task workflow is available for the current workspace.',
-        '',
-        ...(workflow ? ['Workflow JSON:', JSON.stringify(workflow, null, 2), ''] : []),
-        ...(trimmedPath ? [`Planning document path: ${trimmedPath}`, ''] : []),
-        ...(trimmedPrompt ? [`Original user request: ${trimmedPrompt}`, ''] : []),
-        'Workflow tool usage rules:',
-        `- Output user-facing task-flow explanations in ${texts.outputLanguageName}.`,
-        '- When actual task progress changes, update the workflow status.',
-        '- You may only update task statuses: pending, in_progress, completed, blocked.',
-        '- You may NOT modify task titles, descriptions, order, or summary.',
-        '- Do not update workflow status unless the status actually changed.',
-        '- If a task is completed, update the workflow status before saying it is complete in text.',
-        '- If all tasks are completed, update every remaining pending or in_progress task before giving the final summary.',
-        '- Never claim that the workflow or any task has been updated, completed, or finished unless the workflow status has actually been updated.',
-        '- Do not end the turn with only a textual completion summary while the injected Workflow JSON still contains pending or in_progress tasks.',
-        '- Strictly execute the active workflow without asking whether to continue, whether to start, or whether to proceed.',
-        '- Do not ask for confirmation before executing the next pending or in-progress workflow task; continue automatically unless a real blocker prevents progress.',
-        '- Only ask the user a question when execution is genuinely impossible without missing external information; never ask routine approval questions such as "continue?", "start?", or "proceed?".',
-        '- When the workflow already exists, do not re-read the original planning document unless the next task explicitly requires it; execute the next concrete task directly.',
-        '- If you use the Read tool, never pass an empty pages value; omit pages when allowed, or use a valid value such as "1" or "1-5".',
-        '- If a task is already in_progress, do not update it to in_progress again; continue executing the task instead.',
-        '- After workflow status is updated, continue with the next concrete task instead of stopping at the status message.',
-        '- Do not only describe the next workflow step. Execute the concrete action whenever one is available.'
-    ];
-    return lines.join('\n');
 }
 
 /**

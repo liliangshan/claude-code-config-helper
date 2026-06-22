@@ -47,6 +47,21 @@ const AUTO_CONTINUE_DELAY_MS = 4_000;
 const TOOL_CONTINUE_DELAY_MS = 4_000;
 
 /**
+ * 命中非任务流工具后「空闲看门狗」的等待时长，单位毫秒。
+ *
+ * 命中 Write/Edit 等非任务流工具后，本应由 Claude Code 自己发起 tool_result
+ * 往返继续干活，扩展不该抢跑。看门狗只在 CLI 这轮结束后「持续静默」超过本
+ * 时长（期间没有任何新请求）时，才判定 CLI 真停了并兜底续推一次。
+ *
+ * 取 30 秒而非 4 秒：CLI 在大任务里写完一个文件后，常常要花十几到几十秒做
+ * 内部 turn 收尾、下一步规划、甚至本地工具执行，期间未必立刻发出下一条网络
+ * 请求。4 秒太短会在 CLI 其实还要自己往下走时过早抢跑，导致看门狗与 CLI 各
+ * 推一轮、出现重复续推观感。30 秒能覆盖绝大多数「CLI 自己接手」的间隙，只在
+ * 确实长时间静默时才兜底。
+ */
+const IDLE_WATCHDOG_DELAY_MS = 30_000;
+
+/**
  * 连续多少次"模型只回文字、未调用任何工具"后熔断自动续推。
  *
  * 上游模型偶尔会陷入"反复用文字声称已完成、却始终不发 tool_use"的死循环；
@@ -97,6 +112,23 @@ export class AutoContinueScheduler {
 
     /** 外部注入的续推提交前回调。 */
     private static beforeSubmit: AutoContinueBeforeSubmit | undefined;
+
+    /**
+     * 空闲看门狗:是否处于「命中非任务流工具后等待 CLI 自己往下走」的观察期。
+     *
+     * 设计目标:命中 Write/Edit 等非任务流工具时,本应由 Claude Code 自己发起
+     * tool_result 往返继续干活,所以不立即续推。但部分情况下 CLI 这轮请求结束后
+     * 并不自动续做剩余工作,任务流就卡在半截。于是引入「请求活动看门狗」:
+     *   - 命中非任务流工具、这轮结束时 → {@link armIdleWatchdog} 置 true 并启动延时;
+     *   - 期间任何新请求进来 → {@link notifyRequestStarted} 把它打回 false(CLI 仍在活动);
+     *   - 延时到点仍为 true(这段时间没有任何新请求)→ 判定 CLI 真停了,兜底续推一次。
+     *
+     * 续推自身会触发新请求,又会把该标志打回 false,因此不会自激连环触发。
+     */
+    private static idleWatchdogPending = false;
+
+    /** 空闲看门狗延时定时器句柄。 */
+    private static idleWatchdogTimer: NodeJS.Timeout | undefined;
 
     /**
      * 创建自动续推调度器。
@@ -157,6 +189,50 @@ export class AutoContinueScheduler {
     public scheduleAfterWorkflowTool(): void {
         this.resetMissingToolCounter('workflow 工具命中');
         this.scheduleAfter(TOOL_CONTINUE_DELAY_MS, '4 秒', 'workflow');
+    }
+
+    /**
+     * 通知「有新请求进来」,取消空闲看门狗。
+     *
+     * 只要 relay 收到任意一条新请求,就说明 CLI 仍在活动(自己发起了 tool_result
+     * 往返或新一轮对话),无需空闲兜底续推。把看门狗标志打回 false 并清掉延时,
+     * 让到点判断直接落空。由 `extension.ts` 在每次 relay 请求开始时调用。
+     */
+    public notifyRequestStarted(): void {
+        if (!AutoContinueScheduler.idleWatchdogPending && !AutoContinueScheduler.idleWatchdogTimer) return;
+        AutoContinueScheduler.idleWatchdogPending = false;
+        if (AutoContinueScheduler.idleWatchdogTimer) {
+            clearTimeout(AutoContinueScheduler.idleWatchdogTimer);
+            AutoContinueScheduler.idleWatchdogTimer = undefined;
+        }
+        Logger.info('[LlsTask][AutoContinue] 收到新请求,空闲看门狗已撤销(CLI 仍在活动)');
+    }
+
+    /**
+     * 启动空闲看门狗:命中非任务流工具、本轮结束后等待 CLI 是否自己往下走。
+     *
+     * 置 {@link idleWatchdogPending} 为 true 并起 {@link IDLE_WATCHDOG_DELAY_MS} 延时。延时到点时:
+     *   - 若期间有新请求把标志打回 false → 不续推(CLI 自己接手了);
+     *   - 若标志仍为 true 且任务流活跃未完成 → 走 {@link schedule} 兜底续推一次
+     *     (计入熔断,连续无进展最终会熔断,避免任务流卡死又不至于无限自激)。
+     */
+    public armIdleWatchdog(): void {
+        if (AutoContinueScheduler.idleWatchdogTimer) {
+            clearTimeout(AutoContinueScheduler.idleWatchdogTimer);
+        }
+        AutoContinueScheduler.idleWatchdogPending = true;
+        Logger.info('[LlsTask][AutoContinue] 命中非任务流工具,启动 30 秒空闲看门狗');
+        AutoContinueScheduler.idleWatchdogTimer = setTimeout(() => {
+            AutoContinueScheduler.idleWatchdogTimer = undefined;
+            if (!AutoContinueScheduler.idleWatchdogPending) return;
+            AutoContinueScheduler.idleWatchdogPending = false;
+            if (!this.service.hasActiveWorkflow() || this.service.isWorkflowCompleted()) {
+                Logger.info('[LlsTask][AutoContinue] 空闲看门狗到点:任务流已完成或不存在,跳过续推');
+                return;
+            }
+            Logger.info('[LlsTask][AutoContinue] 空闲看门狗到点:30 秒内无新请求,CLI 已停,兜底续推');
+            this.schedule();
+        }, IDLE_WATCHDOG_DELAY_MS);
     }
 
     /**

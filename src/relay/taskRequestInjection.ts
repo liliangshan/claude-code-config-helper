@@ -15,7 +15,6 @@ import {
     AnthropicToolDefinition,
     buildCreateLlsCcaiTaskSystemRule,
     buildCreateLlsCcaiTaskWorkflowTool,
-    buildLlsCcaiTaskSystemRule,
     buildUpdateLlsCcaiTaskWorkflowTool,
     mergeAnthropicTools
 } from '../llsTask/tools';
@@ -205,15 +204,15 @@ export function injectLlsTaskRequestBody(
         //   否则会让模型在普通转发对话里误触发规划模式。
         const blockedToolNames = new Set<string>(ALWAYS_BLOCKED_CHAT_TOOL_NAMES);
         if (shouldInjectWorkflowExecution && deps && language) {
+            // 续推执行阶段只注入 update 工具定义，**不再注入任何任务流 system 控制规则
+            // 或 Workflow JSON 快照**。原因：快照里的任务状态每轮都变，一旦进入被缓存的
+            // 请求体（system 或 messages），就会逐字节击穿 Anthropic 前缀缓存，导致
+            // cache_read 卡在固定前缀、增长的历史每轮全量 cache_creation。改为由
+            // AutoContinueScheduler 经 submitter 发送一条「自包含」续推用户消息——其中带上
+            // 任务序列、下一个待执行任务以及调用 update 工具的指示——让 CLI 当作正常一轮处理，
+            // 请求体前缀保持稳定、缓存可命中。
             builtIns.push(buildUpdateLlsCcaiTaskWorkflowTool());
             blockedToolNames.add(ASK_USER_QUESTION_TOOL_NAME);
-            const snapshot = deps.llsTaskService.getSnapshot();
-            userControlRules.push(buildLlsCcaiTaskSystemRule(
-                language,
-                snapshot.workflow ?? undefined,
-                snapshot.planningDocumentPath,
-                snapshot.originalUserPrompt
-            ));
         } else if (shouldInjectWorkflowCreation && deps && language) {
             builtIns.push(buildCreateLlsCcaiTaskWorkflowTool());
             blockedToolNames.add(EXIT_PLAN_MODE_TOOL_NAME);
@@ -228,7 +227,9 @@ export function injectLlsTaskRequestBody(
             builtIns
         );
         if (userControlRules.length > 0) {
-            appendUserControlMessage(parsed, userControlRules.join('\n\n'));
+            // 仅创建阶段会走到这里：把一次性的创建规则注入 system 尾部。续推执行阶段
+            // userControlRules 为空，不会对请求体追加任何易变内容，从而保持缓存前缀稳定。
+            appendSystemRule(parsed, userControlRules.join('\n\n'));
         }
         return { bodyText: JSON.stringify(parsed), injected: true };
     } catch (err) {
@@ -491,90 +492,6 @@ export function appendSystemRule(parsed: Record<string, unknown>, rule: string):
         return;
     }
     parsed.system = rule;
-}
-
-/**
- * 向 Anthropic messages 的最后一条 user 消息头部插入任务流用户控制消息。
- *
- * 部分 OpenAI-compatible 模型对转换后的 system 规则遵循较弱，因此任务流规则改为
- * role=user 的显式控制消息注入，让模型把它当作当前轮用户指令处理，同时保留原有
- * Claude Code 工具列表与任务流工具定义。
- *
- * @param parsed Anthropic 请求体对象。
- * @param rule 要插入的任务流控制规则文本。
- */
-export function appendUserControlMessage(parsed: Record<string, unknown>, rule: string): void {
-    const messages = parsed.messages;
-    if (!Array.isArray(messages)) {
-        parsed.messages = [{ role: 'user', content: [{ type: 'text', text: rule }] }];
-        return;
-    }
-    const lastMessage = messages[messages.length - 1];
-    if (isAnthropicUserMessageRecord(lastMessage)) {
-        // 工具往返消息（content 以 tool_result 开头）不能在其前面插入 text block：
-        // Anthropic 协议要求 user 消息里的 tool_result 紧跟在上一条 assistant 的
-        // tool_use 之后，否则会报 `tool_use ids were found without tool_result
-        // blocks immediately after`。这类消息本就不是真正的"本轮用户输入"，
-        // 兜底注入既无意义又破坏协议约束，直接追加到末尾即可。
-        if (userMessageStartsWithToolResult(lastMessage)) {
-            parsed.messages = [...messages, { role: 'user', content: [{ type: 'text', text: rule }] }];
-            return;
-        }
-        prependTextBlockToUserMessage(lastMessage, rule);
-        parsed.messages = messages;
-        return;
-    }
-    parsed.messages = [...messages, { role: 'user', content: [{ type: 'text', text: rule }] }];
-}
-
-/**
- * 判断 user 消息的 content 是否以 `tool_result` 块开头。
- *
- * Anthropic 协议中，承载工具返回结果的 user 消息其 content 第一个 block 必须是
- * `tool_result`，且需紧邻上一条 assistant 的 `tool_use`。识别出这类消息后，注入
- * 逻辑应避免在其头部插入任何 text block。
- *
- * @param message 待检查的 user 消息。
- * @returns content 以 tool_result 开头时返回 true。
- */
-export function userMessageStartsWithToolResult(message: { role: 'user'; content?: unknown }): boolean {
-    const content = message.content;
-    if (!Array.isArray(content) || content.length === 0) return false;
-    const first = content[0];
-    return !!first
-        && typeof first === 'object'
-        && (first as { type?: unknown }).type === 'tool_result';
-}
-
-/**
- * 判断消息对象是否为可追加文本块的 Anthropic user message。
- *
- * @param message 待检查的消息对象。
- * @returns 是 user message 时返回 true。
- */
-export function isAnthropicUserMessageRecord(message: unknown): message is { role: 'user'; content?: unknown } {
-    return !!message && typeof message === 'object' && (message as { role?: unknown }).role === 'user';
-}
-
-/**
- * 向 user message 的 content 头部插入一个 Anthropic text block。
- *
- * 不以 `<system-reminder>` 等内容作为条件；只要调用方确认当前请求不是标题生成等
- * 侧轨请求，注入文本就统一插入到 `content[0]`，让它先于该轮用户文本被模型看到。
- *
- * @param message 目标 user message。
- * @param text 需要插入的文本。
- */
-export function prependTextBlockToUserMessage(message: { role: 'user'; content?: unknown }, text: string): void {
-    if (typeof message.content === 'string') {
-        message.content = [{ type: 'text', text }, { type: 'text', text: message.content }];
-        return;
-    }
-    if (Array.isArray(message.content)) {
-        message.content = [{ type: 'text', text }, ...message.content];
-        return;
-    }
-    message.content = [{ type: 'text', text }];
 }
 
 /**
