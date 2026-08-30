@@ -967,6 +967,9 @@ select:focus-visible {
 }
 
 .codeBlockWrapper_-a7MRw {
+    /* 复制按钮绝对定位的锚点：必须是每个代码块自己，否则同一条消息里的多个
+       代码块会把按钮全部叠在消息顶部右角。 */
+    position: relative;
     margin: 0;
     padding: var(--lls-space-3) var(--lls-space-4);
     overflow-x: auto;
@@ -2983,6 +2986,55 @@ body.vscode-high-contrast .ask-modal__custom-input {
     background: color-mix(in srgb, var(--lls-accent) 8%, var(--lls-bg-elevated));
     border-color: color-mix(in srgb, var(--lls-accent) 18%, var(--lls-border));
     color: var(--vscode-textPreformat-foreground, var(--lls-fg));
+}
+
+/* ---------- 行内代码点击即复制 ---------- */
+/* 行内代码整体可点击复制，末尾跟一个复制图标作为可点击提示。 */
+code.inlineCode_-a7MRw {
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+code.inlineCode_-a7MRw:hover {
+    background: color-mix(in srgb, var(--lls-accent) 16%, var(--lls-bg-elevated));
+    border-color: color-mix(in srgb, var(--lls-accent) 34%, var(--lls-border));
+}
+code.inlineCode_-a7MRw.inlineCodeCopied_-a7MRw {
+    background: color-mix(in srgb, var(--lls-success, #3fb950) 20%, var(--lls-bg-elevated));
+    border-color: color-mix(in srgb, var(--lls-success, #3fb950) 45%, var(--lls-border));
+}
+/* 复制成功后对号图标转绿并保持全不透明，避免仍是灰色看不出反馈。 */
+code.inlineCode_-a7MRw.inlineCodeCopied_-a7MRw .inlineCopyIcon_-a7MRw,
+.copyButton_CEmTFw.copyButtonCopied_-a7MRw,
+.copyButton_-a7MRw.copyButtonCopied_-a7MRw {
+    color: var(--lls-success, #3fb950);
+    opacity: 1;
+}
+/* 对号后面的“复制成功”文案，跟随语言包切换。 */
+.copyFeedbackText_-a7MRw {
+    margin-left: 3px;
+    font-size: var(--lls-font-xs);
+    font-family: var(--lls-font);
+    white-space: nowrap;
+}
+.copyButton_CEmTFw.copyButtonCopied_-a7MRw {
+    width: auto;
+    gap: 2px;
+    padding: 0 6px;
+}
+.inlineCopyIcon_-a7MRw {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 4px;
+    vertical-align: -2px;
+    opacity: 0.45;
+    transition: opacity 0.15s ease;
+}
+.inlineCopyIcon_-a7MRw svg {
+    width: 11px;
+    height: 11px;
+}
+code.inlineCode_-a7MRw:hover .inlineCopyIcon_-a7MRw {
+    opacity: 1;
 }
 
 /* ---------- 工具卡片 ---------- */

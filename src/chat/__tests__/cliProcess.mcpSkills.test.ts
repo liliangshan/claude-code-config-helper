@@ -209,9 +209,10 @@ test('plan 权限模式下注入 ask_expert MCP，仍走 stdio 权限流（仅 b
     assert.equal(args.indexOf('--permission-mode') !== -1 && args[args.indexOf('--permission-mode') + 1], 'plan');
 });
 
-test('bypassPermissions 模式下注入 ask_expert MCP，不追加 --permission-prompt-tool stdio', () => {
-    // 回归：bypassPermissions 表示完全放行，注入 ask_expert MCP 后不应再追加 stdio
-    // 权限流，避免某些 CLI/provider 组合仍弹权限交互破坏非交互体验。
+test('bypassPermissions 模式下注入 ask_expert MCP，仍保留 stdio 通道以拦截 AskUserQuestion', () => {
+    // bypass 模式保留 --dangerously-skip-permissions 的同时追加 stdio 权限流：
+    // AskUserQuestion 需经授权通道回传答案（否则空答案导致模型立即继续）；
+    // 其余工具由扩展宿主 handleToolPermissionRequest 自动放行，保持 bypass 体验。
     const args = buildArgs(makeConfig({
         permissionMode: 'bypassPermissions',
         mcpServers: ASK_EXPERT_MCP,
@@ -220,7 +221,10 @@ test('bypassPermissions 模式下注入 ask_expert MCP，不追加 --permission-
     const mcpIdx = args.indexOf('--mcp-config');
     assert.notEqual(mcpIdx, -1);
     assert.match(args[mcpIdx + 1], /askExpert/);
-    assert.equal(args.includes('--permission-prompt-tool'), false, 'bypass 模式不应注入 --permission-prompt-tool');
+    assert.ok(args.includes('--dangerously-skip-permissions'), 'bypass 模式应保留 --dangerously-skip-permissions');
+    const permIdx = args.indexOf('--permission-prompt-tool');
+    assert.notEqual(permIdx, -1, 'bypass 模式应保留 stdio 权限流以拦截 AskUserQuestion');
+    assert.equal(args[permIdx + 1], 'stdio');
 });
 
 test('用户已在 cliArgs 指定 --permission-prompt-tool 时不因 ask_expert 注入重复', () => {

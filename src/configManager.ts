@@ -6,6 +6,9 @@
  */
 
 import * as vscode from 'vscode';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 import {
     CHAT_CURRENT_MODEL_KEY,
@@ -72,6 +75,18 @@ export interface ExportedConfig {
     currentModel: CurrentModelSelection | null;
 }
 
+/** 重新拉取模型后的合并统计。 */
+export interface ProviderModelsMergeStats {
+    /** 本次新增的模型数量。 */
+    added: number;
+    /** 沿用本地已有配置的模型数量。 */
+    kept: number;
+    /** 上游本次未返回、已被移除的模型数量。 */
+    removed: number;
+    /** 合并后的模型总数。 */
+    total: number;
+}
+
 /**
  * 管理 Provider、Model 与 Claude Code 顶部配置。
  *
@@ -100,6 +115,8 @@ export class ConfigManager implements vscode.Disposable {
             chatCliPath: this.getChatCliPath(),
             hostPlatform: process.platform,
             windowsAppDataPath: process.platform === 'win32' ? (process.env.APPDATA ?? '') : '',
+            claudeSettingsPath: getClaudeSettingsPath(),
+            claudeSettingsExists: fs.existsSync(getClaudeSettingsPath()),
             configuredLanguage: this.getConfiguredUiLanguage(),
             resolvedLanguage: this.getResolvedUiLanguage(),
             taskFlowBypassPermissions: this.getTaskFlowBypassPermissions(),
@@ -287,21 +304,52 @@ export class ConfigManager implements vscode.Disposable {
         await this.updateProviders(providers);
     }
 
-    /** 批量替换某个提供商的模型列表。 */
-    public async replaceProviderModels(providerId: string, models: ModelConfig[]): Promise<void> {
+    /**
+     * 用重新拉取的模型列表更新某个提供商的模型。
+     *
+     * 合并策略「以上游列表为准，但保留本地配置」：
+     * - 上游仍返回的旧模型按原顺序保留，逐条交给 {@link mergeFetchedModel} 合并，
+     *   用户手工调过的参数不会被上游默认值冲掉；
+     * - 上游本次未返回的旧模型视为下线，直接移除；若它正是当前选中模型，则清空选择；
+     * - 上游新出现的模型按 id 升序追加到末尾。
+     *
+     * @param providerId 提供商 id。
+     * @param models 本次从上游拉取到的模型列表。
+     * @returns 合并统计：added 新增数量，kept 沿用旧配置的数量，removed 移除数量，total 合并后总数。
+     */
+    public async replaceProviderModels(
+        providerId: string,
+        models: ModelConfig[]
+    ): Promise<ProviderModelsMergeStats> {
         const providers = this.listProviders();
         const provider = providers.find((item) => item.id === providerId);
         if (!provider) throw new Error(`提供商不存在：${providerId}`);
-        const previousById = new Map(provider.models.map((model) => [model.modelId, model]));
-        provider.models = models.map((model) => {
-            const previous = previousById.get(model.modelId);
-            return this.normalizeModel({
-                ...model,
-                enabled: previous?.enabled ?? model.enabled
-            });
-        });
+
+        const fetchedById = new Map(models.map((model) => [model.modelId, model]));
+        const merged = provider.models
+            .filter((previous) => fetchedById.has(previous.modelId))
+            .map((previous) => this.mergeFetchedModel(previous, fetchedById.get(previous.modelId)!));
+        const kept = merged.length;
+        const removed = provider.models.length - kept;
+
+        const existingIds = new Set(merged.map((model) => model.modelId));
+        const appended = models
+            .filter((model) => !existingIds.has(model.modelId))
+            .sort((a, b) => a.modelId.localeCompare(b.modelId))
+            .map((model) => this.mergeFetchedModel(undefined, model));
+
+        provider.models = [...merged, ...appended];
         provider.updatedAt = Date.now();
         await this.updateProviders(providers);
+
+        const currentModel = this.getCurrentModel();
+        if (
+            currentModel?.providerId === providerId &&
+            !provider.models.some((model) => model.modelId === currentModel.modelId)
+        ) {
+            await this.setCurrentModel(null);
+        }
+        return { added: appended.length, kept, removed, total: provider.models.length };
     }
 
     /**
@@ -530,6 +578,29 @@ export class ConfigManager implements vscode.Disposable {
     }
 
     /**
+     * 合并「重新拉取」得到的模型与本地已有模型配置。
+     *
+     * 上游 `/models` 只返回 id 与显示名，其余高级参数都是占位默认值，直接落库会把
+     * 用户手工调过的 maxTokens / temperature / vision 等设置冲掉。因此已存在的模型
+     * 一律以本地配置为基底，只有当本地显示名仍是 modelId（说明从未改过）时，才采纳
+     * 上游给出的更友好的显示名。
+     *
+     * @param previous 本地已有的模型配置；不存在时为 undefined。
+     * @param fetched 本次从上游拉取并补齐默认值后的模型配置。
+     * @returns 规范化后的模型配置。
+     */
+    private mergeFetchedModel(previous: ModelConfig | undefined, fetched: ModelConfig): ModelConfig {
+        if (!previous) {
+            return this.normalizeModel(fetched);
+        }
+        const keepsDefaultName = !previous.displayName || previous.displayName === previous.modelId;
+        return this.normalizeModel({
+            ...previous,
+            displayName: keepsDefaultName ? fetched.displayName || previous.displayName : previous.displayName
+        });
+    }
+
+    /**
      * 判断指定模型是否处于启用状态。
      *
      * 兼容旧数据：未显式设置 enabled 字段时视为启用。
@@ -557,4 +628,16 @@ export class ConfigManager implements vscode.Disposable {
         return provider.models.find((model) => model.modelId === modelId);
     }
 
+}
+
+/**
+ * 拼出用户级 Claude CLI 配置文件路径 `~/.claude/settings.json`。
+ *
+ * 该文件里的 model / env 会盖过本扩展注入给 CLI 的同名配置，导致配置页选的
+ * 模型不生效，所以配置页需要提示用户把它改名。
+ *
+ * @returns settings.json 绝对路径。
+ */
+export function getClaudeSettingsPath(): string {
+    return path.join(os.homedir(), '.claude', 'settings.json');
 }

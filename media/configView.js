@@ -122,6 +122,14 @@
             copyWindowsCliPath: 'Copy Windows executable path',
             windowsCliInstallCopied: 'Windows install command copied',
             windowsCliPathCopied: 'Windows executable path copied',
+            unixCliInstallHint: 'Install command:',
+            unixCliPathHint: 'Executable path under the install directory:',
+            copyUnixCliInstall: 'Copy install command',
+            copyUnixCliPath: 'Copy executable path',
+            unixCliInstallCopied: 'Install command copied',
+            unixCliPathCopied: 'Executable path copied',
+            claudeSettingsRenameHint: 'Note: this Claude CLI config file overrides the model and env injected by this extension. Rename it and reopen VS Code for your settings to take effect:',
+            renameClaudeSettings: 'Rename and reload',
             copyCliInstallQuery: 'Copy search text',
             cliInstallQueryCopied: 'Search text copied'
         },
@@ -209,6 +217,14 @@
             copyWindowsCliPath: '复制 Windows 可执行文件路径',
             windowsCliInstallCopied: '已复制 Windows 安装命令',
             windowsCliPathCopied: '已复制 Windows 可执行文件路径',
+            unixCliInstallHint: '安装方法：',
+            unixCliPathHint: '安装目录下的可执行文件路径：',
+            copyUnixCliInstall: '复制安装命令',
+            copyUnixCliPath: '复制可执行文件路径',
+            unixCliInstallCopied: '已复制安装命令',
+            unixCliPathCopied: '已复制可执行文件路径',
+            claudeSettingsRenameHint: '注意：该 Claude CLI 配置文件会覆盖本扩展注入的模型和环境变量，必须改名并重新打开 VS Code 才会生效：',
+            renameClaudeSettings: '改名并重载',
             copyCliInstallQuery: '复制搜索文本',
             cliInstallQueryCopied: '已复制搜索文本'
         }
@@ -605,42 +621,92 @@
         cliInstallHint: '提示：如果你尚未安裝 Claude CLI，或不知道安裝路徑在哪，請用 AI 或搜尋引擎搜尋：',
         cliInstallQuery: '如何安裝 Claude CLI 及 Claude CLI 的安裝路徑在哪？',
         copyCliInstallQuery: '複製搜尋文字',
-        cliInstallQueryCopied: '已複製搜尋文字'
+        cliInstallQueryCopied: '已複製搜尋文字',
+        unixCliInstallHint: '安裝方法：',
+        unixCliPathHint: '安裝目錄下的可執行檔路徑：',
+        copyUnixCliInstall: '複製安裝命令',
+        copyUnixCliPath: '複製可執行檔路徑',
+        unixCliInstallCopied: '已複製安裝命令',
+        unixCliPathCopied: '已複製可執行檔路徑',
+        claudeSettingsRenameHint: '注意：該 Claude CLI 設定檔會覆蓋本擴充功能注入的模型與環境變數，必須改名並重新開啟 VS Code 才會生效：',
+        renameClaudeSettings: '改名並重新載入'
     });
     Object.assign(translations.ko, {
         cliInstallHint: '팁: Claude CLI를 아직 설치하지 않았거나 설치 경로를 모른다면 AI 또는 검색 엔진에서 검색하세요:',
         cliInstallQuery: 'Claude CLI 설치 방법 및 Claude CLI 설치 경로는 어디인가요?',
         copyCliInstallQuery: '검색 문구 복사',
-        cliInstallQueryCopied: '검색 문구를 복사했습니다'
+        cliInstallQueryCopied: '검색 문구를 복사했습니다',
+        unixCliInstallHint: '설치 명령:',
+        unixCliPathHint: '설치 디렉터리 기준 실행 파일 경로:',
+        copyUnixCliInstall: '설치 명령 복사',
+        copyUnixCliPath: '실행 파일 경로 복사',
+        unixCliInstallCopied: '설치 명령을 복사했습니다',
+        unixCliPathCopied: '실행 파일 경로를 복사했습니다',
+        claudeSettingsRenameHint: '참고: 이 Claude CLI 설정 파일은 확장이 주입한 모델과 환경 변수를 덮어씁니다. 이름을 바꾸고 VS Code를 다시 열어야 적용됩니다:',
+        renameClaudeSettings: '이름 변경 후 다시 로드'
     });
     Object.assign(translations.ja, {
         cliInstallHint: 'ヒント: Claude CLI をまだインストールしていない、またはインストール先が分からない場合は、AI か検索エンジンで検索してください:',
         cliInstallQuery: 'Claude CLI のインストール方法と Claude CLI のインストールパスはどこですか？',
         copyCliInstallQuery: '検索文をコピー',
-        cliInstallQueryCopied: '検索文をコピーしました'
+        cliInstallQueryCopied: '検索文をコピーしました',
+        unixCliInstallHint: 'インストールコマンド:',
+        unixCliPathHint: 'インストール先ディレクトリ配下の実行ファイルパス:',
+        copyUnixCliInstall: 'インストールコマンドをコピー',
+        copyUnixCliPath: '実行ファイルパスをコピー',
+        unixCliInstallCopied: 'インストールコマンドをコピーしました',
+        unixCliPathCopied: '実行ファイルパスをコピーしました',
+        claudeSettingsRenameHint: '注意: この Claude CLI 設定ファイルは拡張機能が注入するモデルと環境変数を上書きします。名前を変更して VS Code を開き直すと反映されます:',
+        renameClaudeSettings: '名前を変更して再読み込み'
     });
     Object.assign(translations.fr, {
         cliInstallHint: 'Astuce : si vous n’avez pas encore installé Claude CLI ou si vous ne connaissez pas son chemin, demandez à une IA ou recherchez :',
         cliInstallQuery: 'Comment installer Claude CLI et où se trouve le chemin d’installation de Claude CLI ?',
         copyCliInstallQuery: 'Copier le texte de recherche',
-        cliInstallQueryCopied: 'Texte de recherche copié'
+        cliInstallQueryCopied: 'Texte de recherche copié',
+        unixCliInstallHint: 'Commande d’installation :',
+        unixCliPathHint: 'Chemin de l’exécutable dans le dossier d’installation :',
+        copyUnixCliInstall: 'Copier la commande d’installation',
+        copyUnixCliPath: 'Copier le chemin de l’exécutable',
+        unixCliInstallCopied: 'Commande d’installation copiée',
+        unixCliPathCopied: 'Chemin de l’exécutable copié',
+        claudeSettingsRenameHint: 'Remarque : ce fichier de configuration Claude CLI remplace le modèle et les variables d’environnement injectés par cette extension. Renommez-le et rouvrez VS Code pour appliquer vos réglages :',
+        renameClaudeSettings: 'Renommer et recharger'
     });
     Object.assign(translations.de, {
         cliInstallHint: 'Tipp: Wenn Claude CLI noch nicht installiert ist oder Sie den Pfad nicht kennen, fragen Sie eine KI oder suchen Sie nach:',
         cliInstallQuery: 'Wie installiert man Claude CLI und wo befindet sich der Installationspfad von Claude CLI?',
         copyCliInstallQuery: 'Suchtext kopieren',
-        cliInstallQueryCopied: 'Suchtext kopiert'
+        cliInstallQueryCopied: 'Suchtext kopiert',
+        unixCliInstallHint: 'Installationsbefehl:',
+        unixCliPathHint: 'Pfad der ausführbaren Datei im Installationsverzeichnis:',
+        copyUnixCliInstall: 'Installationsbefehl kopieren',
+        copyUnixCliPath: 'Pfad der ausführbaren Datei kopieren',
+        unixCliInstallCopied: 'Installationsbefehl kopiert',
+        unixCliPathCopied: 'Pfad der ausführbaren Datei kopiert',
+        claudeSettingsRenameHint: 'Hinweis: Diese Claude-CLI-Konfigurationsdatei überschreibt das von dieser Erweiterung injizierte Modell und die Umgebungsvariablen. Benennen Sie sie um und öffnen Sie VS Code erneut, damit Ihre Einstellungen wirken:',
+        renameClaudeSettings: 'Umbenennen und neu laden'
     });
 
-    /** Windows Claude CLI 安装与路径提示文案补丁，未单独翻译的语言回落英文。 */
+    /** Claude CLI 安装、路径与配置文件提示文案补丁，未单独翻译的语言回落英文。 */
     Object.keys(translations).forEach((language) => {
-        Object.assign(translations[language], {
-            windowsCliInstallHint: translations[language].windowsCliInstallHint || translations.en.windowsCliInstallHint,
-            windowsCliPathHint: translations[language].windowsCliPathHint || translations.en.windowsCliPathHint,
-            copyWindowsCliInstall: translations[language].copyWindowsCliInstall || translations.en.copyWindowsCliInstall,
-            copyWindowsCliPath: translations[language].copyWindowsCliPath || translations.en.copyWindowsCliPath,
-            windowsCliInstallCopied: translations[language].windowsCliInstallCopied || translations.en.windowsCliInstallCopied,
-            windowsCliPathCopied: translations[language].windowsCliPathCopied || translations.en.windowsCliPathCopied
+        [
+            'windowsCliInstallHint',
+            'windowsCliPathHint',
+            'copyWindowsCliInstall',
+            'copyWindowsCliPath',
+            'windowsCliInstallCopied',
+            'windowsCliPathCopied',
+            'unixCliInstallHint',
+            'unixCliPathHint',
+            'copyUnixCliInstall',
+            'copyUnixCliPath',
+            'unixCliInstallCopied',
+            'unixCliPathCopied',
+            'claudeSettingsRenameHint',
+            'renameClaudeSettings'
+        ].forEach((key) => {
+            translations[language][key] = translations[language][key] || translations.en[key];
         });
     });
 
@@ -651,6 +717,12 @@
 
     /** Windows npm 全局安装 Claude CLI 的命令。 */
     const WINDOWS_CLI_INSTALL_COMMAND = 'npm install -g @anthropic-ai/claude-code --registry=https://registry.npmmirror.com/';
+
+    /** 非 Windows 系统安装 Claude CLI 的命令；不带 -g，装到当前目录避免权限问题。 */
+    const UNIX_CLI_INSTALL_COMMAND = 'npm install @anthropic-ai/claude-code --registry=https://registry.npmmirror.com/';
+
+    /** 非 Windows npm 本地安装后 Claude CLI 可执行文件相对安装目录的路径片段。 */
+    const UNIX_CLI_EXECUTABLE_SUFFIX = 'node_modules/@anthropic-ai/claude-code/bin/claude';
 
     /** 无法从宿主环境读取 APPDATA 时展示的 Windows APPDATA 示例路径。 */
     const FALLBACK_WINDOWS_APP_DATA_PATH = 'C:/Users/用户名/AppData/Roaming';
@@ -692,9 +764,50 @@
         return joinWindowsPath(getWindowsAppDataPath(), WINDOWS_CLI_EXECUTABLE_SUFFIX);
     }
 
+    /**
+     * 渲染 `~/.claude/settings.json` 改名提示与一键改名按钮。
+     *
+     * 该文件里的 model / env 会盖过扩展注入给 CLI 的配置，导致配置页选的模型不
+     * 生效；文件不存在时不渲染，避免无意义的告警。
+     */
+    function renderClaudeSettingsHint() {
+        if (!state?.claudeSettingsExists) return '';
+        const settingsPath = state.claudeSettingsPath || '';
+        return `
+                            <div class="cli-install-windows" role="note">
+                                <div class="cli-install-windows-row">
+                                    <span data-i18n="claudeSettingsRenameHint">${t('claudeSettingsRenameHint')}</span>
+                                    <code>${text(settingsPath)}</code>
+                                    <button id="btn-rename-claude-settings" type="button" class="secondary" data-i18n="renameClaudeSettings">${text(t('renameClaudeSettings'))}</button>
+                                </div>
+                            </div>`;
+    }
+
+    /** 渲染非 Windows 系统的 Claude CLI npm 安装命令与可执行文件路径提示。 */
+    function renderUnixCliInstallHint() {
+        const copyIcon = '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 4.5A1.5 1.5 0 0 1 5.5 3H12a1 1 0 0 1 1 1v8.5A1.5 1.5 0 0 1 11.5 14h-6A1.5 1.5 0 0 1 4 12.5zM5.5 4a.5.5 0 0 0-.5.5v8a.5.5 0 0 0 .5.5h6a.5.5 0 0 0 .5-.5V4zM3 11H2.5A1.5 1.5 0 0 1 1 9.5v-6A1.5 1.5 0 0 1 2.5 2H9v1H2.5a.5.5 0 0 0-.5.5v6a.5.5 0 0 0 .5.5H3z"/></svg>';
+        return `
+                            <div class="cli-install-windows" role="note">
+                                <div class="cli-install-windows-row">
+                                    <span data-i18n="unixCliInstallHint">${t('unixCliInstallHint')}</span>
+                                    <code>${text(UNIX_CLI_INSTALL_COMMAND)}</code>
+                                    <button id="btn-copy-unix-cli-install" type="button" class="icon-copy-button" data-i18n-title="copyUnixCliInstall" data-i18n-aria-label="copyUnixCliInstall" title="${text(t('copyUnixCliInstall'))}">
+                                        ${copyIcon}
+                                    </button>
+                                </div>
+                                <div class="cli-install-windows-row">
+                                    <span data-i18n="unixCliPathHint">${t('unixCliPathHint')}</span>
+                                    <code>${text(UNIX_CLI_EXECUTABLE_SUFFIX)}</code>
+                                    <button id="btn-copy-unix-cli-path" type="button" class="icon-copy-button" data-i18n-title="copyUnixCliPath" data-i18n-aria-label="copyUnixCliPath" title="${text(t('copyUnixCliPath'))}">
+                                        ${copyIcon}
+                                    </button>
+                                </div>
+                            </div>`;
+    }
+
     /** 渲染仅 Windows 系统显示的 Claude CLI npm 安装命令与可执行文件路径提示。 */
     function renderWindowsCliInstallHint() {
-        if (!isWindowsHost()) return '';
+        if (!isWindowsHost()) return renderUnixCliInstallHint();
         const executablePath = getWindowsCliExecutablePath();
         return `
                             <div class="cli-install-windows" role="note">
@@ -897,6 +1010,7 @@
                                 <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 4.5A1.5 1.5 0 0 1 5.5 3H12a1 1 0 0 1 1 1v8.5A1.5 1.5 0 0 1 11.5 14h-6A1.5 1.5 0 0 1 4 12.5zM5.5 4a.5.5 0 0 0-.5.5v8a.5.5 0 0 0 .5.5h6a.5.5 0 0 0 .5-.5V4zM3 11H2.5A1.5 1.5 0 0 1 1 9.5v-6A1.5 1.5 0 0 1 2.5 2H9v1H2.5a.5.5 0 0 0-.5.5v6a.5.5 0 0 0 .5.5H3z"/></svg>
                             </button>
                             ${renderWindowsCliInstallHint()}
+                            ${renderClaudeSettingsHint()}
                         </div>
                     </div>
                 </div>
@@ -1075,6 +1189,9 @@
         byId('btn-copy-cli-install-query', (el) => el.addEventListener('click', copyCliInstallQuery));
         byId('btn-copy-windows-cli-install', (el) => el.addEventListener('click', copyWindowsCliInstallCommand));
         byId('btn-copy-windows-cli-path', (el) => el.addEventListener('click', copyWindowsCliExecutablePath));
+        byId('btn-copy-unix-cli-install', (el) => el.addEventListener('click', copyUnixCliInstallCommand));
+        byId('btn-copy-unix-cli-path', (el) => el.addEventListener('click', copyUnixCliExecutablePath));
+        byId('btn-rename-claude-settings', (el) => el.addEventListener('click', requestRenameClaudeSettings));
         byId('btn-new-provider', (el) => el.addEventListener('click', () => openProviderModal()));
         byId('btn-cancel-modal', (el) => el.addEventListener('click', closeModal));
         byId('btn-save-provider', (el) => el.addEventListener('click', saveProviderFromModal));
@@ -1115,6 +1232,21 @@
     /** 复制 Windows Claude CLI 可执行文件路径，路径中的反斜杠保持 Windows 单反斜杠格式。 */
     function copyWindowsCliExecutablePath() {
         copyTextWithToast(getWindowsCliExecutablePath(), 'windowsCliPathCopied');
+    }
+
+    /** 复制非 Windows Claude CLI npm 安装命令。 */
+    function copyUnixCliInstallCommand() {
+        copyTextWithToast(UNIX_CLI_INSTALL_COMMAND, 'unixCliInstallCopied');
+    }
+
+    /** 复制非 Windows Claude CLI 可执行文件相对路径。 */
+    function copyUnixCliExecutablePath() {
+        copyTextWithToast(UNIX_CLI_EXECUTABLE_SUFFIX, 'unixCliPathCopied');
+    }
+
+    /** 请求扩展宿主把 `~/.claude/settings.json` 改名备份，确认与重载由宿主侧处理。 */
+    function requestRenameClaudeSettings() {
+        vscode.postMessage({ type: 'renameClaudeSettings' });
     }
 
     /**

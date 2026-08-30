@@ -595,6 +595,10 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         const taskEvent = this.parseSystemTaskEvent(record);
         if (taskEvent) return taskEvent;
 
+        // 1.3. 其余 system 事件（api_retry / task_updated 等）→ 折叠卡片而非原文降级
+        const genericSystemEvent = this.parseSystemGenericEvent(record);
+        if (genericSystemEvent) return genericSystemEvent;
+
         // 1.5. Claude CLI stdio 控制请求（官方 canUseTool 权限回调通道）
         const permissionRequest = this.parseToolPermissionRequest(record);
         if (permissionRequest) return permissionRequest;
@@ -795,6 +799,46 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         const subtype = typeof record.subtype === 'string' ? record.subtype : '';
         if (!StreamJsonCliAdapter.SYSTEM_TASK_EVENT_SUBTYPES.has(subtype)) return undefined;
         return { type: 'segments', segments: [], done: false };
+    }
+
+    /**
+     * 兜底处理其余 system 事件（api_retry / task_updated 等未知 subtype）。
+     *
+     * 这些事件此前会命中「完全无法识别 → 原文降级」路径，把原始 JSON 直接打进
+     * 聊天区。现在改为渲染成一个默认折叠的工具风格卡片：摘要行显示
+     * `System · <subtype>`，点开后显示完整 JSON，既不丢信息也不刷屏。
+     *
+     * 注意：必须放在 init / status / task 三个精准 system 分支之后调用，
+     * 只兜底剩余 subtype。
+     *
+     * @param record CLI JSON 事件对象。
+     * @returns 命中 system 事件时返回折叠卡片 segment，否则返回 undefined。
+     */
+    private parseSystemGenericEvent(record: Record<string, unknown>): ParsedCliEvent | undefined {
+        if (record.type !== 'system') return undefined;
+        return { type: 'segments', segments: [this.buildSystemEventSegment(record)], done: false };
+    }
+
+    /**
+     * 把一个 system 事件对象转成折叠工具卡片 segment。
+     *
+     * @param record system 事件对象。
+     * @returns tool 类型的 ChatSegment。
+     */
+    private buildSystemEventSegment(record: Record<string, unknown>): ChatSegment {
+        const subtype = typeof record.subtype === 'string' && record.subtype ? record.subtype : 'event';
+        const uuid = typeof record.uuid === 'string' ? record.uuid : `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        return {
+            id: `system_${subtype}_${uuid}`,
+            kind: 'tool',
+            tool: {
+                name: 'System',
+                status: 'success',
+                summary: subtype,
+                detail: JSON.stringify(record, null, 2),
+                input: record
+            }
+        };
     }
 
     // -------------------------------------------------------------------------
@@ -1981,15 +2025,18 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      * @returns segments 事件。
      */
     private parseDisplayTextInternal(text: string, forceFlushTail: boolean): ParsedCliEvent {
-        text = this.stripEmbeddedSystemTaskEvents(text);
-        if (!text) return { type: 'segments', segments: [] };
+        const stripped = this.stripEmbeddedSystemTaskEvents(text);
+        text = stripped.text;
+        if (!text) {
+            return { type: 'segments', segments: stripped.systemSegments, done: false };
+        }
         this.rememberAssistantText(text);
         if (!text.includes('\n')) {
-            return { type: 'segments', segments: [{ kind: 'markdown', text }] };
+            return { type: 'segments', segments: [...stripped.systemSegments, { kind: 'markdown', text }] };
         }
         const parsed = parseChunk(this.parserState, { source: 'stdout', text });
         this.parserState = parsed.state;
-        const segments = [...parsed.segments];
+        const segments = [...stripped.systemSegments, ...parsed.segments];
         if (forceFlushTail) {
             const tailSegments = flushParser(this.parserState);
             if (tailSegments.length > 0) segments.push(...tailSegments);
@@ -1998,39 +2045,61 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     }
 
     /**
-     * 从可见 assistant 文本中移除嵌入的上游系统任务事件 JSON。
+     * 从可见 assistant 文本中移除嵌入的上游 system 事件 JSON。
      *
-     * 有些上游代理不会把 `system/taskstarted`、`system/tasknotification` 作为顶层
-     * stream-json 事件发送，而是把它们混入 assistant text 中。顶层解析路径无法命中
-     * 这种形态，因此在 markdown 解析前再做一层过滤，避免原始 JSON 显示到聊天区。
+     * 有些上游代理不会把 system 事件作为顶层 stream-json 事件发送，而是把它们
+     * 混入 assistant text 中（可能多段紧贴、无换行）。顶层解析路径无法命中这种
+     * 形态，因此在 markdown 解析前再做一层过滤：
      *
-     * 实现细节：上游事件 JSON 可能与前后文本/其它 JSON 紧贴一起（中间没有换行），
-     * 因此不能只做行级分割。这里通过正则定位 `{"type":"system","subtype":"task...`
-     * 起始位置，然后用括号配对扫描到匹配的右花括号，整段连同紧随的一个换行符一起
-     * 切除。对没有命中字段名（含驼峰/下划线两种风格）的文本则原样返回。
+     * - 任务调度类 subtype（taskstarted / tasknotification 等）→ 静默丢弃；
+     * - 其余 subtype（api_retry / task_updated 等）→ 转成折叠 System 卡片
+     *   segment 返回，避免原始 JSON 刷进聊天区。
+     *
+     * 实现细节：通过正则定位 `{"type":"system"` 起始位置，再用括号配对扫描到
+     * 匹配的右花括号，整段连同紧随的一个换行符一起切除。
      *
      * @param text 待过滤的可见文本。
-     * @returns 移除内部任务事件后的文本。
+     * @returns 过滤后的文本与提取出的 System 卡片 segments。
      */
-    private stripEmbeddedSystemTaskEvents(text: string): string {
-        if (!text) return text;
-        const marker = /\{[^{}]*?"type"\s*:\s*"system"[^{}]*?"subtype"\s*:\s*"(?:taskstarted|task_started|tasknotification|task_notification|taskprogress|task_progress|compact_boundary)"/g;
-        if (!marker.test(text)) return text;
+    private stripEmbeddedSystemTaskEvents(text: string): { text: string; systemSegments: ChatSegment[] } {
+        if (!text) return { text, systemSegments: [] };
+        const marker = /\{[^{}]*?"type"\s*:\s*"system"[^{}]*?"subtype"\s*:\s*"/g;
+        if (!marker.test(text)) return { text, systemSegments: [] };
         marker.lastIndex = 0;
         let out = '';
         let cursor = 0;
+        const systemSegments: ChatSegment[] = [];
         let match: RegExpExecArray | null;
         while ((match = marker.exec(text)) !== null) {
             const start = match.index;
+            if (start < cursor) { marker.lastIndex = cursor; continue; }
             const end = this.findJsonObjectEnd(text, start);
             if (end < 0) break;
+            const rawJson = text.slice(start, end + 1);
+            let record: Record<string, unknown> | undefined;
+            try {
+                const parsed = JSON.parse(rawJson);
+                if (parsed && typeof parsed === 'object') record = parsed as Record<string, unknown>;
+            } catch {
+                // 非法 JSON（如恰好长得像的普通文本）→ 保留原文不切除。
+            }
+            if (!record || record.type !== 'system') {
+                out += text.slice(cursor, end + 1);
+                cursor = end + 1;
+                marker.lastIndex = cursor;
+                continue;
+            }
             out += text.slice(cursor, start);
             cursor = end + 1;
             if (text[cursor] === '\n') cursor += 1;
             marker.lastIndex = cursor;
+            const subtype = typeof record.subtype === 'string' ? record.subtype : '';
+            if (!StreamJsonCliAdapter.SYSTEM_TASK_EVENT_SUBTYPES.has(subtype)) {
+                systemSegments.push(this.buildSystemEventSegment(record));
+            }
         }
         out += text.slice(cursor);
-        return out;
+        return { text: out, systemSegments };
     }
 
     /**

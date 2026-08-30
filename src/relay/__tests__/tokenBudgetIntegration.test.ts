@@ -68,7 +68,7 @@ async function flushAsync(): Promise<void> {
     for (let i = 0; i < 20; i += 1) await new Promise<void>((r) => setImmediate(r));
 }
 
-test('集成：触达阈值 → 向 CLI 发送原生 /compact', async () => {
+test('集成：触达阈值不再自动压缩，compactNow 才发送原生 /compact', async () => {
     const sentCommands: string[] = [];
     const events: Array<{ kind: string; payload: unknown }> = [];
 
@@ -93,6 +93,10 @@ test('集成：触达阈值 → 向 CLI 发送原生 /compact', async () => {
     });
 
     await flushAsync();
+    assert.deepEqual(sentCommands, [], '超阈值不得自动压缩');
+
+    service.compactNow('s-old');
+    await flushAsync();
 
     assert.deepEqual(sentCommands, [CLAUDE_COMPACT_COMMAND]);
     assert.deepEqual(events.map((e) => e.kind), []);
@@ -101,7 +105,7 @@ test('集成：触达阈值 → 向 CLI 发送原生 /compact', async () => {
     assert.equal(bucket.compact.triggerCount, 0);
 });
 
-test('集成：压缩在途互斥 → 第二次 afterRecv 不再发送 /compact', async () => {
+test('集成：压缩在途时重复 afterRecv 不会产生任何 /compact', async () => {
     const sentCommands: string[] = [];
     const service: any = new TokenBudgetService({
         configManager: makeConfigManager() as any,
@@ -115,11 +119,7 @@ test('集成：压缩在途互斥 → 第二次 afterRecv 不再发送 /compact'
         sessionId: 's-old-2', providerId: 'p1', modelId: 'm',
         anthropicBody: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] })
     });
-    service.afterRecv({
-        sessionId: 's-old-2', providerId: 'p1', modelId: 'm',
-        usage: { inputTokens: 50000 },
-        requestBodyAtSend: ''
-    });
+    service.compactNow('s-old-2');
     await flushAsync();
     service.afterRecv({
         sessionId: 's-old-2', providerId: 'p1', modelId: 'm',
@@ -131,7 +131,7 @@ test('集成：压缩在途互斥 → 第二次 afterRecv 不再发送 /compact'
     assert.deepEqual(sentCommands, [CLAUDE_COMPACT_COMMAND]);
 });
 
-test('集成：含 ask_expert tool_use/tool_result pair 的会话触达阈值仍按 session 发送一次 /compact', async () => {
+test('集成：含 ask_expert tool_use/tool_result pair 的会话手动压缩仍按 session 发送一次 /compact', async () => {
     // 回归：主对话里有 ask_expert 的 tool_use 与配对 tool_result 时，token budget
     // 仍以原生 /compact 形式委托 CLI 压缩，不会在 Relay 侧自行截断半个 pair。
     const sentCommands: string[] = [];
@@ -169,6 +169,7 @@ test('集成：含 ask_expert tool_use/tool_result pair 的会话触达阈值仍
         usage: { inputTokens: 50000 },
         requestBodyAtSend: ''
     });
+    service.compactNow('s-pair');
     await flushAsync();
 
     // 仅发送一次原生 /compact；pair 结构由 CLI 内部压缩处理，Relay 不拆 pair。
@@ -179,7 +180,7 @@ test('集成：含 ask_expert tool_use/tool_result pair 的会话触达阈值仍
 
 test('集成：主 CLI 与专家 sub-turn 并发命中同一 Relay 时按各自 sessionId 独立计量，不误判', async () => {
     // 回归：专家 sub-turn 走独立 sessionId（无历史），不应与主 CLI 的 session 共享
-    // token 桶。主 session 达阈值触发 /compact，专家 session 不应被牵连触发。
+    // token 桶。手动压缩主 session 时，专家 session 不应被牵连。
     const sentCommands: string[] = [];
     const service: any = new TokenBudgetService({
         configManager: makeConfigManager() as any,
@@ -210,6 +211,7 @@ test('集成：主 CLI 与专家 sub-turn 并发命中同一 Relay 时按各自 
         usage: { inputTokens: 500 },
         requestBodyAtSend: ''
     });
+    service.compactNow('s-main');
     await flushAsync();
 
     // 仅主 session 触发一次 /compact；专家 session 桶不在压缩中。
@@ -237,6 +239,7 @@ test('集成：发送 /compact 失败 → notifier failed + inProgress 复位', 
         usage: { inputTokens: 50000 },
         requestBodyAtSend: ''
     });
+    service.compactNow('s-old-3');
     await flushAsync();
 
     assert.deepEqual(events.map((e) => e.kind), ['failed']);

@@ -1,11 +1,18 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.10
+**Version:** 3.2.25
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
 
 ## Highlights
 
+- Fixed compaction still firing at around 166k tokens after it was made manual: the Claude CLI was compacting on its own because it never saw the model's configured context length and fell back to its built-in 200k default. The context length from the model config panel is now passed to the CLI as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, so the CLI and the token meter share one limit; expert/plan/review routes resolve it from their own model, and nothing is injected when the field is empty.
+- Made context compaction **manual only**: the token budget no longer fires `/compact` by itself once a session crosses its threshold, since that competed with the CLI's own compaction and could compact a conversation still in progress. Token metering is unchanged — the meter, threshold, and per-session accounting all keep working; compaction now happens only via the compact button on the token meter or a `/compact` you type yourself.
+- Fixed the built-in **`browser_*` MCP tools disappearing entirely**: the MCP server runs as a standalone Node child process without the `vscode` module, but it statically imported `browserToolHost` (which chains into `require('vscode')`), so it crashed on startup and the whole browser tool group silently vanished from the model's tool list. `BrowserToolHost` is now a type-only import, required lazily on the extension-host path.
+- Added **click-to-copy inline code** in Chat: a single-backtick span (typically a one-line shell command) now shows a copy icon and copies the whole command on click, with a green confirmation flash. Also fixed multiple code blocks in one message stacking all their copy buttons in the message's top-right corner.
+- Fixed context compaction running **twice in a row**: the compaction summary request is no longer re-measured against the threshold (its body is the whole conversation, so it always tripped), compaction started by the CLI or by a manually typed `/compact` now registers in-flight state so the in-progress check and 60-second debounce apply to it, and a stale in-progress flag is only reset instead of being treated as a reason to compact.
+- Added **browser session persistence**: browser tools now keep you logged in across page closes and VS Code restarts. Cookies (including HttpOnly), `localStorage`, and `sessionStorage` are captured automatically once the page state settles and stored per origin in VS Code `SecretStorage`; `browser_open` re-injects them **before** navigating so the first screen's API calls are already authenticated. Cookies travel over raw CDP because Playwright's `storageState`/`addCookies` are blocked inside VS Code. Logging out on the site is recorded faithfully — the empty state overwrites the snapshot, so the next open stays logged out.
+- Fixed a `browser_open` deadlock when VS Code replies "At least one similar page is already open": the page id in that listing is now parsed, instead of every following call failing with "Page not found".
 - Fixed Mac Chinese (IME) Enter-to-select sending the message by mistake: when picking a candidate, macOS Pinyin commits per character and the confirming Enter arrives with `isComposing=false`, so the composer and resend editor now use an arrow-key state machine — an arrow key (paging through candidates) marks the next Enter as a candidate confirmation that does not send, and any other key resets the state so a plain Enter sends normally.
 - Fixed compaction routing: `/compact` summary requests now reach the configured **compaction model** even when the Claude CLI omits the `<command-name>/compact</command-name>` marker (as happens with token-budget-triggered compaction and newer CLI versions), instead of falling back to the main model.
 - Fixed the Anthropic prompt-cache **400** error (`a ttl='1h' cache_control block must not come after a ttl='5m' cache_control block`) in the built-in Chat CLI: the relay no longer force-rewrites outbound `cache_control` breakpoints to `1h`, which conflicted with `5m` breakpoints injected by an upstream gateway. The cache TTL now defaults to **Default (follow client)**, configurable through a new selector in the model-picker dialog (**Default / 5 minutes / 1 hour**) with a "switch back to Default on errors" hint, persisted in global state and applied to the relay without a reload.
@@ -165,6 +172,23 @@ Use the copy button next to the path if you need to paste it into the built-in C
    - **Models**: Add models manually or fetch them from the provider when supported.
 4. Select a model and activate the configuration.
 5. Reload the VS Code window when prompted so Claude Code can pick up the new environment variables.
+
+### Fetching models keeps your local settings
+
+**Fetch Models** calls the provider's `GET {baseUrl}/models`, which normally returns
+nothing but model ids. The upstream list decides which models exist, but it no longer
+resets how they are configured:
+
+- **Models still offered upstream keep every locally configured field** — display
+  name, context length, max tokens, vision, tool calling, temperature, top_p,
+  sampling mode, selectable, transform-think and preserve-reasoning are never reset
+  by a fetch. The upstream display name is adopted only if you never renamed the model.
+- **Models the upstream stopped returning are removed**, and if the removed model was
+  your active selection the current model is cleared.
+- **New ids are appended**, sorted by id, after your existing entries.
+
+The success toast reports the outcome as
+`已拉取 N 个模型：新增 A，保留原有配置 K，移除 R`.
 
 ## Built-in Chat Flow
 

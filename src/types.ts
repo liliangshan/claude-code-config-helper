@@ -149,6 +149,10 @@ export interface ConfigViewState {
     hostPlatform: NodeJS.Platform;
     /** Windows APPDATA 环境变量路径，非 Windows 或读取不到时为空。 */
     windowsAppDataPath: string;
+    /** 用户级 Claude CLI settings.json 绝对路径，用于展示改名提示。 */
+    claudeSettingsPath: string;
+    /** 该 settings.json 当前是否存在；不存在时无需提示改名。 */
+    claudeSettingsExists: boolean;
     /** 用户配置的 UI 语言，可能为 auto。 */
     configuredLanguage: AppLanguage;
     /** 解析后实际生效的 UI 语言。 */
@@ -167,6 +171,7 @@ export type WebviewMessage =
     | { type: 'openWorkspaceSharedSettings' }
     | { type: 'reloadWindow' }
     | { type: 'selectChatCliPath' }
+    | { type: 'renameClaudeSettings' }
     | { type: 'exportConfig' }
     | { type: 'importConfig' }
     | { type: 'updateUiLanguage'; payload: AppLanguage }

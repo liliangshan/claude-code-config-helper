@@ -349,7 +349,8 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                     sessionId,
                     providerId: provider.id,
                     modelId,
-                    anthropicBody: bodyText
+                    anthropicBody: bodyText,
+                    compactCommandTriggered: ctx.compactCommandTriggered === true
                 });
             }
         } catch (err) {

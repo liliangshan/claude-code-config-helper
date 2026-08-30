@@ -249,3 +249,59 @@ test('未知 model 走 DEFAULT_CONTEXT_LIMIT = 166000', () => {
     assert.equal(snap.contextLimit, 166000);
     assert.equal(snap.threshold, 116000);
 });
+
+/** 构造一个 token 数必定超过 threshold 的请求体。 */
+function hugeBody(): string {
+    return JSON.stringify({ messages: [{ role: 'user', content: 'lorem ipsum '.repeat(80000) }] });
+}
+
+test('压缩摘要请求登记在途状态', () => {
+    const { service, store } = buildService({
+        contextLength: 200000,
+        commandSender: async () => { /* noop */ }
+    });
+
+    service.beforeSend({
+        sessionId: 's1', providerId: 'p1', modelId: 'm',
+        anthropicBody: hugeBody(),
+        compactCommandTriggered: true
+    });
+
+    assert.equal(store.getSession('s1').compact.inProgress, true, '应登记压缩在途');
+});
+
+test('超阈值请求不再自动触发压缩（压缩只能手动发起）', () => {
+    let compactCalled = 0;
+    const { service } = buildService({
+        contextLength: 200000,
+        commandSender: async () => { compactCalled += 1; }
+    });
+
+    service.beforeSend({
+        sessionId: 's1', providerId: 'p1', modelId: 'm',
+        anthropicBody: hugeBody()
+    });
+    service.afterRecv({
+        sessionId: 's1', providerId: 'p1', modelId: 'm',
+        usage: { inputTokens: 190000 },
+        requestBodyAtSend: ''
+    });
+
+    assert.equal(compactCalled, 0, '请求/响应两侧都不得自动发 /compact');
+});
+
+test('compactNow 仍可手动触发压缩', () => {
+    let compactCalled = 0;
+    const { service, store } = buildService({
+        contextLength: 200000,
+        commandSender: async () => { compactCalled += 1; }
+    });
+    service.beforeSend({
+        sessionId: 's1', providerId: 'p1', modelId: 'm',
+        anthropicBody: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] })
+    });
+
+    assert.equal(service.compactNow('s1'), true);
+    assert.equal(compactCalled, 1);
+    assert.equal(store.getSession('s1').compact.inProgress, true);
+});

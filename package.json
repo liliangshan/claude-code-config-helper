@@ -2,7 +2,7 @@
     "name": "claude-code-config-helper",
     "displayName": "%extension.displayName%",
     "description": "%extension.description%",
-    "version": "3.2.19",
+    "version": "3.2.29",
     "publisher": "liliangshan",
     "license": "MIT",
     "repository": {
@@ -645,7 +645,7 @@
         "compile": "tsc -p ./",
         "watch": "tsc -watch -p ./",
         "typecheck": "tsc --noEmit -p ./",
-        "test": "npm run compile && node --test out/chat/__tests__/*.test.js"
+        "test": "npm run compile && node --test out/chat/__tests__/*.test.js out/browserTools/__tests__/*.test.js out/wakeupTools/__tests__/*.test.js out/__tests__/*.test.js out/relay/tokenBudget/__tests__/service.test.js out/relay/__tests__/tokenBudgetIntegration.test.js"
     },
     "devDependencies": {
         "@types/node": "^20.11.0",

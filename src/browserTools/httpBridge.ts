@@ -2,7 +2,11 @@
 
 import * as http from 'http';
 
-import { BrowserToolHost, type BrowserToolExecutor, type BrowserToolResult } from './browserToolHost';
+// 本模块同时被扩展宿主和独立的 MCP 子进程加载，而 browserToolHost 会链式引入
+// logger → require('vscode')，子进程里没有该模块。因此只保留类型导入，
+// 真正需要 BrowserToolHost 的宿主侧路径再惰性 require。
+import type { BrowserToolExecutor, BrowserToolResult } from './browserToolHost';
+import type { BrowserSessionStore } from './sessionStore';
 import { isBrowserToolName, type BrowserToolName } from './tools';
 
 export const BROWSER_TOOL_HTTP_PATH = '/llsccai/browser-tool';
@@ -36,7 +40,11 @@ export function createBrowserHttpHost(port: number): BrowserToolExecutor {
 }
 
 /** 创建扩展宿主侧 relay handler，用真实 BrowserToolHost 执行工具。 */
-export function createBrowserToolRelayHandler(host: BrowserToolExecutor = new BrowserToolHost()) {
+export function createBrowserToolRelayHandler(
+    host?: BrowserToolExecutor,
+    sessionStore?: BrowserSessionStore
+) {
+    const executor = host ?? new (require('./browserToolHost') as typeof import('./browserToolHost')).BrowserToolHost({ sessionStore });
     return async (req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> => {
         const path = (req.url ?? '').split('?', 1)[0];
         if (path !== BROWSER_TOOL_HTTP_PATH) {
@@ -56,7 +64,7 @@ export function createBrowserToolRelayHandler(host: BrowserToolExecutor = new Br
             const args = (body.arguments && typeof body.arguments === 'object')
                 ? body.arguments as Record<string, unknown>
                 : {};
-            const result = await host.execute(body.name, args);
+            const result = await executor.execute(body.name, args);
             writeJson(res, 200, result);
         } catch (err) {
             writeJson(res, 500, { error: err instanceof Error ? err.message : String(err) });

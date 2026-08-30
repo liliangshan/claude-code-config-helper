@@ -7,6 +7,7 @@ import { promises as fs } from 'fs';
 
 import { StreamJsonCliAdapter, type ParsedCliEvent, type ToolPermissionRequestEvent } from './chat/cli/cliAdapter';
 import { createBrowserToolRelayHandler, BROWSER_TOOL_RELAY_PORT_ENV } from './browserTools/httpBridge';
+import { BrowserSessionStore } from './browserTools/sessionStore';
 import { BROWSER_MCP_SERVER_NAME } from './browserTools/tools';
 import { ChatCliConfigService } from './chat/cli/cliConfig';
 import type { ChatCliConfig } from './chat/cli/types';
@@ -20,7 +21,8 @@ import {
 } from './expertMode/expertTriggers';
 import { resolvePlanDoneRoutingAction } from './chat/routing/planReviewWorkflow';
 import { parsePlanReviewToken } from './chat/routing/planReviewHandoff';
-import type { ChatComposerAttachment, ChatMessage, ChatModelOption, ChatQuickPermissionMode, ChatRoutedModelSelection, ChatRoute, ChatSegment, ChatUiLanguage, LlsTaskSnapshotPayload, WebviewToExtension, SessionListItem } from './chat/protocol';
+import type { AskUserQuestionItem, ChatComposerAttachment, ChatMessage, ChatModelOption, ChatQuickPermissionMode, ChatRoutedModelSelection, ChatRoute, ChatSegment, ChatUiLanguage, LlsTaskSnapshotPayload, WebviewToExtension, SessionListItem } from './chat/protocol';
+import { buildAskUserUpdatedInput, parseAskUserQuestions as parseAskUserQuestionsPure } from './chat/askUserQuestion';
 import { ConfigManager } from './configManager';
 import {
     CHAT_COMPACTION_MODE_GLOBAL_ENABLED_KEY,
@@ -57,6 +59,11 @@ import { TaskFlowStore } from './llsTask/store';
 import type { LlsTaskItem } from './llsTask/types';
 import { createVscodeToolRelayHandler, VSCODE_TOOL_RELAY_PORT_ENV } from './vscodeTools/httpBridge';
 import { VSCODE_MCP_SERVER_NAME } from './vscodeTools/tools';
+import { createWakeupToolRelayHandler, WAKEUP_TOOL_RELAY_PORT_ENV } from './wakeupTools/httpBridge';
+import { WAKEUP_MCP_SERVER_NAME } from './wakeupTools/tools';
+import { WakeupStore, type WakeupJob } from './wakeupTools/wakeupStore';
+import { WakeupScheduler } from './wakeupTools/wakeupScheduler';
+import { WakeupHost } from './wakeupTools/wakeupHost';
 import { AnthropicProxyAdapter } from './relay/anthropicProxy';
 import { DebugRecorder } from './relay/debugRecorder';
 import { OpenAIChatProxyAdapter } from './relay/openaiChatProxy';
@@ -85,6 +92,9 @@ let llsTaskService: LlsTaskService | undefined;
 
 /** 模块级自动续推调度器实例。 */
 let autoContinueScheduler: AutoContinueScheduler | undefined;
+
+/** 模块级定时唤醒调度器实例（持有 timer，须全局唯一）。 */
+let wakeupScheduler: WakeupScheduler | undefined;
 
 /** 恢复出未完成任务流后，待 Chat 首次 ready 时弹一次恢复对话框的标志。 */
 let pendingRestorePrompt = false;
@@ -1816,6 +1826,7 @@ async function startChatCliPair(options: { forceRestart?: boolean } = {}): Promi
         chatCliCancelRequested = false;
         logBrowserMcpInjection(normalLaunchConfig);
         logVscodeMcpInjection(normalLaunchConfig);
+        logWakeupMcpInjection(normalLaunchConfig);
         logMcpToolsBeforeCliStart();
         await normalCliProcess.start(normalLaunchConfig);
         rebuildNormalAdapter();
@@ -2047,6 +2058,8 @@ async function restartChatCliPair(options: { silent?: boolean } = {}): Promise<v
  */
 async function stopChatCliPair(): Promise<void> {
     resetAllRouteBusy();
+    // CLI 即将停止，等待中的 AskUserQuestion 弹窗请求全部作废，防止残留死等条目。
+    pendingAskUserRequests.clear();
     if (normalCliProcess) {
         try {
             await normalCliProcess.stop();
@@ -2161,6 +2174,28 @@ function logVscodeMcpInjection(config: ChatCliConfig): void {
         hasEntrypointScript: Array.isArray(server.args) && server.args[0] === '-e' && typeof server.args[1] === 'string' && server.args[1].includes('vscodeMcpServer'),
         relayPort: server.env?.[VSCODE_TOOL_RELAY_PORT_ENV] || '',
         toolPrefix: `mcp__${VSCODE_MCP_SERVER_NAME}__`
+    }));
+}
+
+/**
+ * 记录定时唤醒 MCP server 的注入状态，便于排查工具在模型侧缺失的问题。
+ *
+ * @param config 即将用于启动 CLI 的配置。
+ */
+function logWakeupMcpInjection(config: ChatCliConfig): void {
+    const server = config.mcpServers?.[WAKEUP_MCP_SERVER_NAME];
+    if (!server) {
+        Logger.info('Wakeup MCP 注入状态：disabled');
+        return;
+    }
+    Logger.info('Wakeup MCP 注入状态：' + JSON.stringify({
+        serverName: WAKEUP_MCP_SERVER_NAME,
+        type: server.type,
+        command: server.command || '',
+        argsCount: Array.isArray(server.args) ? server.args.length : 0,
+        hasEntrypointScript: Array.isArray(server.args) && server.args[0] === '-e' && typeof server.args[1] === 'string' && server.args[1].includes('wakeupMcpServer'),
+        relayPort: server.env?.[WAKEUP_TOOL_RELAY_PORT_ENV] || '',
+        toolPrefix: `mcp__${WAKEUP_MCP_SERVER_NAME}__`
     }));
 }
 
@@ -2358,6 +2393,9 @@ function handleCliCompactStatus(
 ): void {
     const sessionId = event.sessionId || getSessionIdForRoute(source);
     if (event.status === 'compacting') {
+        // CLI 自己开始压缩（用户手敲 /compact 或 CLI 自动压缩）时也要登记在途，
+        // 否则 TokenBudgetService 看不到这次压缩，防抖窗口失效会再压一次。
+        tokenBudgetServiceRef?.noteExternalCompaction(sessionId);
         void chatViewHost?.postMessage({
             type: 'compaction/started',
             sessionId,
@@ -2386,6 +2424,15 @@ function handleCliCompactStatus(
 }
 
 /**
+ * 等待 Webview 弹窗回答的 AskUserQuestion 授权请求。
+ *
+ * key 为 CLI control_request 的 requestId；value 记录发起路由与原始工具输入。
+ * 回答到达前不写回 control_response，CLI 会一直阻塞在该工具调用上（网关也
+ * 因此不再收到后续上游请求）。CLI 重启/停止时必须清空，避免残留死等条目。
+ */
+const pendingAskUserRequests = new Map<string, { route: ChatRoute; input: unknown }>();
+
+/**
  * 处理 Claude CLI stdio 工具授权请求。
  *
  * 当前实现先使用 VS Code 模态确认框打通官方 `can_use_tool` 授权闭环：CLI 发出
@@ -2393,12 +2440,43 @@ function handleCliCompactStatus(
  * 再通过 `StreamJsonCliAdapter.respondToToolPermission` 写回 `control_response`。
  * 这样 Bash 等需要授权的工具在非交互 stream-json 模式下也能继续执行。
  *
+ * 特例：`AskUserQuestion` 的答案按 CLI 约定必须经授权通道的
+ * `updatedInput.answers` 回传，因此不弹通用确认框，而是把 questions 转发给
+ * Chat Webview 渲染选择弹窗，并保持 CLI 阻塞直到 `askUser/answers` 回包。
+ *
  * @param event 适配器解析出的工具授权请求事件。
  */
 async function handleToolPermissionRequest(event: ToolPermissionRequestEvent, source: ChatRoute): Promise<void> {
     const adapter = getStreamAdapterForRoute(source);
     if (!adapter) {
         Logger.warn(`收到 ${source} 工具授权请求但 stream-json 适配器不存在：requestId=${event.requestId}`);
+        return;
+    }
+    if (event.toolName === 'AskUserQuestion') {
+        const questions = parseAskUserQuestions(event.input);
+        if (questions.length > 0 && chatViewHost) {
+            pendingAskUserRequests.set(event.requestId, { route: source, input: event.input });
+            Logger.info(`AskUserQuestion 授权请求已转发 Webview 弹窗：requestId=${event.requestId}, questions=${questions.length}`);
+            await chatViewHost.postMessage({
+                type: 'askUser/request',
+                requestId: event.requestId,
+                route: source,
+                questions
+            });
+            return;
+        }
+        // questions 解析失败或 webview 不可用时退回通用确认框，避免 CLI 永久阻塞。
+        Logger.warn(`AskUserQuestion 无法走弹窗（questions=${questions.length}, webview=${Boolean(chatViewHost)}），退回通用授权框：requestId=${event.requestId}`);
+    }
+    // bypass 模式下 stdio 通道仅为拦截 AskUserQuestion 而保留；
+    // 其余工具授权请求直接自动放行，维持「跳过权限检查」的非交互体验。
+    if (chatCliConfigService?.getConfig().permissionMode === 'bypassPermissions') {
+        Logger.info(`bypassPermissions 模式自动放行工具授权：requestId=${event.requestId}, tool=${event.toolName}`);
+        adapter.respondToToolPermission(event.requestId, {
+            behavior: 'allow',
+            updatedInput: event.input,
+            updatedPermissions: []
+        });
         return;
     }
     const allow = '允许本次执行';
@@ -2463,6 +2541,48 @@ function formatToolPermissionInput(input: unknown): string {
         text = JSON.stringify(input, null, 2) ?? String(input);
     }
     return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+/**
+ * 从 AskUserQuestion 授权请求的原始 input 中解析出结构化问题列表。
+ *
+ * 实现委托给 askUserQuestion.ts 的纯函数（便于单测）。
+ *
+ * @param input control_request 的工具输入。
+ * @returns 规范化后的问题列表。
+ */
+function parseAskUserQuestions(input: unknown): AskUserQuestionItem[] {
+    return parseAskUserQuestionsPure(input);
+}
+
+/**
+ * 处理 Webview 弹窗提交的 AskUserQuestion 答案。
+ *
+ * 按 CLI 约定把 answers（问题文本 → 选项文本）合并进原始工具输入的
+ * `answers` 字段、notes 合并进 `annotations`，随后以 allow 写回
+ * control_response 解除 CLI 阻塞；CLI 会把答案打包成 tool_result 继续推理。
+ *
+ * @param message Webview 回传的 askUser/answers 消息。
+ */
+function handleAskUserAnswers(message: Extract<WebviewToExtension, { type: 'askUser/answers' }>): void {
+    const pending = pendingAskUserRequests.get(message.requestId);
+    if (!pending) {
+        Logger.warn(`收到未登记的 askUser/answers：requestId=${message.requestId}，已忽略`);
+        return;
+    }
+    pendingAskUserRequests.delete(message.requestId);
+    const adapter = getStreamAdapterForRoute(pending.route);
+    if (!adapter) {
+        Logger.warn(`askUser/answers 对应路由 ${pending.route} 的适配器已不存在：requestId=${message.requestId}`);
+        return;
+    }
+    const updatedInput = buildAskUserUpdatedInput(pending.input, message.answers, message.notes);
+    Logger.info(`AskUserQuestion 答案已写回 CLI：requestId=${message.requestId}, route=${pending.route}`);
+    adapter.respondToToolPermission(message.requestId, {
+        behavior: 'allow',
+        updatedInput,
+        updatedPermissions: []
+    });
 }
 
 /**
@@ -2553,6 +2673,9 @@ async function handleChatWebviewMessage(message: WebviewToExtension): Promise<vo
             return;
         case 'cli/restart':
             await restartChatRelayAndCli();
+            return;
+        case 'askUser/answers':
+            handleAskUserAnswers(message);
             return;
         case 'route/select':
             await handleRouteSelect(message.route);
@@ -3884,6 +4007,36 @@ async function appendUserMessageAndSend(text: string): Promise<void> {
 }
 
 /**
+ * 定时唤醒到点回调：把唤醒内容以用户消息形式发进聊天区并送往 CLI。
+ *
+ * 循环任务需要模型知道自己在跟哪条闹钟对话，所以正文前会附上任务 id、
+ * 触发轮次与取消方法（否则模型只能靠 list 工具反查）。
+ *
+ * @param job 到点的唤醒任务（firedCount / remainingFires 已由调度器更新）。
+ */
+async function fireWakeupJob(job: WakeupJob): Promise<void> {
+    Logger.info(`定时唤醒触发：id=${job.id}, fireAt=${job.fireAt}, 第 ${job.firedCount ?? 1} 次`);
+    await appendUserMessageAndSend(buildWakeupMessage(job));
+}
+
+/**
+ * 组装唤醒消息正文：任务元信息头 + 原始 prompt。
+ *
+ * @param job 到点的唤醒任务。
+ * @returns 发送到聊天区的完整文本。
+ */
+function buildWakeupMessage(job: WakeupJob): string {
+    const fired = job.firedCount ?? 1;
+    const remaining = job.remainingFires ?? 0;
+    const round = job.intervalSeconds !== undefined
+        ? `第 ${fired} 次触发，剩余 ${remaining} 次`
+        : '一次性触发';
+    const header = `[定时唤醒 id=${job.id}｜${round}]\n`
+        + `如需停止，调用 mcp__llsccaiWakeup__lls-ccai-cancel-wakeup，参数 {"id":"${job.id}"}。\n\n`;
+    return header + job.prompt;
+}
+
+/**
  * 向 CLI 发送内部消息，不在内置 Chat 中追加用户气泡。
  *
  * @param text 内部消息文本。
@@ -4784,8 +4937,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (!filePath) return;
         void editorAutoOpener.observeToolUse({ toolName, filePath });
     };
-    const browserToolRelayHandler = createBrowserToolRelayHandler();
+    const browserSessionStore = new BrowserSessionStore(context.secrets);
+    const browserToolRelayHandler = createBrowserToolRelayHandler(undefined, browserSessionStore);
     const vscodeToolRelayHandler = createVscodeToolRelayHandler();
+    const wakeupStore = new WakeupStore();
+    wakeupScheduler = new WakeupScheduler(wakeupStore, fireWakeupJob);
+    context.subscriptions.push(wakeupScheduler);
+    const wakeupToolRelayHandler = createWakeupToolRelayHandler(new WakeupHost(wakeupScheduler));
     const chatRelayHandler = createRelayRouter({
         configManager,
         llsTaskService,
@@ -4831,6 +4989,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     relayServer.setHandler(async (req, res) => {
         if (await browserToolRelayHandler(req, res)) return;
         if (await vscodeToolRelayHandler(req, res)) return;
+        if (await wakeupToolRelayHandler(req, res)) return;
         await chatRelayHandler(req, res);
     });
 
@@ -5040,6 +5199,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     void autoOpenBuiltInChatIfCliConfigured();
 
+    // 必须在 chatViewHost 与 Chat 命令注册完成之后：补发错过的唤醒会立刻写聊天区。
+    void wakeupScheduler?.restore().catch((err: unknown) => {
+        Logger.warn(`恢复定时唤醒失败：${err instanceof Error ? err.message : String(err)}`);
+    });
+
 }
 
 /**
@@ -5053,6 +5217,8 @@ export function deactivate(): void {
     cancelPendingResend('deactivate');
     autoContinueScheduler?.cancel('扩展停用');
     autoContinueScheduler = undefined;
+    wakeupScheduler?.dispose();
+    wakeupScheduler = undefined;
     clearPlanIdleDisposeTimer();
     clearReviewIdleDisposeTimer();
     relayServer?.dispose();

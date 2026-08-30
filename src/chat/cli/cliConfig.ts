@@ -30,6 +30,8 @@ import { BROWSER_MCP_SERVER_NAME } from '../../browserTools/tools';
 import { BROWSER_TOOL_RELAY_PORT_ENV } from '../../browserTools/httpBridge';
 import { VSCODE_MCP_SERVER_NAME } from '../../vscodeTools/tools';
 import { VSCODE_TOOL_RELAY_PORT_ENV } from '../../vscodeTools/httpBridge';
+import { WAKEUP_MCP_SERVER_NAME } from '../../wakeupTools/tools';
+import { WAKEUP_TOOL_RELAY_PORT_ENV } from '../../wakeupTools/httpBridge';
 import {
     loadAllVscodeMcpJsons,
     mergeMcpServers,
@@ -303,13 +305,17 @@ export class ChatCliConfigService {
         const browserToolsEnabled = config.get<boolean>(CHAT_BROWSER_TOOLS_ENABLED_KEY, true) !== false
             && vscode.env.uiKind === vscode.UIKind.Desktop;
         const vscodeToolsGetErrorsEnabled = config.get<boolean>(VSCODE_TOOLS_GET_ERRORS_ENABLED_KEY, true) !== false;
-        const finalMcpServers = injectVscodeMcpServer(
-            injectBrowserMcpServer(
-                stripExpertServerFromMcp(mergedMcpServers),
-                browserToolsEnabled,
+        const finalMcpServers = injectWakeupMcpServer(
+            injectVscodeMcpServer(
+                injectBrowserMcpServer(
+                    stripExpertServerFromMcp(mergedMcpServers),
+                    browserToolsEnabled,
+                    undefined
+                ),
+                vscodeToolsGetErrorsEnabled,
                 undefined
             ),
-            vscodeToolsGetErrorsEnabled,
+            true,
             undefined
         );
         return {
@@ -380,12 +386,17 @@ export class ChatCliConfigService {
             : '';
         const browserToolsEnabled = baseConfig.mcpServers?.[BROWSER_MCP_SERVER_NAME] !== undefined;
         const vscodeToolsGetErrorsEnabled = baseConfig.mcpServers?.[VSCODE_MCP_SERVER_NAME] !== undefined;
+        const wakeupToolsEnabled = baseConfig.mcpServers?.[WAKEUP_MCP_SERVER_NAME] !== undefined;
         const normal: ChatCliConfig = {
             ...baseConfig,
             mcpServers: injectAskExpertMcpServer(
-                injectVscodeMcpServer(
-                    injectBrowserMcpServer(baseConfig.mcpServers, browserToolsEnabled, relayPort),
-                    vscodeToolsGetErrorsEnabled,
+                injectWakeupMcpServer(
+                    injectVscodeMcpServer(
+                        injectBrowserMcpServer(baseConfig.mcpServers, browserToolsEnabled, relayPort),
+                        vscodeToolsGetErrorsEnabled,
+                        relayPort
+                    ),
+                    wakeupToolsEnabled,
                     relayPort
                 ),
                 expertAvailable
@@ -459,17 +470,44 @@ export class ChatCliConfigService {
             return undefined;
         }
         const modelId = selection.model;
+        const routedEnv: Record<string, string> = {
+            ...this.withRelayRoute(baseConfig.cliEnv, route),
+            ANTHROPIC_MODEL: modelId
+        };
+        // 路由模型可能和 normal 模型上下文长度不同，需按自己的配置覆盖继承来的值。
+        const routedContextTokens = this.resolveMaxContextTokensForRoutedModel(modelId);
+        if (routedContextTokens) {
+            routedEnv.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(routedContextTokens);
+        } else {
+            delete routedEnv.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
+        }
         return {
             ...baseConfig,
             model: modelId,
-            cliEnv: {
-                ...this.withRelayRoute(baseConfig.cliEnv, route),
-                ANTHROPIC_MODEL: modelId
-            },
+            cliEnv: routedEnv,
             mcpServers: stripExpertServerFromMcp(baseConfig.mcpServers),
             strictMcpConfig: true,
             appendSystemPrompt: promptOverride.length > 0 ? promptOverride : defaultPrompt
         };
+    }
+
+    /**
+     * 按 `providerId/modelId` 读取该模型手填的上下文长度。
+     *
+     * @param routedModelId 中转模型 ID，格式为 `providerId/modelId`。
+     * @returns 上下文 token 上限；未配置或非法时返回 undefined。
+     */
+    private resolveMaxContextTokensForRoutedModel(routedModelId: string): number | undefined {
+        const separator = routedModelId.indexOf('/');
+        if (separator <= 0) return undefined;
+        const providerId = routedModelId.slice(0, separator);
+        const modelId = routedModelId.slice(separator + 1);
+        if (!modelId) return undefined;
+        const contextLength = this.configManager?.getProviderModel(providerId, modelId)?.contextLength;
+        if (typeof contextLength !== 'number' || !Number.isFinite(contextLength) || contextLength <= 0) {
+            return undefined;
+        }
+        return Math.floor(contextLength);
     }
 
     /**
@@ -623,7 +661,27 @@ export class ChatCliConfigService {
         const modelId = current?.providerId && current.modelId
             ? this.buildRoutedModelId(current.providerId, current.modelId)
             : undefined;
-        return this.buildRelayEnv(relayPort, modelId, route);
+        return this.buildRelayEnv(relayPort, modelId, route, this.resolveMaxContextTokens());
+    }
+
+    /**
+     * 读取当前模型在配置面板手填的"上下文长度"，用于同步给 Claude CLI。
+     *
+     * CLI 不认识扩展的 provider 配置，只会用内置默认窗口（200000）推算自动压缩线，
+     * 于是插件按用户配置算的阈值和 CLI 自己的触发线各算各的。未配置时返回
+     * undefined，让 CLI 保持默认行为。
+     *
+     * @returns 上下文 token 上限；未配置或非法时返回 undefined。
+     */
+    private resolveMaxContextTokens(): number | undefined {
+        const current = this.configManager?.getCurrentModel();
+        if (!current?.providerId || !current.modelId) return undefined;
+        const model = this.configManager?.getProviderModel(current.providerId, current.modelId);
+        const contextLength = model?.contextLength;
+        if (typeof contextLength !== 'number' || !Number.isFinite(contextLength) || contextLength <= 0) {
+            return undefined;
+        }
+        return Math.floor(contextLength);
     }
 
     /**
@@ -642,9 +700,15 @@ export class ChatCliConfigService {
      *
      * @param relayPort 本地 HTTP 中转服务实际监听端口。
      * @param modelId 当前中转模型 ID，格式为 `providerId/modelId`。
+     * @param maxContextTokens 用户配置的上下文 token 上限；undefined 时不注入。
      * @returns 环境变量字典。
      */
-    private buildRelayEnv(relayPort: number, modelId: string | undefined, route: ChatRoute): Record<string, string> {
+    private buildRelayEnv(
+        relayPort: number,
+        modelId: string | undefined,
+        route: ChatRoute,
+        maxContextTokens?: number
+    ): Record<string, string> {
         const env: Record<string, string> = {
             CLAUDE_CODE_SKIP_AUTH_LOGIN: '1',
             CLAUDE_CODE_SKIP_MODEL_VALIDATION: '1',
@@ -654,6 +718,10 @@ export class ChatCliConfigService {
         };
         if (modelId) {
             env.ANTHROPIC_MODEL = modelId;
+        }
+        if (maxContextTokens) {
+            // CLI 按此值推算自动压缩线，和插件 token 计量条共用同一个上限。
+            env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(maxContextTokens);
         }
         return env;
     }
@@ -972,4 +1040,46 @@ function injectVscodeMcpServer(
 function buildVscodeMcpEntrypointScript(): string {
     const entry = require.resolve('../../vscodeTools/vscodeMcpServer');
     return `require(${JSON.stringify(entry)}).startVscodeMcpServer();`;
+}
+
+/**
+ * 向 mcpServers 字典注入 llsccaiWakeup（定时唤醒）MCP server。
+ *
+ * @param mcpServers 已规范化的 MCP server 字典。
+ * @param enabled 是否注入定时唤醒工具。
+ * @param relayPort 本地 HTTP 中转服务实际监听端口。
+ * @returns 注入后的字典。
+ */
+function injectWakeupMcpServer(
+    mcpServers: ChatCliConfig['mcpServers'],
+    enabled: boolean,
+    relayPort: number | undefined
+): ChatCliConfig['mcpServers'] {
+    if (!enabled) {
+        return mcpServers;
+    }
+    const next: NonNullable<ChatCliConfig['mcpServers']> = { ...(mcpServers ?? {}) };
+    if (!next[WAKEUP_MCP_SERVER_NAME]) {
+        next[WAKEUP_MCP_SERVER_NAME] = {
+            type: 'stdio',
+            command: process.execPath,
+            args: ['-e', buildWakeupMcpEntrypointScript()],
+            env: relayPort ? { [WAKEUP_TOOL_RELAY_PORT_ENV]: String(relayPort) } : undefined
+        };
+    } else if (relayPort) {
+        next[WAKEUP_MCP_SERVER_NAME] = {
+            ...next[WAKEUP_MCP_SERVER_NAME],
+            env: {
+                ...(next[WAKEUP_MCP_SERVER_NAME].env ?? {}),
+                [WAKEUP_TOOL_RELAY_PORT_ENV]: String(relayPort)
+            }
+        };
+    }
+    return next;
+}
+
+/** 建立 llsccaiWakeup MCP server 子进程入口脚本。 */
+function buildWakeupMcpEntrypointScript(): string {
+    const entry = require.resolve('../../wakeupTools/wakeupMcpServer');
+    return `require(${JSON.stringify(entry)}).startWakeupMcpServer();`;
 }

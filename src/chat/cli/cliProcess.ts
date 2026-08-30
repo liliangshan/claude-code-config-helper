@@ -360,10 +360,15 @@ export class CliProcess implements vscode.Disposable {
             // 非交互（--print）模式下，仅传 `--permission-mode bypassPermissions` 在部分
             // CLI 版本上仍会对工具要求授权（无应答通道时甚至卡住）。改用官方
             // `--dangerously-skip-permissions`：它才是 print 模式下真正「全部跳过授权」
-            // 的开关。此时不再追加 `--permission-mode`，也不接 stdio 授权工具。
+            // 的开关。
             if (!this.hasDangerouslySkipPermissionsArgument(args)) {
                 args.push('--dangerously-skip-permissions');
             }
+            // 同时保留 stdio 授权通道：AskUserQuestion 的答案必须经
+            // `can_use_tool` 的 updatedInput.answers 回传，没有该通道时提问会被
+            // 静默放行（空答案），模型不等用户选择就继续。其余工具的授权请求由
+            // extension.ts 在 bypass 模式下自动 allow，不影响非交互体验。
+            this.appendPermissionPromptToolArgs(args);
         } else {
             if (permissionMode && !this.hasPermissionModeArgument(args)) {
                 args.push('--permission-mode', permissionMode);

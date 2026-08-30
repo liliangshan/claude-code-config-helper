@@ -41,6 +41,7 @@ function makeHost(options: {
     uiKind?: number;
     results?: Partial<Record<string, unknown>>;
     invokeTool?: LmToolInvoker['invokeTool'];
+    sessionStore?: import('../sessionStore').BrowserSessionStore;
 } = {}): { host: BrowserToolHostInstance; calls: ToolCall[] } {
     const calls: ToolCall[] = [];
     const defaults: Record<string, unknown> = {
@@ -60,7 +61,8 @@ function makeHost(options: {
     const host = new BrowserToolHost({
         lm: options.invokeTool ? { invokeTool: options.invokeTool } : lm,
         env: { uiKind: (options.uiKind ?? 1) as import('vscode').UIKind },
-        createCancellation: () => ({ token: {}, dispose() { /* noop */ } })
+        createCancellation: () => ({ token: {}, dispose() { /* noop */ } }),
+        sessionStore: options.sessionStore
     });
     return { host, calls };
 }
@@ -135,6 +137,40 @@ test('browser_open: 缺失 url 时返回参数错误且不调用工具', async (
     assert.equal(result.isError, true);
     assert.match(result.content[0].type === 'text' ? result.content[0].text : '', /url/);
     assert.equal(calls.length, 0);
+});
+
+test('browser_open: 命中「已有相似页面」时回退解析 pageId 并补一次导航', async () => {
+    const similarPageId = '301e1dd0-4636-4341-af6a-864738f9fc54';
+    const { host, calls } = makeHost({
+        results: {
+            [LM_BROWSER_TOOLS.open]: textResult(
+                'At least one similar page is already open:\n'
+                + `  - [${similarPageId}] about:blank (about:blank) (active)\n`
+                + 'Use an existing page or pass `forceNew: true` to open a new one.'
+            )
+        }
+    });
+
+    await host.execute('browser_open', { url: 'https://example.com' });
+    // 内置工具复用已有页面时不会导航（页面停在 about:blank），必须由宿主补导航。
+    assert.equal(calls[1].name, LM_BROWSER_TOOLS.navigate);
+    assert.equal(calls[1].input.pageId, similarPageId);
+    assert.equal(calls[1].input.url, 'https://example.com');
+
+    const result = await host.execute('browser_get_content');
+    assert.equal(result.isError, undefined);
+    const readCall = calls.find((call) => call.name === LM_BROWSER_TOOLS.read);
+    assert.equal(readCall?.input.pageId, similarPageId);
+});
+
+test('browser_open: forceNew 透传给底层工具，未传时不出现该字段', async () => {
+    const { host, calls } = makeHost();
+
+    await host.execute('browser_open', { url: 'https://example.com', forceNew: true });
+    await host.execute('browser_open', { url: 'https://example.com' });
+
+    assert.deepEqual(calls[0].input, { url: 'https://example.com', forceNew: true });
+    assert.deepEqual(calls[1].input, { url: 'https://example.com' });
 });
 
 test('browser_navigate: 携带 currentPageId 与 type=url 调用 navigate_page', async () => {
@@ -277,4 +313,151 @@ test('browser_screenshot: 无图片数据时返回 isError 文本', async () => 
 
     assert.equal(result.isError, true);
     assert.match(result.content[0].type === 'text' ? result.content[0].text : '', /no image here/);
+});
+
+/** 记录 save 调用的 sessionStore 替身。 */
+function makeStore(snapshot?: import('../sessionStore').BrowserSessionSnapshot, saveError?: Error) {
+    const saved: import('../sessionStore').BrowserSessionSnapshot[] = [];
+    const store = {
+        load: () => Promise.resolve(snapshot),
+        save: (s: import('../sessionStore').BrowserSessionSnapshot) => {
+            if (saveError) return Promise.reject(saveError);
+            saved.push(s);
+            return Promise.resolve();
+        },
+        delete: () => Promise.resolve(),
+        listOrigins: () => Promise.resolve([])
+    } as unknown as import('../sessionStore').BrowserSessionStore;
+    return { store, saved };
+}
+
+/** 构造导出脚本的返回文本。 */
+function exportResult(payload: unknown): unknown {
+    return textResult(`Result: ${JSON.stringify(JSON.stringify(payload))}\nSnapshot: x`);
+}
+
+test('会话恢复: 命中快照时先注入再导航（顺序不可颠倒）', async () => {
+    const { store } = makeStore({
+        origin: 'https://a.com', savedAt: '2026-08-01T00:00:00.000Z',
+        cookies: [{ name: 'tk', value: 'jwt', domain: '.a.com', path: '/', secure: false, httpOnly: true }],
+        localStorage: [], sessionStorage: []
+    });
+    const { host, calls } = makeHost({ sessionStore: store });
+
+    await host.execute('browser_open', { url: 'https://a.com/dash' });
+
+    const evalIdx = calls.findIndex((c) => c.name === LM_BROWSER_TOOLS.eval);
+    const navIdx = calls.findIndex((c) => c.name === LM_BROWSER_TOOLS.navigate);
+    assert.ok(evalIdx >= 0, '应执行注入脚本');
+    assert.ok(navIdx > evalIdx, '导航必须发生在注入之后');
+    assert.match(String(calls[evalIdx].input.code), /Network\.setCookies/);
+});
+
+test('会话恢复: 无快照时不注入也不额外导航', async () => {
+    const { store } = makeStore(undefined);
+    const { host, calls } = makeHost({ sessionStore: store });
+
+    await host.execute('browser_open', { url: 'https://a.com/dash' });
+
+    assert.deepEqual(calls.map((c) => c.name), [LM_BROWSER_TOOLS.open]);
+});
+
+test('搭车保存: 状态落定时按 origin 写入快照', async () => {
+    const { store, saved } = makeStore();
+    const { host } = makeHost({
+        sessionStore: store,
+        results: {
+            [LM_BROWSER_TOOLS.eval]: exportResult({
+                url: 'https://example.com/dash',
+                cookies: [{ name: 'tk', value: 'jwt', domain: '.example.com', path: '/', secure: false, httpOnly: true }],
+                localStorage: [['token', 'jwt']],
+                sessionStorage: []
+            })
+        }
+    });
+
+    await openThen(host, 'browser_get_content');
+
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].origin, 'https://example.com');
+    assert.deepEqual(saved[0].localStorage, [['token', 'jwt']]);
+});
+
+test('搭车保存: 页面未加载完成（skip）时不写入', async () => {
+    const { store, saved } = makeStore();
+    const { host } = makeHost({
+        sessionStore: store,
+        results: { [LM_BROWSER_TOOLS.eval]: exportResult({ skip: 'not-complete' }) }
+    });
+
+    await openThen(host, 'browser_get_content');
+
+    assert.equal(saved.length, 0);
+});
+
+test('搭车保存: origin 与当前页不一致时跳过（防 OAuth 中转存错格子）', async () => {
+    const { store, saved } = makeStore();
+    const { host } = makeHost({
+        sessionStore: store,
+        results: {
+            [LM_BROWSER_TOOLS.eval]: exportResult({
+                url: 'https://sso.other.com/authorize', cookies: [], localStorage: [], sessionStorage: []
+            })
+        }
+    });
+
+    await openThen(host, 'browser_get_content');
+
+    assert.equal(saved.length, 0);
+});
+
+test('搭车保存: 登出后空 cookie 如实覆盖（无非空守卫）', async () => {
+    const { store, saved } = makeStore();
+    const { host } = makeHost({
+        sessionStore: store,
+        results: {
+            [LM_BROWSER_TOOLS.eval]: exportResult({
+                url: 'https://example.com/login', cookies: [], localStorage: [], sessionStorage: []
+            })
+        }
+    });
+
+    await openThen(host, 'browser_get_content');
+
+    assert.equal(saved.length, 1);
+    assert.deepEqual(saved[0].cookies, []);
+});
+
+test('搭车保存: browser_open 自身不触发快照', async () => {
+    const { store, saved } = makeStore();
+    const { host } = makeHost({ sessionStore: store });
+
+    await host.execute('browser_open', { url: 'https://example.com' });
+
+    assert.equal(saved.length, 0);
+});
+
+test('搭车保存: store.save 抛错不影响主工具返回值', async () => {
+    const { store } = makeStore(undefined, new Error('keychain locked'));
+    const { host } = makeHost({
+        sessionStore: store,
+        results: {
+            [LM_BROWSER_TOOLS.eval]: exportResult({
+                url: 'https://example.com/x', cookies: [], localStorage: [], sessionStorage: []
+            })
+        }
+    });
+
+    const result = await openThen(host, 'browser_get_content');
+
+    assert.equal(result.isError, undefined);
+    assert.equal(result.content[0].type, 'text');
+});
+
+test('未注入 sessionStore 时不产生任何持久化调用', async () => {
+    const { host, calls } = makeHost();
+
+    await openThen(host, 'browser_get_content');
+
+    assert.deepEqual(calls.map((c) => c.name), [LM_BROWSER_TOOLS.open, LM_BROWSER_TOOLS.read]);
 });

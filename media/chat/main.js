@@ -52,6 +52,15 @@
         reviewNotConfigured: '(Kein Review-Modell)'
     });
 
+    // 复制成功后跟在对号图标后面的提示文案。
+    Object.assign(chatTranslations.en, { copySuccess: 'Copied' });
+    Object.assign(chatTranslations['zh-cn'], { copySuccess: '复制成功' });
+    Object.assign(chatTranslations['zh-tw'], { copySuccess: '複製成功' });
+    Object.assign(chatTranslations.ko, { copySuccess: '복사됨' });
+    Object.assign(chatTranslations.ja, { copySuccess: 'コピーしました' });
+    Object.assign(chatTranslations.fr, { copySuccess: 'Copié' });
+    Object.assign(chatTranslations.de, { copySuccess: 'Kopiert' });
+
     /** 补齐重发编辑态动态文案，避免静态翻译长行继续膨胀。 */
     Object.assign(chatTranslations.en, {
         resendConfirm: 'Send edited message',
@@ -2256,21 +2265,31 @@
         let tableData = [];
         let listStack = []; // 用于嵌套列表
 
-        function flushCodeBlock() {
-            if (codeBlockLines.length === 0) return;
+        /**
+         * 追加一个带复制按钮的代码块。
+         *
+         * @param {string} text 代码文本。
+         * @param {string} lang 语言标识，无则传空串。
+         */
+        function appendCodeBlock(text, lang) {
             const codeWrapper = document.createElement('div');
             codeWrapper.className = 'codeBlockWrapper_-a7MRw';
             const pre = document.createElement('pre');
             const code = document.createElement('code');
-            if (codeBlockLang) code.dataset.language = codeBlockLang;
-            code.textContent = codeBlockLines.join('\n');
+            if (lang) code.dataset.language = lang;
+            code.textContent = text;
             pre.appendChild(code);
             codeWrapper.appendChild(pre);
             // 添加复制按钮（参考项目风格）
-            const copyBtn = createCopyButton(code.textContent);
+            const copyBtn = createCopyButton(text);
             copyBtn.className = 'copyButton_CEmTFw copyButton_-a7MRw';
             codeWrapper.appendChild(copyBtn);
             wrapper.appendChild(codeWrapper);
+        }
+
+        function flushCodeBlock() {
+            if (codeBlockLines.length === 0) return;
+            appendCodeBlock(codeBlockLines.join('\n'), codeBlockLang);
             codeBlockLang = '';
             codeBlockLines = [];
         }
@@ -2495,7 +2514,8 @@
                 var href = /^https?:\/\//i.test(raw) ? raw : 'http://' + raw;
                 return stash('<a href="' + href + '" target="_blank" rel="noopener noreferrer"><code>' + code + '</code></a>');
             }
-            return stash('<code>' + code + '</code>');
+            return stash('<code class="inlineCode_-a7MRw" data-copy="1" title="' + t('copy') + '">' + code
+                + '<span class="inlineCopyIcon_-a7MRw" aria-hidden="true">' + COPY_ICON_SVG + '</span></code>');
         });
         // 图片 ![alt](url)
         escaped = escaped.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, function (_, alt, url) {
@@ -2562,6 +2582,61 @@
     }
 
     /**
+     * 复制按钮使用的 SVG 图标标记，代码块按钮与行内代码图标共用。
+     *
+     * @type {string}
+     */
+    var COPY_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 4L12 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M4 7L10 7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M4 10L8 10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><rect x="2" y="1" width="11" height="13" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>';
+
+    /**
+     * 复制成功后替换上去的对号图标，颜色跟随 CSS 的成功色。
+     *
+     * @type {string}
+     */
+    var COPIED_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 8.5L6.2 11.8L13 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+    /**
+     * 把文本写入剪贴板。
+     *
+     * Webview 里 navigator.clipboard 在无焦点或权限受限时会 reject，
+     * 因此保留 textarea + execCommand 兜底路径。
+     *
+     * @param {string} textContent 要复制的文本。
+     * @param {Function} onDone 复制结束（成功或走完兜底）后的回调。
+     */
+    function copyTextWithFallback(textContent, onDone) {
+        function fallback() {
+            var ta = document.createElement('textarea');
+            ta.value = textContent;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            onDone();
+        }
+        try {
+            navigator.clipboard.writeText(textContent).then(onDone).catch(fallback);
+        } catch (e) {
+            fallback();
+        }
+    }
+
+    /**
+     * 构造“对号 + 复制成功文案”的反馈内容。
+     *
+     * 文案取自语言包，随 UI 语言切换；用 textContent 转义，避免翻译串里的
+     * 特殊字符被当成 HTML。
+     *
+     * @returns {string} 反馈用的 HTML 片段。
+     */
+    function buildCopiedFeedbackHtml() {
+        var label = document.createElement('span');
+        label.className = 'copyFeedbackText_-a7MRw';
+        label.textContent = t('copySuccess');
+        return COPIED_ICON_SVG + label.outerHTML;
+    }
+
+    /**
      * 创建复制按钮（参考项目风格）。
      *
      * @param {string} textContent 要复制的文本内容。
@@ -2573,23 +2648,15 @@
         btn.className = 'copyButton_CEmTFw';
         btn.title = t('copy');
         btn.setAttribute('aria-label', t('copyCode'));
-        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 4L12 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M4 7L10 7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M4 10L8 10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><rect x="2" y="1" width="11" height="13" rx="1.5" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>';
+        btn.innerHTML = COPY_ICON_SVG;
         btn.addEventListener('click', function () {
-            navigator.clipboard.writeText(textContent).then(function () {
-                var original = btn.innerHTML;
-                btn.innerHTML = '✓';
-                setTimeout(function () { btn.innerHTML = original; }, 1500);
-            }).catch(function () {
-                // fallback
-                var ta = document.createElement('textarea');
-                ta.value = textContent;
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand('copy');
-                document.body.removeChild(ta);
-                var original = btn.innerHTML;
-                btn.innerHTML = '✓';
-                setTimeout(function () { btn.innerHTML = original; }, 1500);
+            copyTextWithFallback(textContent, function () {
+                btn.innerHTML = buildCopiedFeedbackHtml();
+                btn.classList.add('copyButtonCopied_-a7MRw');
+                setTimeout(function () {
+                    btn.innerHTML = COPY_ICON_SVG;
+                    btn.classList.remove('copyButtonCopied_-a7MRw');
+                }, 1500);
             });
         });
         return btn;
@@ -2639,12 +2706,9 @@
             return;
         }
         if (segment.kind === 'tool') {
-            // AskUserQuestion 工具不在聊天流中渲染卡片，改为弹出模态对话框，
-            // 用户作答后会把答案作为一条新的 user 消息发送回上游。
-            if (segment.tool && segment.tool.name === 'AskUserQuestion') {
-                showAskUserQuestionModal(segment);
-                return;
-            }
+            // AskUserQuestion 的弹窗改由授权通道消息 askUser/request 驱动
+            // （见 enqueueAskUserRequest），流式 tool_use 只渲染普通工具卡片，
+            // 避免双通道各弹一次。
             appendToolCard(container, segment);
             return;
         }
@@ -2912,22 +2976,53 @@
     }
 
     // =========================================================================
-    // AskUserQuestion 模态弹窗
+    // AskUserQuestion 模态弹窗（授权通道模式）
     // =========================================================================
 
-    /** 记录已经处理过的 AskUserQuestion tool_use_id，防止流式增量重复弹窗。 */
+    /** 记录已经入队/处理过的 askUser/request requestId，防止宿主重复推送重复弹窗。 */
     var askUserQuestionShown = Object.create(null);
 
     /**
+     * 待弹出的 askUser/request FIFO 队列。
+     *
+     * 同一时刻只显示一个弹窗（{@link activeAskUserRequest}）；上一个提交回包后
+     * 由 {@link showNextAskUserRequest} 弹出下一个，避免多弹窗互相叠加。
+     */
+    var askUserQueue = [];
+
+    /** 当前正在展示弹窗的 askUser/request；无弹窗时为 null。 */
+    var activeAskUserRequest = null;
+
+    /**
+     * 接收宿主转发的 AskUserQuestion 授权提问，入队并按序弹窗。
+     *
+     * @param {{ requestId: string, route: string, questions: any[] }} message askUser/request 消息。
+     */
+    function enqueueAskUserRequest(message) {
+        if (!message || !message.requestId) return;
+        if (askUserQuestionShown[message.requestId]) return;
+        askUserQuestionShown[message.requestId] = true;
+        askUserQueue.push(message);
+        showNextAskUserRequest();
+    }
+
+    /**
+     * 若当前没有活动弹窗，则取出队首请求并展示。
+     */
+    function showNextAskUserRequest() {
+        if (activeAskUserRequest) return;
+        var next = askUserQueue.shift();
+        if (!next) return;
+        activeAskUserRequest = next;
+        showAskUserQuestionModal(next);
+    }
+
+    /**
      * 历史回放模式标志：当 `session/init` 在批量渲染历史消息时为 true。
-     * 在该阶段遇到的 AskUserQuestion 不立即弹窗，而是暂存到
-     * {@link lastHistoryAskUserSegment}，等回放结束后由
-     * {@link finalizeHistoryReplayAskUser} 判断是否还需要弹。
+     * 授权通道模式下答案已写进 tool_result，历史回放不再需要补弹旧问询；
+     * 该标志仅用于渲染路径的兼容复位。
      */
     var historyReplayMode = false;
-
-    /** 历史回放中遇到的最后一个 AskUserQuestion segment（如果存在）。 */
-    var lastHistoryAskUserSegment = null;
 
     /**
      * 最近一次 session/init 的消息指纹。
@@ -2995,37 +3090,29 @@
         var wasAtBottom = isScrolledNearBottom();
         renderEmptyState();
         historyReplayMode = true;
-        lastHistoryAskUserSegment = null;
         try {
             messages.forEach(function (message) { appendMessage(message); });
         } finally {
             historyReplayMode = false;
-            lastHistoryAskUserSegment = null;
         }
         lastSessionInitSignature = buildSessionInitSignature(messages);
         if (wasAtBottom) forceScrollToBottomSettled();
     }
 
     /**
-     * 在历史回放阶段，每收到一条用户消息时调用——表示之前所有
-     * AskUserQuestion 均已被回答，清空待弹队列。
+     * 在历史回放阶段，每收到一条用户消息时调用。
+     * 授权通道模式下无需处理，仅保留调用点兼容。
      */
     function notifyHistoryUserMessage() {
-        lastHistoryAskUserSegment = null;
+        // noop：弹窗改由 askUser/request 驱动，历史回放不再补弹。
     }
 
     /**
-     * 历史回放结束钩子：若仍有未应答的 AskUserQuestion，则真正弹出。
-     * 否则什么也不做。
+     * 历史回放结束钩子：复位回放标志。
+     * 授权通道模式下答案已写进 tool_result，不再补弹历史问询。
      */
     function finalizeHistoryReplayAskUser() {
         historyReplayMode = false;
-        var pending = lastHistoryAskUserSegment;
-        lastHistoryAskUserSegment = null;
-        if (pending) {
-            // 走实时路径再次调用即可弹出
-            showAskUserQuestionModal(pending);
-        }
     }
 
     /**
@@ -3068,43 +3155,27 @@
     }
 
     /**
-     * 当助手调用 AskUserQuestion 工具时，弹出一个模态对话框让用户作答。
+     * 展示 AskUserQuestion 授权提问弹窗。
      *
      * 行为说明：
-     * 1. 每个 question 渲染为一组选项按钮（multiSelect=true 时为多选，否则单选）。
-     * 2. 弹窗底部固定提供一个"自定义回复"多行输入框，用户可以填写不在选项中的
-     *    理由 / 补充说明，提交时与选中项一起发送。
-     * 3. 用户选择并提交后，构造一条易读的中文 user 消息（包含每个问题的选择
-     *    与补充说明）通过 `user/send` 协议发回扩展，让上游模型继续推进。
-     * 4. 同一个 tool_use_id 只弹一次（防止 stream 增量重复触发），关闭时不会
-     *    重新打开。
-     * 5. 历史回放时（session/init 批量渲染），不立即弹窗，先记录到 pending
-     *    集合；回放结束后再判断"最后一条消息"是否仍是未答复的 AskUserQuestion，
-     *    只有此时才弹窗——避免重新打开 webview 时旧问询再次弹出。
+     * 1. 入参为 askUser/request 消息（{ requestId, route, questions }），
+     *    由 {@link showNextAskUserRequest} 保证同一时刻只弹一个。
+     * 2. 每个 question 渲染为一组选项按钮（multiSelect=true 时为多选，否则单选）。
+     * 3. 弹窗底部固定提供一个"自定义回复"多行输入框，可填补充说明。
+     * 4. 提交时通过 `askUser/answers` 协议把答案回传扩展宿主，由宿主写回
+     *    CLI 授权通道（updatedInput.answers）；CLI 在回包前保持阻塞，
+     *    上游请求不会继续。
      *
-     * @param {any} segment 工具 segment，应满足 segment.tool.name === 'AskUserQuestion'。
+     * @param {{ requestId: string, route: string, questions: any[] }} request askUser/request 消息。
      */
-    function showAskUserQuestionModal(segment) {
-        var tool = (segment && segment.tool) || {};
-        var toolUseId = tool.toolUseId || segment.id || ('ask-' + Date.now());
-        if (askUserQuestionShown[toolUseId]) return;
-
-        // 历史回放阶段：先暂存，等回放结束后由 finalizeHistoryReplayAskUser 统一判断
-        if (historyReplayMode) {
-            lastHistoryAskUserSegment = segment;
-            return;
-        }
-
-        askUserQuestionShown[toolUseId] = true;
-
-        var input = tool.input || tryParseJSON(tool.detail) || {};
-        var questions = Array.isArray(input.questions) ? input.questions : [];
+    function showAskUserQuestionModal(request) {
+        var requestId = request.requestId;
+        var route = request.route || 'normal';
+        var questions = Array.isArray(request.questions) ? request.questions : [];
         if (questions.length === 0) {
-            // 没有可解析的问题：回退到工具卡片渲染，避免静默丢失
-            delete askUserQuestionShown[toolUseId];
-            var fallbackContainer = document.querySelector('.message_07S1Yg[data-role="assistant"]:last-of-type > div')
-                || document.querySelector('[data-role="messages"]');
-            if (fallbackContainer) appendToolCard(fallbackContainer, segment);
+            // 宿主已做过校验，这里兜底：无问题可渲染时直接结束该请求，弹下一个。
+            activeAskUserRequest = null;
+            showNextAskUserRequest();
             return;
         }
 
@@ -3263,12 +3334,14 @@
         customInput.addEventListener('input', updateSubmitState);
 
         /**
-         * 关闭并清理弹窗 DOM。
+         * 关闭并清理弹窗 DOM，并推进 FIFO 队列展示下一个提问。
          * 仅在提交成功后调用——用户无法主动取消。
          */
         function closeModal() {
             if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
             document.removeEventListener('keydown', onKeydown);
+            activeAskUserRequest = null;
+            showNextAskUserRequest();
         }
 
         /**
@@ -3298,28 +3371,27 @@
 
         submitBtn.addEventListener('click', function () {
             if (submitBtn.disabled) return;
-            // 构造用户回复文本：每个问题列出选择，末尾附上自定义补充
-            var lines = [t('askUserReplyIntro')];
+            // 组装授权通道答案：问题文本 → 选项 label（多选逗号分隔）。
+            // 未选任何选项但填了自定义输入时，按 CLI 约定填 '(notes only)'。
+            var answers = {};
+            var custom = customInput.value.trim();
             questions.forEach(function (q, idx) {
                 var picked = selections[idx] ? Array.from(selections[idx]) : [];
-                var header = q.header ? '[' + q.header + '] ' : '';
                 var qText = String(q.question || '').trim();
-                lines.push('');
-                lines.push((idx + 1) + '. ' + header + qText);
+                if (!qText) return;
                 if (picked.length > 0) {
-                    lines.push(tf('askUserPicked', { items: picked.join(currentLanguage === 'zh-cn' || currentLanguage === 'zh-tw' ? '、' : ', ') }));
-                } else {
-                    lines.push(t('askUserNoPick'));
+                    answers[qText] = picked.join(', ');
+                } else if (custom) {
+                    answers[qText] = '(notes only)';
                 }
             });
-            var custom = customInput.value.trim();
-            if (custom) {
-                lines.push('');
-                lines.push(t('askUserExtra'));
-                lines.push(custom);
-            }
-            var replyText = lines.join('\n');
-            post({ type: 'user/send', text: replyText, attachments: [] });
+            post({
+                type: 'askUser/answers',
+                requestId: requestId,
+                route: route,
+                answers: answers,
+                notes: custom || undefined
+            });
             closeModal();
         });
 
@@ -3536,6 +3608,8 @@
                 case 'ExitWorktree': return 'ExitWorktree · ' + (input.action || '');
                 case 'TaskOutput': return 'TaskOutput · ' + (input.task_id || '');
                 case 'TaskStop': return 'TaskStop · ' + (input.task_id || input.shell_id || '');
+                case 'System':
+                    return 'System · ' + (input.subtype || 'event');
                 default:
                     return name;
             }
@@ -4784,10 +4858,9 @@
                 lastSessionInitSignature = initSignature;
                 renderEmptyState();
                 syncClaudeTodoFromMessages(initMessages);
-                // 批量渲染历史消息——进入历史回放模式，期间 AskUserQuestion
-                // 不立即弹窗，留到回放结束后再判断是否仍未应答
+                // 批量渲染历史消息——进入历史回放模式；授权通道模式下
+                // 历史问询不再补弹，回放结束仅复位标志。
                 historyReplayMode = true;
-                lastHistoryAskUserSegment = null;
                 try {
                     var historyMessages = initMessages;
                     for (var _mIdx = 0; _mIdx < historyMessages.length; _mIdx++) {
@@ -4900,6 +4973,11 @@
             case 'permissionMode/current':
                 composerState.permissionMode = message.mode === 'bypassPermissions' ? 'bypassPermissions' : 'acceptEdits';
                 renderPermissionModeSelect();
+                break;
+            case 'askUser/request':
+                // AskUserQuestion 授权提问：入队后按序弹出选择弹窗，
+                // 提交答案前 CLI 保持阻塞（不会继续发上游请求）。
+                enqueueAskUserRequest(message);
                 break;
             case 'cacheTtl/current':
                 composerState.cacheTtl = message.ttl === '5m' || message.ttl === '1h' ? message.ttl : 'default';
@@ -5334,6 +5412,25 @@
         if (!(tokenMeterWrapEl instanceof HTMLElement)) return;
         if (event.target instanceof Node && tokenMeterWrapEl.contains(event.target)) return;
         closeTokenMeterPopover();
+    });
+    // 行内代码点击即复制：委托到 document，覆盖流式追加出来的新节点。
+    // 复制的是整段代码文本，需要先剔除末尾那个装饰用的复制图标。
+    document.addEventListener('click', (event) => {
+        if (!(event.target instanceof Element)) return;
+        const codeEl = event.target.closest('code[data-copy="1"]');
+        if (!(codeEl instanceof HTMLElement)) return;
+        const clone = codeEl.cloneNode(true);
+        clone.querySelectorAll('.inlineCopyIcon_-a7MRw').forEach((el) => el.remove());
+        const text = clone.textContent || '';
+        copyTextWithFallback(text, () => {
+            const iconEl = codeEl.querySelector('.inlineCopyIcon_-a7MRw');
+            codeEl.classList.add('inlineCodeCopied_-a7MRw');
+            if (iconEl) iconEl.innerHTML = buildCopiedFeedbackHtml();
+            setTimeout(() => {
+                codeEl.classList.remove('inlineCodeCopied_-a7MRw');
+                if (iconEl) iconEl.innerHTML = COPY_ICON_SVG;
+            }, 1200);
+        });
     });
     restartCliEl?.addEventListener('click', () => post({ type: 'cli/restart' }));
     newSessionEl?.addEventListener('click', () => { applySessionTitle('', ''); post({ type: 'session/clear' }); });

@@ -49,11 +49,16 @@ function setExtensionConfig(
  * 构造一个 ChatCliConfigService 实例，附带最小化的 ConfigManager stub。
  *
  * @param currentModel 当前模型 providerId/modelId；不传则视为未配置。
+ * @param contextLength 模型手填的上下文长度；不传则视为未配置。
  * @returns 可直接调用 getDualConfigsWithRelayEnv 的服务实例。
  */
-function makeService(currentModel?: { providerId: string; modelId: string }): InstanceType<typeof ChatCliConfigService> {
+function makeService(
+    currentModel?: { providerId: string; modelId: string },
+    contextLength?: number
+): InstanceType<typeof ChatCliConfigService> {
     const configManager = {
-        getCurrentModel: () => currentModel
+        getCurrentModel: () => currentModel,
+        getProviderModel: (_providerId: string, modelId: string) => ({ modelId, contextLength })
     } as unknown as import('../../configManager').ConfigManager;
     return new ChatCliConfigService(configManager);
 }
@@ -86,6 +91,39 @@ test('getDualConfigsWithRelayEnv: expertMode 关闭时只产出 normal', async (
     // 未启用方案模型时 dispatcher 提示词不得出现 `@llsPlanTask` 诱导。
     assert.equal(result.normal.appendSystemPrompt?.includes('@llsPlanTask'), false);
     assert.equal(result.normal.appendSystemPrompt?.includes('Routing priority'), false);
+});
+
+test('getDualConfigsWithRelayEnv: 配置了 contextLength 时注入 CLAUDE_CODE_MAX_CONTEXT_TOKENS', async () => {
+    // CLI 不认识扩展的 provider 配置，不注入就会按内置默认窗口自行推算自动压缩线。
+    setExtensionConfig(
+        { 'chat.enabled': true },
+        {
+            'chat.expertMode.project.enabled': { workspaceValue: false },
+            'chat.expertMode.project.model': { workspaceValue: '' },
+            'chat.expertMode.global.enabled': { globalValue: false },
+            'chat.expertMode.global.model': { globalValue: '' }
+        }
+    );
+    const service = makeService({ providerId: 'p1', modelId: 'm1' }, 200000);
+    const result = await service.getDualConfigsWithRelayEnv(12345);
+
+    assert.equal(result.normal?.cliEnv.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '200000');
+});
+
+test('getDualConfigsWithRelayEnv: 未配置 contextLength 时不注入 CLAUDE_CODE_MAX_CONTEXT_TOKENS', async () => {
+    setExtensionConfig(
+        { 'chat.enabled': true },
+        {
+            'chat.expertMode.project.enabled': { workspaceValue: false },
+            'chat.expertMode.project.model': { workspaceValue: '' },
+            'chat.expertMode.global.enabled': { globalValue: false },
+            'chat.expertMode.global.model': { globalValue: '' }
+        }
+    );
+    const service = makeService({ providerId: 'p1', modelId: 'm1' });
+    const result = await service.getDualConfigsWithRelayEnv(12345);
+
+    assert.equal(result.normal?.cliEnv.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined);
 });
 
 test('getDualConfigsWithRelayEnv: planMode 关闭时 dispatcher 提示词不含 @llsPlanTask', async () => {

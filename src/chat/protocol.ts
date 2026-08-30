@@ -217,6 +217,31 @@ export interface ChatRoutedModelSelection {
     modelId: string;
 }
 
+/** AskUserQuestion 工具提问项中的单个选项。 */
+export interface AskUserQuestionOption {
+    /** 选项显示文本（1-5 词的简短标签）。 */
+    label: string;
+    /** 选项含义说明，帮助用户理解权衡。 */
+    description?: string;
+}
+
+/**
+ * AskUserQuestion 工具的单个问题。
+ *
+ * 对应 Claude CLI `can_use_tool` 授权请求 `input.questions` 数组元素；
+ * 扩展宿主原样透传给 Webview 渲染选择弹窗。
+ */
+export interface AskUserQuestionItem {
+    /** 完整问题文本。 */
+    question: string;
+    /** 短标签（chip 展示，如 "Auth method"）。 */
+    header?: string;
+    /** 是否允许多选。 */
+    multiSelect?: boolean;
+    /** 可选项列表（CLI 约定 2-4 项）。 */
+    options: AskUserQuestionOption[];
+}
+
 /** Chat Webview 当前支持的界面语言。 */
 export type ChatUiLanguage = 'en' | 'zh-cn' | 'zh-tw' | 'ko' | 'ja' | 'fr' | 'de';
 
@@ -299,6 +324,20 @@ export type ExtensionToWebview =
     | { type: 'composer/replaceAttachment'; clientId: string; attachment: ChatComposerAttachment; focus?: boolean }
     | { type: 'permissionMode/current'; mode: ChatQuickPermissionMode }
     | { type: 'cacheTtl/current'; ttl: ChatCacheTtlOption }
+    | {
+          /**
+           * AskUserQuestion 授权通道提问：CLI 发出 `can_use_tool` 后由扩展宿主
+           * 转发给 Webview，弹出选择弹窗；answers 必须经 `askUser/answers` 回传，
+           * CLI 在回包前保持阻塞（网关不会继续转发上游请求）。
+           */
+          type: 'askUser/request';
+          /** control_request 的请求 ID，回包配对用。 */
+          requestId: string;
+          /** 发起提问的 CLI 路由，回包时选择对应 adapter。 */
+          route: ChatRoute;
+          /** 提问列表（1-4 个）。 */
+          questions: AskUserQuestionItem[];
+      }
     | {
           /**
            * 推送 Chat 输入框上方「当前模型」下拉框可选项与已选状态。
@@ -551,6 +590,23 @@ export type WebviewToExtension =
     | { type: 'model/select'; providerId: string; modelId: string }
     | { type: 'permissionMode/select'; mode: ChatQuickPermissionMode }
     | { type: 'cacheTtl/select'; ttl: ChatCacheTtlOption }
+    | {
+          /**
+           * 用户在 AskUserQuestion 弹窗中提交答案，与 `askUser/request` 配对。
+           *
+           * 扩展宿主收到后把 answers/notes 填进授权响应 `updatedInput` 并写回
+           * CLI stdin（control_response allow），解除 CLI 阻塞。
+           */
+          type: 'askUser/answers';
+          /** 对应 askUser/request 的请求 ID。 */
+          requestId: string;
+          /** 对应 askUser/request 的路由。 */
+          route: ChatRoute;
+          /** 每个问题的答案：问题文本 → 选项 label（多选逗号分隔）。 */
+          answers: Record<string, string>;
+          /** 用户在自定义输入框填写的补充说明。 */
+          notes?: string;
+      }
     | {
           /**
            * 保存专家模型下拉框选择。

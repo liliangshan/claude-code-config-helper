@@ -6,8 +6,9 @@
  */
 
 import * as vscode from 'vscode';
+import * as fs from 'node:fs';
 
-import { ConfigManager } from '../configManager';
+import { ConfigManager, getClaudeSettingsPath } from '../configManager';
 import { COMMANDS, WEBVIEW_TITLE, WEBVIEW_VIEW_TYPE } from '../constants';
 import { Logger } from '../logger';
 import { fetchModels } from '../modelFetcher';
@@ -192,6 +193,9 @@ class ConfigWebviewController implements vscode.Disposable {
                     await vscode.commands.executeCommand(COMMANDS.chatOpen);
                     this.postState();
                     return;
+                case 'renameClaudeSettings':
+                    await this.renameClaudeSettings();
+                    return;
                 case 'reloadWindow':
                     await vscode.commands.executeCommand(COMMANDS.reloadWindow);
                     return;
@@ -264,7 +268,41 @@ class ConfigWebviewController implements vscode.Disposable {
         }
     }
 
-    /** 使用已保存的提供商配置和密钥拉取模型列表。 */
+    /**
+     * 把 `~/.claude/settings.json` 改名为带时间戳的备份文件。
+     *
+     * 该文件里的 model / env 优先级高于扩展注入给 CLI 的同名配置，不挪走就会
+     * 让配置页选的模型不生效。改名而非删除，用户随时可以自行改回来。改完必须
+     * 重开窗口，因为 CLI 只在进程启动时读一次配置。
+     */
+    private async renameClaudeSettings(): Promise<void> {
+        const source = getClaudeSettingsPath();
+        if (!fs.existsSync(source)) {
+            this.postToast('warn', '未找到 ~/.claude/settings.json，无需改名');
+            this.postState();
+            return;
+        }
+        const confirmed = await vscode.window.showWarningMessage(
+            `确定把 ${source} 改名备份吗？改完需要重新打开 VS Code 才会生效。`,
+            { modal: true },
+            '改名并重载'
+        );
+        if (confirmed !== '改名并重载') return;
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const target = `${source}.${stamp}.bak`;
+        await fs.promises.rename(source, target);
+        Logger.info(`[config] 已改名 Claude CLI 用户配置：${source} → ${target}`);
+        this.postToast('success', `已改名为 ${target}`);
+        this.postState();
+        await vscode.commands.executeCommand(COMMANDS.reloadWindow);
+    }
+
+    /**
+     * 使用已保存的提供商配置和密钥拉取模型列表。
+     *
+     * 落库以上游列表为准，但已有模型的手工参数不会被上游默认值覆盖，
+     * 因此提示里同时给出新增、保留与移除数量，便于用户确认本次变化。
+     */
     private async fetchProviderModels(providerId: string): Promise<void> {
         const provider = await this.manager.getProviderWithSecret(providerId);
         if (!provider) throw new Error('提供商不存在');
@@ -280,8 +318,12 @@ class ConfigWebviewController implements vscode.Disposable {
             apiKey: provider.authMode === 'api_key' ? provider.apiKey : undefined,
             customHeaders: provider.customHeaders
         });
-        await this.manager.replaceProviderModels(providerId, result.models);
-        this.postToast('success', `已拉取 ${result.models.length} 个模型`);
+        const stats = await this.manager.replaceProviderModels(providerId, result.models);
+        this.postToast(
+            'success',
+            `已拉取 ${result.models.length} 个模型：新增 ${stats.added}，`
+                + `保留原有配置 ${stats.kept}，移除 ${stats.removed}`
+        );
     }
 
     /** 导出配置到用户选择的 JSON 文件。 */

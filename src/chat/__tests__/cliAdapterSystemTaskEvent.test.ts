@@ -117,15 +117,45 @@ test('parseSystemTaskEvent 丢弃 compact_boundary', () => {
     if (events[0].type === 'segments') assert.equal(events[0].segments.length, 0);
 });
 
-test('parseSystemTaskEvent 对未知 subtype 不静默吞', () => {
+test('parseSystemTaskEvent 对未知 subtype 转折叠 System 卡片而非静默吞', () => {
     const events = parseSingleStdoutLine(JSON.stringify({ type: 'system', subtype: 'someUnknownSubtype', payload: {} }));
-    const allEmpty = events.every((event) => event.type === 'segments' && event.segments.length === 0);
-    assert.equal(allEmpty, false, '未知 subtype 不应被静默吞，应保留降级渲染或抛出未知事件');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'segments');
+    if (events[0].type === 'segments') {
+        assert.equal(events[0].segments.length, 1);
+        const segment = events[0].segments[0];
+        assert.equal(segment.kind, 'tool');
+        assert.equal(segment.tool?.name, 'System');
+        assert.equal(segment.tool?.summary, 'someUnknownSubtype');
+        // detail 保留完整 JSON，点开卡片可查看原文。
+        assert.match(String(segment.tool?.detail), /someUnknownSubtype/);
+    }
 });
+
+test('api_retry / task_updated 等 system 事件渲染为 System 卡片', () => {
+    const retry = parseSingleStdoutLine(JSON.stringify({
+        type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, error_status: 401, error: 'authentication_failed'
+    }));
+    assert.equal(retry[0].type, 'segments');
+    if (retry[0].type === 'segments') {
+        assert.equal(retry[0].segments[0].tool?.summary, 'api_retry');
+        assert.match(String(retry[0].segments[0].tool?.detail), /authentication_failed/);
+    }
+    const updated = parseSingleStdoutLine(JSON.stringify({
+        type: 'system', subtype: 'task_updated', task_id: 'bkvhac6wt', patch: { status: 'killed' }
+    }));
+    assert.equal(updated[0].type, 'segments');
+    if (updated[0].type === 'segments') {
+        assert.equal(updated[0].segments[0].tool?.summary, 'task_updated');
+    }
+});
+
+/** stripEmbeddedSystemTaskEvents 的新返回结构。 */
+type StripResult = { text: string; systemSegments: import('../protocol').ChatSegment[] };
 
 test('stripEmbeddedSystemTaskEvents 同时剥离两种写法的嵌入 JSON', () => {
     const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
-    const strip = (text: string): string => (adapter as unknown as { stripEmbeddedSystemTaskEvents: (input: string) => string })
+    const strip = (text: string): StripResult => (adapter as unknown as { stripEmbeddedSystemTaskEvents: (input: string) => StripResult })
         .stripEmbeddedSystemTaskEvents(text);
 
     const cases: Array<{ name: string; input: string; expected: string }> = [
@@ -163,16 +193,25 @@ test('stripEmbeddedSystemTaskEvents 同时剥离两种写法的嵌入 JSON', () 
             name: 'compact_boundary',
             input: '前文\n{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual"}}\n后文',
             expected: '前文\n后文'
-        },
-        {
-            name: '不是 system 任务事件的 JSON 不会被剥离',
-            input: '前文\n{"type":"system","subtype":"unrelated","id":5}\n后文',
-            expected: '前文\n{"type":"system","subtype":"unrelated","id":5}\n后文'
         }
     ];
 
     for (const sample of cases) {
-        assert.equal(strip(sample.input), sample.expected, `case: ${sample.name}`);
+        const result = strip(sample.input);
+        assert.equal(result.text, sample.expected, `case: ${sample.name}`);
+        assert.equal(result.systemSegments.length, 0, `case: ${sample.name} 任务事件应静默丢弃`);
     }
+
+    // 非任务类 system 事件：文本剥离 + 产出折叠 System 卡片。
+    const generic = strip('前文\n{"type":"system","subtype":"api_retry","attempt":2}\n后文');
+    assert.equal(generic.text, '前文\n后文');
+    assert.equal(generic.systemSegments.length, 1);
+    assert.equal(generic.systemSegments[0].tool?.name, 'System');
+    assert.equal(generic.systemSegments[0].tool?.summary, 'api_retry');
+
+    // 长得像但不是合法 JSON 的文本原样保留。
+    const broken = strip('见 {"type":"system","subtype":"x" 未闭合');
+    assert.equal(broken.text, '见 {"type":"system","subtype":"x" 未闭合');
+    assert.equal(broken.systemSegments.length, 0);
     adapter.dispose();
 });

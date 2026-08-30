@@ -49,7 +49,11 @@ export const BROWSER_TOOL_SCHEMAS: readonly BrowserToolSchema[] = [
         inputSchema: {
             type: 'object',
             properties: {
-                url: { type: 'string', description: 'The URL to open.' }
+                url: { type: 'string', description: 'The URL to open.' },
+                forceNew: {
+                    type: 'boolean',
+                    description: 'Force a new page even if a similar one is already open.'
+                }
             },
             required: ['url']
         }

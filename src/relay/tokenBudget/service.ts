@@ -30,12 +30,6 @@ const DEFAULT_CONTEXT_LIMIT = 166_000;
 /** 阈值 = contextLimit - 此常量。 */
 const THRESHOLD_RESERVE = 50_000;
 
-/** 自动压缩防抖窗口（毫秒）。 */
-const COMPACT_DEBOUNCE_MS = 60_000;
-
-/** 压缩状态最长允许在途时间（毫秒），超过后视为上次压缩已丢失事件。 */
-const COMPACT_STALE_MS = 5 * 60_000;
-
 /** 发送给 Claude CLI 的原生上下文压缩指令。 */
 export const CLAUDE_COMPACT_COMMAND = '/compact';
 const MODEL_CONTEXT_LIMITS: Record<string, number> = {
@@ -60,6 +54,14 @@ export interface BeforeSendInput {
     modelId: string;
     /** Anthropic 形态的请求体文本（已注入任务流工具）。 */
     anthropicBody: string;
+    /**
+     * 本轮是否为 CLI 原生压缩（摘要）请求。
+     *
+     * 压缩请求体携带整段待摘要对话，估算值必然超阈值；若参与阈值判定就会在
+     * 压缩进行中再发一条 `/compact`。为 true 时只登记 usage，不做触发判定，
+     * 并顺带把压缩在途标记置上，堵住同一时间窗内的其他触发源。
+     */
+    compactCommandTriggered?: boolean;
 }
 
 /** 响应侧 usage 上报的入参。 */
@@ -199,6 +201,30 @@ export class TokenBudgetService implements vscode.Disposable {
         });
     }
 
+    /**
+     * 登记「某处已经在压缩」，让压缩完成前的重复触发保持静默。
+     *
+     * 触发源不止本服务的手动压缩：用户手敲 `/compact`、CLI 自身的自动压缩都不会
+     * 经过 {@link compactNow}，若不登记则 `inProgress` 始终为空，同一段上下文会被压两次。
+     *
+     * @param sessionId CLI session_id。
+     */
+    public noteExternalCompaction(sessionId: string): void {
+        if (!sessionId) return;
+        void this.ensureLoaded();
+        const session = this.store.getSession(sessionId);
+        if (!session || session.compact.inProgress) return;
+        Logger.info(`[tokenBudget] 外部压缩已在途，登记防抖：session=${sessionId}`);
+        this.noteCompactionInFlight(session);
+    }
+
+    /**
+     * 结束 CLI 原生压缩：复位在途状态并广播结果。
+     *
+     * @param sessionId CLI session_id。
+     * @param success   压缩是否成功。
+     * @param error     失败原因。
+     */
     public finishNativeCompaction(sessionId: string, success: boolean, error?: string): void {
         if (!sessionId) return;
         void this.ensureLoaded();
@@ -293,8 +319,9 @@ export class TokenBudgetService implements vscode.Disposable {
             });
             this.lastRequestBodyBySession.set(input.sessionId, input.anthropicBody);
             this.usageEmitter.fire(session);
-            if (this.shouldTriggerCompaction(session)) {
-                this.triggerCompactionCommand(session);
+            if (input.compactCommandTriggered) {
+                // 压缩摘要请求已经在路上：登记在途，让手动/CLI 压缩期间的状态保持一致。
+                this.noteCompactionInFlight(session);
             }
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -303,7 +330,10 @@ export class TokenBudgetService implements vscode.Disposable {
     }
 
     /**
-     * 响应侧入口：用上游 usage 权威值覆盖 current，并按需触发自动压缩。
+     * 响应侧入口：用上游 usage 权威值覆盖 current。
+     *
+     * 只做计量，不再按阈值自动触发压缩；压缩改为完全由用户手动发起
+     * （token 计量条上的压缩按钮或 `/compact`）。
      *
      * @param input 入参。
      */
@@ -322,10 +352,6 @@ export class TokenBudgetService implements vscode.Disposable {
                 outputTokens: session.current.outputTokens
             });
             this.usageEmitter.fire(session);
-
-            if (this.shouldTriggerCompaction(session)) {
-                this.triggerCompactionCommand(session);
-            }
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             Logger.warn(`[tokenBudget] afterRecv 异常：${message}`);
@@ -369,29 +395,15 @@ export class TokenBudgetService implements vscode.Disposable {
     }
 
     /**
-     * 判定本轮 afterRecv 是否应当触发自动压缩。
+     * 只登记压缩在途状态，不发送任何指令。
+     *
+     * 用于「压缩已由别处发起」的场景（CLI 原生压缩、用户手敲 `/compact`、
+     * 正在转发的摘要请求），让 inProgress 判定对这些触发源同样生效。
      *
      * @param session 当前会话桶。
-     * @returns 满足全部触发条件则返回 true。
      */
-    private shouldTriggerCompaction(session: SessionUsage): boolean {
-        if (this.resetStaleCompactionIfNeeded(session)) return true;
-        if (session.current.totalInputForBudget < session.threshold) return false;
-        if (session.compact.inProgress) return false;
-        if (session.compact.lastTriggeredAt) {
-            const last = Date.parse(session.compact.lastTriggeredAt);
-            if (Number.isFinite(last) && Date.now() - last < COMPACT_DEBOUNCE_MS) return false;
-        }
-        if (!this.deps.commandSender) {
-            Logger.warn('[tokenBudget] 触发条件已满足但 commandSender 未注入，跳过自动压缩。');
-            return false;
-        }
-        return true;
-    }
-
-    private triggerCompactionCommand(session: SessionUsage): void {
+    private noteCompactionInFlight(session: SessionUsage): void {
         this.markCompactionCommandPending(session);
-        void this.sendCompactionCommand(session.sessionId);
     }
 
     /**
@@ -430,21 +442,6 @@ export class TokenBudgetService implements vscode.Disposable {
             this.compactionEmitter.fire(failedState);
             this.deps.notifier?.notifyCompactionState(failedState);
         }
-    }
-
-    private resetStaleCompactionIfNeeded(session: SessionUsage): boolean {
-        if (!session.compact.inProgress || !session.compact.lastTriggeredAt) return false;
-        const triggeredAt = Date.parse(session.compact.lastTriggeredAt);
-        if (!Number.isFinite(triggeredAt) || Date.now() - triggeredAt < COMPACT_STALE_MS) return false;
-        this.resetCompactionState(session, 'previous compact timed out without status event');
-        const failedState: CompactionState = {
-            kind: 'failed',
-            sessionId: session.sessionId,
-            error: session.compact.lastError || 'previous compact timed out without status event'
-        };
-        this.compactionEmitter.fire(failedState);
-        this.deps.notifier?.notifyCompactionState(failedState);
-        return true;
     }
 
     private resetCompactionState(session: SessionUsage, error: string): void {

@@ -2,6 +2,107 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.29] - 2026-08-30
+
+### Fixed
+
+- **Re-fetching models no longer wipes the settings you tuned by hand.** "Fetch Models" used to replace a provider's whole model list with the upstream response, and since `GET /models` only returns an id (plus sometimes a display name), every locally configured field — display name, context length, max tokens, vision, tool calling, temperature, top_p, sampling mode, selectable, transform-think, preserve-reasoning — was reset to its default on each fetch. Only `enabled` survived. The upstream list still decides **which** models exist, but each surviving model now **keeps its local configuration untouched**; the upstream display name is adopted only when you never renamed the model (its display name still equals the model id).
+- Models the upstream no longer returns are removed as before (they are treated as retired), and if the removed model was the active selection the current model is cleared. New ids are appended, sorted by id, after the existing ones so your list order is preserved.
+- The success toast now reports the merge outcome — `已拉取 N 个模型：新增 A，保留原有配置 K，移除 R` — so the effect of each fetch is explicit.
+
+### Fixed (browser tools)
+
+- **`browserContext.newPage: Cannot read properties of undefined (reading '_page')` on Linux now comes with an actionable hint.** This error is raised inside VS Code's built-in browser (its bundled Playwright), typically because Chromium could not create a browser context — missing system libraries, no display, or a sandbox-restricted root session. The raw message pointed at nothing useful, so the browser tool host now appends concrete checks (install `libnss3`/`libatk-1.0`/`libgbm`/`libasound2`, run under `xvfb-run` when headless, avoid an unsandboxed root session, then reload the window).
+
+## [3.2.28] - 2026-08-16
+
+### Added
+
+- **Repeating wake-ups.** `lls-ccai-schedule-wakeup` now accepts `repeatCount` (total number of fires) plus `intervalSeconds` (gap between them), so the model can ask to be pinged every N seconds for N rounds instead of only once. The job keeps the **same id** across every round, so a single `lls-ccai-cancel-wakeup` stops the whole series; the job is removed automatically after the final fire. `repeatCount > 1` without `intervalSeconds` is rejected with an explicit parameter error, and a job with no interval still behaves exactly as a one-shot.
+- **Wake-up messages now identify themselves.** Every fired wake-up is prefixed with a header carrying the job id, the round counter (`第 n 次触发，剩余 m 次`), and the exact call needed to stop it — `mcp__llsccaiWakeup__lls-ccai-cancel-wakeup {"id":"..."}` — so the model can cancel a runaway loop without first querying the list tool. `lls-ccai-list-wakeups` also reports `every=`/`remaining=`/`fired=` for repeating jobs.
+
+## [3.2.27] - 2026-08-16
+
+### Added
+
+- **Scheduled wake-ups: the model can now set itself an alarm.** A new built-in MCP server `llsccaiWakeup` exposes three tools — `mcp__llsccaiWakeup__lls-ccai-schedule-wakeup` (takes a `prompt` plus either `delaySeconds` or an ISO 8601 `at`), `lls-ccai-list-wakeups`, and `lls-ccai-cancel-wakeup`. When the timer fires, the wake-up text is appended to the built-in Chat as a **visible user message** and sent upstream through the CLI, exactly as if you had typed and sent it yourself.
+- Wake-ups are one-shot (removed once they fire) and are persisted to `.LLSOAI/wakeups.json`, so they survive a VS Code restart: pending jobs are re-armed on activation, and jobs whose time passed while the window was closed fire once on startup. Delays longer than Node's ~24.8-day `setTimeout` ceiling are re-armed in segments instead of firing immediately.
+
+## [3.2.26] - 2026-08-05
+
+### Fixed
+
+- **`browser_open` got stuck on `about:blank` whenever an existing page was reused.** VS Code's built-in `open_browser_page` has two response shapes: it either opens a fresh page already sitting on the target URL, or it detects a "similar page is already open" and just lists that page's id **without navigating it** — and the reused page is usually still on `about:blank`. The host only issued a follow-up `navigate_page` when a saved session snapshot had been restored, so for any origin with no stored credentials the reuse path returned immediately and the browser never left `about:blank`. The reuse branch now always navigates to the requested URL.
+- **AskUserQuestion answers now flow through the CLI permission channel, so the model actually waits for your choice.** Previously the webview question modal posted answers as a plain user message while the CLI's `can_use_tool` request was acknowledged with an empty `answers` field — the CLI immediately packed "(no option selected)" into the tool_result and kept going, which looked like the gateway forwarding requests behind an open popup. The extension now intercepts `AskUserQuestion` permission requests, forwards the questions to the webview (`askUser/request`), and only responds to the CLI after you submit — with your selections merged into `updatedInput.answers` (custom notes go into `annotations`). The CLI blocks until then, so no upstream request is sent while a question is open.
+- **Multiple question popups no longer stack on top of each other.** Question requests are now queued FIFO in the webview — one modal at a time, the next appears after the current one is answered. The streaming render path no longer opens the modal directly (it shows a normal tool card instead), which also removes the duplicate VS Code "Answer questions?" dialog. History replay no longer re-opens stale question popups since answers are now part of the recorded tool_result.
+- **`bypassPermissions` mode keeps the stdio permission channel** (alongside `--dangerously-skip-permissions`) solely so AskUserQuestion can be intercepted; every other tool's permission request is auto-allowed by the extension host, preserving the bypass experience.
+
+### Changed
+
+- **Upstream `system` JSON events (`api_retry`, `task_updated`, …) no longer print as raw JSON in the chat.** They now render as a collapsed `System · <subtype>` tool-style card — click to expand the full JSON. This covers both top-level stream events and system JSON embedded inside assistant text; internal task-scheduler events are still silently dropped.
+
+## [3.2.25] - 2026-08-02
+
+### Fixed
+
+- **Compaction still fired at ~166k even after it was made manual**, because the Claude CLI was compacting on its own. The CLI never saw the model's configured context length, so it derived its auto-compact line from its built-in 200k default minus the output reserve and a 13k buffer. The context length you set in the model config panel is now passed through as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, so the CLI and the extension's token meter share one limit. Expert/plan/review routes resolve it from their own model and drop the inherited value when that model has no context length configured, so a limit never leaks across models. Nothing is injected when the field is left empty — the CLI keeps its default behaviour.
+
+## [3.2.24] - 2026-08-01
+
+### Changed
+
+- **Context compaction is now manual only.** `TokenBudgetService` no longer fires `/compact` on its own once a session crosses the `contextLength - 50000` threshold. Automatic triggering competed with the CLI's own compaction and could compact a conversation the user was still working through, with no way to decline. Token metering is untouched — `beforeSend` still estimates and `afterRecv` still records real API usage, so the token meter, threshold display, and per-session buckets behave exactly as before. Compaction now runs only when you press the compact button on the token meter or type `/compact` yourself; externally initiated compaction is still detected so the same context is never compacted twice.
+
+## [3.2.23] - 2026-08-01
+
+### Fixed
+
+- **The built-in `browser_*` MCP tools disappeared entirely.** `browserMcpServer` runs as a standalone Node child process spawned by the Claude CLI, where the `vscode` module does not exist. Both `browserMcpServer.ts` and `httpBridge.ts` statically imported `browserToolHost`, which chains into `logger` → `require('vscode')`, so the server crashed on startup with `Cannot find module 'vscode'` and the whole browser tool group silently vanished from the model's tool list — with no visible error anywhere. Both files now import `BrowserToolHost` as a type only and `require` it lazily on the extension-host path, matching how `vscodeMcpServer` already handled this. Added a regression test that boots the server in a real child process with no `vscode` available and asserts `tools/list` still returns `browser_open`.
+
+### Changed
+
+- The copy-success feedback now shows a green check SVG plus a localized "Copied" label (English, Simplified/Traditional Chinese, Korean, Japanese, French, German) instead of a bare `✓` character. Inline code and fenced code blocks share the same feedback renderer, and the code-block button widens during feedback to fit the label.
+
+## [3.2.22] - 2026-08-01
+
+### Added
+
+- **Click-to-copy inline code** in the Chat webview. Model replies often put a whole shell command in a single-backtick span (for example a `tsh login --proxy=… --user=…` line), which previously had no copy affordance at all — only fenced code blocks got the hover copy button. Inline code now renders with a trailing copy icon, and clicking anywhere on the span copies the full command (the icon is excluded from the copied text). A short green flash confirms the copy. The handler is delegated from `document`, so it also covers spans appended while a reply is still streaming.
+
+### Fixed
+
+- Copy buttons of multiple code blocks in one message no longer stack in the message's top-right corner. `.copyButton_CEmTFw` is absolutely positioned, but `.codeBlockWrapper_-a7MRw` had no positioning context, so every button anchored to the message root instead of its own block. The wrapper is now `position: relative`.
+
+## [3.2.21] - 2026-08-01
+
+### Fixed
+
+- Context compaction no longer fires twice in a row. Three independent paths could each cause a redundant `/compact`:
+  - The compaction **summary request itself** was registered as a normal request. Its body is the entire conversation being summarized, so the estimate always cleared the threshold and `TokenBudgetService` sent another `/compact` while the first was still running. The router now forwards `compactCommandTriggered` to the proxies, and a request carrying that flag only records usage — it never re-evaluates the threshold.
+  - Compaction started **outside the service** (a user typing `/compact`, or the CLI's own auto-compaction) never set `compact.inProgress` or `lastTriggeredAt`, so the in-progress check and the 60-second debounce were both bypassed. The CLI's `status: compacting` event now registers the in-flight compaction via `noteExternalCompaction`.
+  - `shouldTriggerCompaction` returned `true` straight out of the stale-state reset, skipping the threshold, debounce, and `commandSender` checks — so a single lost status event meant the next request after five minutes compacted for no reason. The reset now only clears the stale flag.
+
+## [3.2.20] - 2026-08-01
+
+### Added
+
+- **Browser session persistence**: login state captured in the integrated browser now survives page close and VS Code restarts. VS Code agent pages run in a private in-memory session, so every reopen previously landed back on the login screen. `browser_open` now restores a saved snapshot (cookies including HttpOnly, `localStorage`, `sessionStorage`) **before** navigating to the target URL, so first-screen API calls already carry credentials; snapshots are captured automatically after every non-open browser tool call. Storage goes through VS Code `SecretStorage` (system keychain), keyed per origin with a self-maintained index. Because Playwright's `storageState`/`addCookies` are blocked inside VS Code (`Method not found: Storage.getCookies`), cookies are read and written over raw CDP (`Network.getAllCookies` / `Network.setCookies`).
+- `browser_open` gained an optional `forceNew` flag, forwarded to the underlying VS Code tool to open a fresh page instead of reusing a similar one.
+
+### Fixed
+
+- `browser_open` no longer deadlocks when VS Code answers with "At least one similar page is already open" — that response lists the page id as `- [uuid] title (url)`, which the previous parser missed, leaving every subsequent call failing with "Page not found". A fallback pattern now recovers the id from the similar-page listing.
+
+### Notes
+
+- A snapshot is only written once the page state has settled (http/https origin, `document.readyState === 'complete'`, origin matches the current page), which prevents an OAuth redirect from overwriting another origin's entry. An empty result after the user logs out is treated as the truth and overwrites the stored snapshot — there is no "non-empty" guard. Persistence errors are swallowed and logged, never affecting the browser tool's own result.
+
+## [3.2.19] - 2026-06-23
+
+### Fixed
+
+- Task-flow continuation prompts are now self-contained (next pending task plus the status write-back instruction) instead of relying on injected system rules and a Workflow JSON snapshot. Those volatile blocks changed on every continuation and busted the Anthropic prefix cache; the continuation path now injects only the update-tool definition. Replayed `thinking`/`redacted_thinking` blocks are also sanitized in the Anthropic proxy to avoid "Invalid signature in thinking block" on direct forwarding.
+
 ## [3.2.10] - 2026-06-22
 
 ### Changed

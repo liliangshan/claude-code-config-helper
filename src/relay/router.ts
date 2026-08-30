@@ -59,6 +59,13 @@ export interface UpstreamRequestContext {
     parsedBody: unknown | null;
     /** 本轮请求是否触发了创建 LLS CCAI 任务流。 */
     llsTaskCreateTriggered?: boolean;
+    /**
+     * 本轮请求是否为 Claude CLI 的原生压缩（摘要）请求。
+     *
+     * 压缩请求体是整段待摘要的对话，估算值必然超阈值。若按普通请求登记，
+     * TokenBudgetService 会在压缩进行中再触发一次 `/compact`，形成连压两次。
+     */
+    compactCommandTriggered?: boolean;
     /** 上游卡住时通知扩展宿主自愈。 */
     onUpstreamTimeout?: (kind: UpstreamTimeoutKind) => void;
 }
@@ -459,7 +466,7 @@ export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
         const requestInfo = { route, providerId, modelId };
         onUpstreamRequestStart?.(requestInfo);
         try {
-            await adapter.handle({ req, res, provider, modelId, rawBody, parsedBody, llsTaskCreateTriggered, onUpstreamTimeout });
+            await adapter.handle({ req, res, provider, modelId, rawBody, parsedBody, llsTaskCreateTriggered, compactCommandTriggered, onUpstreamTimeout });
         } finally {
             onUpstreamRequestEnd?.(requestInfo);
         }

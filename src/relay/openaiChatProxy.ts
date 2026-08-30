@@ -124,7 +124,8 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
                     sessionId,
                     providerId: provider.id,
                     modelId,
-                    anthropicBody: injectedBodyText
+                    anthropicBody: injectedBodyText,
+                    compactCommandTriggered: ctx.compactCommandTriggered === true
                 });
             }
         } catch (err) {

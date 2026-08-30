@@ -2,6 +2,9 @@
 
 import type * as vscode from 'vscode';
 
+import { Logger } from '../logger';
+import { EXPORT_SCRIPT, buildImportScript, parseExportResult } from './sessionBridge';
+import { toOrigin, isExpired, type BrowserSessionStore } from './sessionStore';
 import { LM_BROWSER_TOOLS, isBrowserToolName, type BrowserToolName } from './tools';
 
 /** 执行浏览器工具的统一接口（真实宿主与 HTTP 转发宿主都实现）。 */
@@ -12,6 +15,8 @@ export interface BrowserToolExecutor {
 
 const VS_CODE_DESKTOP_UI_KIND = 1;
 const PAGE_ID_RE = /Page ID:\s*([0-9a-fA-F-]{36})/;
+/** 「已有相似页面」响应里的列表项 id，形如 `  - [uuid] title (url)`。 */
+const SIMILAR_PAGE_ID_RE = /^\s*-\s*\[([0-9a-fA-F-]{36})\]/m;
 const NO_PAGE_MESSAGE = 'No browser page is open. Call browser_open first.';
 
 /** MCP tool result 文本内容块。 */
@@ -75,6 +80,8 @@ export interface BrowserToolHostOptions {
     env?: BrowserEnvironment;
     /** 创建一次性 cancellation token。 */
     createCancellation?: () => DisposableToken;
+    /** 登录态快照存储；缺省时整套持久化静默禁用。 */
+    sessionStore?: BrowserSessionStore;
 }
 
 /** 在扩展宿主进程通过 vscode.lm.invokeTool 执行浏览器工具并序列化为 MCP tool result。 */
@@ -91,11 +98,18 @@ export class BrowserToolHost implements BrowserToolExecutor {
     /** 当前跟踪的浏览器页面 id（最近一次 open 的结果）。 */
     private currentPageId?: string;
 
+    /** 登录态快照存储；未注入时不做任何持久化。 */
+    private readonly sessionStore?: BrowserSessionStore;
+
+    /** 当前页 origin，用于搭车快照时校验状态是否落定。 */
+    private currentOrigin?: string;
+
     /** 创建 BrowserToolHost。 */
     public constructor(options: BrowserToolHostOptions = {}) {
         this.lm = options.lm ?? loadVscodeLm();
         this.env = options.env ?? loadVscodeEnv();
         this.createCancellation = options.createCancellation ?? loadVscodeCancellation();
+        this.sessionStore = options.sessionStore;
     }
 
     /** 按浏览器工具名分派到底层 VS Code 内置 LM 浏览器工具。 */
@@ -110,36 +124,74 @@ export class BrowserToolHost implements BrowserToolExecutor {
             return this.error('vscode.lm.invokeTool is unavailable. Update VS Code to 1.110+ and enable workbench.browser.enableChatTools.');
         }
         try {
-            switch (name) {
-                case 'browser_open':
-                    return await this.runOpen(args);
-                case 'browser_navigate':
-                    return await this.runNavigate(args);
-                case 'browser_get_content':
-                    return await this.runReadPage();
-                case 'browser_console':
-                    return await this.runConsole();
-                case 'browser_screenshot':
-                    return await this.runScreenshot();
-                case 'browser_eval':
-                    return await this.runEval(args);
-            }
+            return await this.dispatch(name, args);
         } catch (err) {
-            return this.error(err instanceof Error ? err.message : String(err));
+            return this.error(describeInvokeFailure(err instanceof Error ? err.message : String(err)));
+        } finally {
+            // browser_open 自身已在 runOpen 内处理恢复，且此刻页面刚导航完，交由下次调用搭车更稳。
+            if (name !== 'browser_open') {
+                await this.safeCapture();
+            }
         }
     }
 
+    /** 按工具名分派到对应的执行方法。 */
+    private async dispatch(name: BrowserToolName, args: Record<string, unknown>): Promise<BrowserToolResult> {
+        switch (name) {
+            case 'browser_open':
+                return await this.runOpen(args);
+            case 'browser_navigate':
+                return await this.runNavigate(args);
+            case 'browser_get_content':
+                return await this.runReadPage();
+            case 'browser_console':
+                return await this.runConsole();
+            case 'browser_screenshot':
+                return await this.runScreenshot();
+            case 'browser_eval':
+                return await this.runEval(args);
+        }
+    }
+
+    /**
+     * 打开目标 URL。
+     *
+     * 内置 open_browser_page 有两种返回形态：
+     * - 真正新开了页面 → `Page ID: <uuid>`，此时页面已停在目标 URL；
+     * - 命中「已有相似页面」→ 只列出候选页 id 并要求调用方自行处理，**不会导航**，
+     *   被复用的页面常常还停在 about:blank。
+     *
+     * 因此复用分支必须由本方法补一次 navigate，否则表现为「打开总是卡在 about:blank」。
+     * 另外注入过登录态时也要重新导航，让 cookie 先于目标页首屏请求生效。
+     */
     private async runOpen(args: Record<string, unknown>): Promise<BrowserToolResult> {
         const url = typeof args.url === 'string' ? args.url.trim() : '';
         if (!url) {
             return this.error('`url` is required and must be a non-empty string.');
         }
-        const text = await this.invokeText(LM_BROWSER_TOOLS.open, { url });
-        const pageId = PAGE_ID_RE.exec(text)?.[1];
+        const input: Record<string, unknown> = { url };
+        if (args.forceNew === true) {
+            input.forceNew = true;
+        }
+        const text = await this.invokeText(LM_BROWSER_TOOLS.open, input);
+        const openedPageId = PAGE_ID_RE.exec(text)?.[1];
+        const reusedPageId = openedPageId ? undefined : SIMILAR_PAGE_ID_RE.exec(text)?.[1];
+        const pageId = openedPageId ?? reusedPageId;
         if (pageId) {
             this.currentPageId = pageId;
         }
-        return { content: [{ type: 'text', text }] };
+        this.currentOrigin = toOrigin(url);
+
+        // 必须先注入凭证再导航，否则目标页首屏接口会抢跑在 cookie 生效之前。
+        const restored = await this.restoreSession(url);
+        if (!this.currentPageId || (!restored && !reusedPageId)) {
+            return { content: [{ type: 'text', text }] };
+        }
+        const navigated = await this.invokeText(
+            LM_BROWSER_TOOLS.navigate,
+            { pageId: this.currentPageId, type: 'url', url }
+        );
+        return { content: [{ type: 'text', text: navigated }] };
     }
 
     private async runNavigate(args: Record<string, unknown>): Promise<BrowserToolResult> {
@@ -205,6 +257,82 @@ export class BrowserToolHost implements BrowserToolExecutor {
         return this.currentPageId;
     }
 
+    /**
+     * 按目标 url 的 origin 查快照并注入页面。
+     *
+     * 返回是否实际注入过；未配置存储、无快照或注入失败均返回 false。
+     */
+    private async restoreSession(url: string): Promise<boolean> {
+        const origin = toOrigin(url);
+        if (!this.sessionStore || !origin || !this.currentPageId) {
+            return false;
+        }
+        try {
+            const snapshot = await this.sessionStore.load(origin);
+            if (!snapshot) {
+                return false;
+            }
+            const now = Date.now();
+            const cookies = snapshot.cookies.filter((cookie) => !isExpired(cookie, now));
+            if (cookies.length === 0 && snapshot.localStorage.length === 0 && snapshot.sessionStorage.length === 0) {
+                return false;
+            }
+            await this.invoke(LM_BROWSER_TOOLS.eval, {
+                pageId: this.currentPageId,
+                code: buildImportScript({ ...snapshot, cookies })
+            });
+            return true;
+        } catch (err) {
+            Logger.warn(`浏览器登录态恢复失败：${origin}`, err);
+            return false;
+        }
+    }
+
+    /**
+     * 导出当前页登录态并按 origin 落盘。
+     *
+     * 仅在状态落定时写入：origin 为 http(s)、页面已加载完成、且与当前 origin 一致。
+     * 任一不满足则跳过本次快照（不写入也不清除）。
+     * 注意此处不做非空守卫——用户主动登出时空 cookie 即正确状态，须如实覆盖。
+     */
+    private async captureSession(): Promise<void> {
+        if (!this.sessionStore || !this.currentPageId) {
+            return;
+        }
+        const raw = await this.invokeText(LM_BROWSER_TOOLS.eval, {
+            pageId: this.currentPageId,
+            code: EXPORT_SCRIPT
+        });
+        const payload = parseExportResult(raw);
+        if (!payload) {
+            return;
+        }
+        const origin = toOrigin(payload.url);
+        if (!origin || (this.currentOrigin && origin !== this.currentOrigin)) {
+            return;
+        }
+        this.currentOrigin = origin;
+        await this.sessionStore.save({
+            origin,
+            savedAt: new Date().toISOString(),
+            cookies: payload.cookies,
+            localStorage: payload.localStorage,
+            sessionStorage: payload.sessionStorage
+        });
+    }
+
+    /** 包裹 captureSession，吞掉全部异常——持久化失败绝不能影响主工具返回值。 */
+    private async safeCapture(): Promise<void> {
+        if (!this.sessionStore) {
+            return;
+        }
+        try {
+            await this.captureSession();
+        } catch (err) {
+            Logger.warn('浏览器登录态保存失败，已忽略。', err);
+        }
+    }
+
     /** 调用 LM 工具并把结果内容拼成文本。 */
     private async invokeText(name: string, input: Record<string, unknown>): Promise<string> {
         return extractText(await this.invoke(name, input));
@@ -224,6 +352,26 @@ export class BrowserToolHost implements BrowserToolExecutor {
     private error(text: string): BrowserToolResult {
         return { isError: true, content: [{ type: 'text', text }] };
     }
+}
+
+/** Chromium 未能创建浏览器上下文时的内部报错特征（Linux 上最常见）。 */
+const BROKEN_CONTEXT_RE = /newPage[\s\S]*reading '_page'|Target page, context or browser has been closed/;
+
+/**
+ * 给内置浏览器的底层报错补一段可操作的定位提示。
+ *
+ * VS Code 内置浏览器在 Linux 上常因缺少 Chromium 运行库、无可用显示或沙箱受限而
+ * 创建不出浏览器上下文，抛出的原始信息（读取 `_page` 失败）无法指向真实原因。
+ */
+function describeInvokeFailure(message: string): string {
+    if (!BROKEN_CONTEXT_RE.test(message)) {
+        return message;
+    }
+    return `${message}\n\nVS Code 内置浏览器未能创建页面（常见于 Linux）。请检查：`
+        + '\n1. 安装 Chromium 运行依赖（libnss3、libatk-1.0、libgbm、libasound2 等）；'
+        + '\n2. 无桌面环境时提供显示，如 xvfb-run 启动 VS Code；'
+        + '\n3. root 账户下需允许沙箱或以非 root 用户运行；'
+        + '\n4. 在命令面板执行 "Developer: Reload Window" 后重试 browser_open。';
 }
 
 /** 从 LanguageModelToolResult 抽取全部文本内容块拼接成字符串。 */
