@@ -5,7 +5,9 @@
  * 输入应当是已经完成 model 重写与 LLS 任务流注入的 Anthropic 请求体对象。
  */
 
-import type { ModelCacheMode } from '../../types';
+import type { ModelCacheMode, ModelReasoningMode } from '../../types';
+import { readThinkingEffort } from './reasoningEffort';
+import type { ReasoningEffort } from './reasoningEffort';
 
 /** Anthropic 消息角色。 */
 type AnthropicRole = 'user' | 'assistant';
@@ -95,6 +97,8 @@ export interface OpenAIChatRequestBody {
     stop?: unknown;
     /** OpenAI user 字段。 */
     user?: string;
+    /** OpenAI reasoning effort 档位；passthrough 模式下由 Anthropic thinking 预算映射而来。 */
+    reasoning_effort?: ReasoningEffort;
 }
 
 /** 转换 warning，用于记录不兼容内容的降级。 */
@@ -119,6 +123,8 @@ export interface AnthropicToOpenAIChatResult {
 export interface AnthropicConversionOptions {
     /** 模型级缓存策略；缺省按 `'auto'` 处理，即丢弃 `cache_control` 断点。 */
     cacheMode?: ModelCacheMode;
+    /** 模型级思考策略；缺省按 `'off'` 处理，即不下发任何 reasoning 参数。 */
+    reasoningMode?: ModelReasoningMode;
 }
 
 /**
@@ -158,6 +164,12 @@ export function convertAnthropicToOpenAIChat(
     if (source.stream === true) {
         const existingOptions = isRecord(source.stream_options) ? source.stream_options : {};
         body.stream_options = { ...existingOptions, include_usage: true };
+    }
+    // passthrough 时把 Anthropic 顶层 thinking.budget_tokens 映射为 OpenAI
+    // reasoning_effort，让上游真正开启思考；off 模式下该分支整体短路，输出不变。
+    if (options?.reasoningMode === 'passthrough') {
+        const effort = readThinkingEffort(source.thinking);
+        if (effort) body.reasoning_effort = effort;
     }
     if (source.stop_sequences !== undefined) body.stop = source.stop_sequences;
     const userId = readMetadataUserId(source.metadata);

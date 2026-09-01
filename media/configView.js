@@ -112,6 +112,9 @@
             cacheModeAuto: 'Auto (drop cache breakpoints)',
             cacheModePassthrough: 'Passthrough (upstream must support cache_control, otherwise 400)',
             cacheModeOff: 'Off (no cache handling)',
+            reasoningMode: 'Thinking Mode',
+            reasoningModeOff: 'Off (keep current behavior)',
+            reasoningModePassthrough: 'Passthrough (read back upstream reasoning as thinking; changes content block order)',
             vision: 'Vision',
             toolCalling: 'Tool Calling',
             providerNotFound: 'Provider not found',
@@ -211,6 +214,9 @@
             cacheModeAuto: '自动（丢弃缓存断点）',
             cacheModePassthrough: '透传（上游需支持 cache_control，否则可能 400）',
             cacheModeOff: '关闭（不做缓存处理）',
+            reasoningMode: '思考模式',
+            reasoningModeOff: '关闭（保持现状）',
+            reasoningModePassthrough: '透传（读回上游思考内容；会改变 content block 顺序）',
             vision: '视觉',
             toolCalling: '工具调用',
             providerNotFound: '提供商不存在',
@@ -312,6 +318,9 @@
         cacheModeAuto: '自動（丟棄快取斷點）',
         cacheModePassthrough: '透傳（上游需支援 cache_control，否則可能 400）',
         cacheModeOff: '關閉（不做快取處理）',
+        reasoningMode: '思考模式',
+        reasoningModeOff: '關閉（保持現狀）',
+        reasoningModePassthrough: '透傳（讀回上游思考內容；會改變 content block 順序）',
         vision: '視覺',
         toolCalling: '工具呼叫',
         providerNotFound: '提供商不存在',
@@ -393,6 +402,9 @@
         cacheModeAuto: '자동 (캐시 중단점 제거)',
         cacheModePassthrough: '전달 (업스트림이 cache_control을 지원해야 하며, 아니면 400 발생 가능)',
         cacheModeOff: '끄기 (캐시 처리 안 함)',
+        reasoningMode: '사고 모드',
+        reasoningModeOff: '끄기 (현재 동작 유지)',
+        reasoningModePassthrough: '전달 (상류 reasoning을 thinking으로 회독; content block 순서 변경)',
         vision: '비전',
         toolCalling: '도구 호출',
         providerNotFound: '공급자를 찾을 수 없습니다',
@@ -474,6 +486,9 @@
         cacheModeAuto: '自動（キャッシュ断点を破棄）',
         cacheModePassthrough: 'パススルー（上流が cache_control 対応必須、非対応なら 400 の可能性）',
         cacheModeOff: 'オフ（キャッシュ処理なし）',
+        reasoningMode: '思考モード',
+        reasoningModeOff: 'オフ（現在の動作を維持）',
+        reasoningModePassthrough: 'パススルー（上流の思考内容を thinking として読み戻す；content block の順序が変化）',
         vision: 'ビジョン',
         toolCalling: 'ツール呼び出し',
         providerNotFound: 'プロバイダーが見つかりません',
@@ -1179,14 +1194,18 @@
                         <div class="checkbox-row"><input id="model-user-selectable" type="checkbox" ${model.isUserSelectable !== false ? 'checked' : ''} /><label for="model-user-selectable">${t('showInModelDropdown')}</label></div>
                         <div class="checkbox-row"><input id="model-vision" type="checkbox" ${model.vision ? 'checked' : ''} /><label for="model-vision">${t('vision')}</label></div>
                         <div class="checkbox-row"><input id="model-tool" type="checkbox" ${model.toolCalling !== false ? 'checked' : ''} /><label for="model-tool">${t('toolCalling')}</label></div>
-                        <div class="checkbox-row"><input id="model-transform-think" type="checkbox" ${model.transformThink ? 'checked' : ''} /><label for="model-transform-think">Transform Think Tags (&lt;|im_start|&gt;/♩)</label></div>
-                        <div class="checkbox-row"><input id="model-preserve-reasoning" type="checkbox" ${model.preserveReasoningContent ? 'checked' : ''} /><label for="model-preserve-reasoning">Preserve reasoning_content</label></div>
                         <div class="field full"><label>${t('cacheMode')}</label><select id="model-cache-mode">
                             ${[
                                 ['auto', t('cacheModeAuto')],
                                 ['passthrough', t('cacheModePassthrough')],
                                 ['off', t('cacheModeOff')]
                             ].map(([value, label]) => `<option value="${value}" ${(model.cacheMode || 'auto') === value ? 'selected' : ''}>${text(label)}</option>`).join('')}
+                        </select></div>
+                        <div class="field full"><label>${t('reasoningMode')}</label><select id="model-reasoning-mode">
+                            ${[
+                                ['off', t('reasoningModeOff')],
+                                ['passthrough', t('reasoningModePassthrough')]
+                            ].map(([value, label]) => `<option value="${value}" ${(model.reasoningMode || 'off') === value ? 'selected' : ''}>${text(label)}</option>`).join('')}
                         </select></div>
                     </div>
                     <div class="modal-footer">
@@ -1379,9 +1398,8 @@
         model.enabled = document.getElementById('model-enabled').checked;
         model.vision = document.getElementById('model-vision').checked;
         model.toolCalling = document.getElementById('model-tool').checked;
-        model.transformThink = document.getElementById('model-transform-think').checked;
-        model.preserveReasoningContent = document.getElementById('model-preserve-reasoning').checked;
         model.cacheMode = document.getElementById('model-cache-mode').value || 'auto';
+        model.reasoningMode = document.getElementById('model-reasoning-mode').value || 'off';
         if (!existing) target.models.push(model);
         target.updatedAt = Date.now();
         modalState = null;
@@ -1480,9 +1498,8 @@
             samplingMode: 'temperature',
             isUserSelectable: true,
             enabled: true,
-            transformThink: false,
-            preserveReasoningContent: false,
-            cacheMode: 'auto'
+            cacheMode: 'auto',
+            reasoningMode: 'off'
         };
     }
 

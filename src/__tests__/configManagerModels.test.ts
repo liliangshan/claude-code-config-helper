@@ -34,8 +34,6 @@ function makeModel(modelId: string, overrides: Partial<ModelConfig> = {}): Model
         topP: 1,
         samplingMode: 'temperature',
         isUserSelectable: true,
-        transformThink: false,
-        preserveReasoningContent: false,
         ...overrides
     };
 }
@@ -141,4 +139,28 @@ test('replaceProviderModels: 本地 passthrough 设置不会被上游默认值�
     await manager.replaceProviderModels('p1', [makeModel('gpt-x')]);
 
     assert.equal(manager.getProvider('p1')?.models[0].cacheMode, 'passthrough');
+});
+
+test('normalizeModel: 旧数据缺少 reasoningMode 时补齐为 off', async () => {
+    const manager = makeManager([makeModel('legacy')]);
+
+    await manager.replaceProviderModels('p1', [makeModel('legacy')]);
+
+    assert.equal(manager.getProvider('p1')?.models[0].reasoningMode, 'off');
+});
+
+test('normalizeModel: 非法 reasoningMode 归一为 off', async () => {
+    const manager = makeManager([makeModel('weird', { reasoningMode: 'auto' as ModelConfig['reasoningMode'] })]);
+
+    await manager.replaceProviderModels('p1', [makeModel('weird')]);
+
+    assert.equal(manager.getProvider('p1')?.models[0].reasoningMode, 'off');
+});
+
+test('replaceProviderModels: 本地 reasoningMode=passthrough 不会被上游默认值覆盖', async () => {
+    const manager = makeManager([makeModel('gpt-r', { reasoningMode: 'passthrough' })]);
+
+    await manager.replaceProviderModels('p1', [makeModel('gpt-r')]);
+
+    assert.equal(manager.getProvider('p1')?.models[0].reasoningMode, 'passthrough');
 });

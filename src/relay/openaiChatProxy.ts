@@ -14,14 +14,14 @@ import { Logger } from '../logger';
 import { interceptAnthropicResponse } from '../llsTask/interceptor';
 import type { LlsTaskInterceptorDeps } from '../llsTask/interceptor';
 import { LlsTaskStreamingInterceptor } from '../llsTask/streamingInterceptor';
-import type { ApiType } from '../types';
+import type { ApiType, ModelReasoningMode } from '../types';
 import { convertAnthropicToOpenAIChat } from './converters/anthropicToOpenAIChat';
 import { buildAnthropicErrorFromUpstream, formatAnthropicSseError, sanitizeErrorMessage } from './converters/openAIErrorToAnthropic';
 import { convertOpenAIChatJsonToAnthropic, OpenAIChatToAnthropicStreamConverter } from './converters/openAIChatToAnthropic';
 import type { DebugRecorder } from './debugRecorder';
 import { buildOpenAIForwardHeaders, describeOpenAIAuthHeaders } from './openAIHeaders';
 import { buildForwardHeaders, redactHeaders } from './forwardHeadersCommon';
-import { resolveModelCacheMode } from './modelCacheMode';
+import { resolveModelCacheMode, resolveReasoningMode } from './modelCacheMode';
 import type { UpstreamAdapter, UpstreamRequestContext } from './router';
 import { injectLlsTaskRequestBody, type LlsTaskRequestInjectionDeps } from './taskRequestInjection';
 import type { TokenBudgetService } from './tokenBudget/service';
@@ -134,8 +134,10 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
         }
         await this.safeRecordRequestBody(injectedBodyText);
         const anthropicBody = this.parseJson(injectedBodyText);
+        const reasoningMode = resolveReasoningMode(provider, modelId);
         const converted = convertAnthropicToOpenAIChat(anthropicBody, {
-            cacheMode: resolveModelCacheMode(provider, modelId)
+            cacheMode: resolveModelCacheMode(provider, modelId),
+            reasoningMode
         });
         const upstreamBodyText = JSON.stringify(converted.body);
         const headers = buildOpenAIForwardHeaders(provider, req.headers);
@@ -146,7 +148,7 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
                 describeOpenAIAuthHeaders(provider, headers)
             )} headers=${JSON.stringify(redactHeaders(headers))}`
         );
-        await this.forward({ ctx, startedAt, upstreamUrl, headers, anthropicBodyText: injectedBodyText, upstreamBodyText });
+        await this.forward({ ctx, startedAt, upstreamUrl, headers, anthropicBodyText: injectedBodyText, upstreamBodyText, reasoningMode });
     }
 
     /**
@@ -161,8 +163,10 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
         headers: Record<string, string>;
         anthropicBodyText: string;
         upstreamBodyText: string;
+        /** 模型级思考策略，透传给响应转换器决定是否合成 thinking block。 */
+        reasoningMode: ModelReasoningMode;
     }): Promise<void> {
-        const { ctx, startedAt, upstreamUrl, headers, anthropicBodyText, upstreamBodyText } = args;
+        const { ctx, startedAt, upstreamUrl, headers, anthropicBodyText, upstreamBodyText, reasoningMode } = args;
         const transport = upstreamUrl.protocol === 'http:' ? http : https;
         const options: http.RequestOptions = {
             method: 'POST',
@@ -222,14 +226,14 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
                     return;
                 }
                 if (isStream) {
-                    this.handleStreamResponse(ctx, upstreamRes, upstreamBodyText, (body) => { responseBody = body; }, finish);
+                    this.handleStreamResponse(ctx, upstreamRes, upstreamBodyText, (body) => { responseBody = body; }, finish, reasoningMode);
                     return;
                 }
                 upstreamRes.on('data', (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))));
                 upstreamRes.on('end', () => {
                     const body = Buffer.concat(chunks).toString('utf-8');
                     upstreamResponseBody = body;
-                    responseBody = this.handleJsonResponse(ctx, upstreamRes.statusCode ?? 200, upstreamRes.headers, body);
+                    responseBody = this.handleJsonResponse(ctx, upstreamRes.statusCode ?? 200, upstreamRes.headers, body, reasoningMode);
                     finish();
                 });
                 upstreamRes.on('error', (err) => {
@@ -275,10 +279,11 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
         ctx: UpstreamRequestContext,
         statusCode: number,
         headers: Record<string, string | string[] | undefined>,
-        body: string
+        body: string,
+        reasoningMode: ModelReasoningMode
     ): string {
         try {
-            const converted = convertOpenAIChatJsonToAnthropic(JSON.parse(body) as unknown);
+            const converted = convertOpenAIChatJsonToAnthropic(JSON.parse(body) as unknown, reasoningMode);
             const anthropicBody = JSON.stringify(converted.body);
             const intercepted = this.taskDeps
                 ? interceptAnthropicResponse(anthropicBody, 'application/json', this.toInterceptorDeps())
@@ -306,18 +311,20 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
      * @param upstreamBodyText 上游请求体文本，仅用于签名保持与调试上下文。
      * @param captureBody 捕获转换后响应体的回调。
      * @param resolve 完成回调。
+     * @param reasoningMode 模型级思考策略，透传给转换器决定是否合成 thinking block。
      */
     private handleStreamResponse(
         ctx: UpstreamRequestContext,
         upstreamRes: http.IncomingMessage,
         upstreamBodyText: string,
         captureBody: (body: string) => void,
-        resolve: () => void
+        resolve: () => void,
+        reasoningMode: ModelReasoningMode
     ): void {
         void upstreamBodyText;
         ctx.res.statusCode = upstreamRes.statusCode ?? 200;
         this.copyResponseHeaders(ctx.res, upstreamRes.headers, 'text/event-stream; charset=utf-8');
-        const converter = new OpenAIChatToAnthropicStreamConverter();
+        const converter = new OpenAIChatToAnthropicStreamConverter(reasoningMode);
         const interceptor = this.taskDeps ? new LlsTaskStreamingInterceptor(this.toInterceptorDeps()) : undefined;
         // 每次响应独立的 usage 抽取器，吃下行 Anthropic SSE。
         const usageReporter = new UsageReporter(this.usageSink);

@@ -47,6 +47,15 @@ export interface ExtraEnvVar {
  */
 export type ModelCacheMode = 'auto' | 'passthrough' | 'off';
 
+/**
+ * 模型级思考内容策略，决定跨协议转换时如何处理 thinking / reasoning。
+ *
+ * - `off`（缺省）：完全保持现状，请求侧不下发 reasoning 参数，响应侧丢弃上游 reasoning。
+ * - `passthrough`：请求侧把 Anthropic `thinking.budget_tokens` 映射为 OpenAI reasoning
+ *   参数；响应侧把上游 reasoning 合成为 Anthropic thinking block（无 signature，仅供展示）。
+ */
+export type ModelReasoningMode = 'off' | 'passthrough';
+
 /** 提供商下的单个模型配置。 */
 export interface ModelConfig {
     /** 请求上游时使用的模型 ID。 */
@@ -80,10 +89,6 @@ export interface ModelConfig {
      * 兼容旧数据：未显式设置时由 `ConfigManager.normalizeModel()` 补齐为 `true`。
      */
     enabled?: boolean;
-    /** 是否转换 reasoning/think 内容。 */
-    transformThink?: boolean;
-    /** 是否保留 reasoning_content 字段。 */
-    preserveReasoningContent?: boolean;
     /**
      * Anthropic → OpenAI 转换时的缓存断点处理策略。
      *
@@ -99,6 +104,18 @@ export interface ModelConfig {
      * 兼容旧数据：未显式设置时由 `ConfigManager.normalizeModel()` 补齐为 `'auto'`。
      */
     cacheMode?: ModelCacheMode;
+    /**
+     * 思考内容处理策略。
+     *
+     * - `off`（缺省）：完全保持现状，请求侧不下发 reasoning 参数，响应侧丢弃
+     *   上游 reasoning，转换器输出与未启用本特性时逐字节相同。
+     * - `passthrough`：请求侧把 Anthropic `thinking.budget_tokens` 映射为
+     *   OpenAI `reasoning_effort`；响应侧把 `delta.reasoning_content` 合成为
+     *   Anthropic thinking block（无 signature，仅供展示）。
+     *
+     * 兼容旧数据：未显式设置时由 `ConfigManager.normalizeModel()` 补齐为 `'off'`。
+     */
+    reasoningMode?: ModelReasoningMode;
 }
 
 /** 不含密钥的提供商持久化配置。 */

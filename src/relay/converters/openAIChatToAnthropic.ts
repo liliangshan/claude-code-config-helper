@@ -4,11 +4,13 @@
  * 本模块只处理 JSON 非流式响应；SSE 流式转换由后续状态机模块实现。
  */
 
+import type { ModelReasoningMode } from '../../types';
 import type { ConversionWarning } from './anthropicToOpenAIChat';
 
 /** Anthropic content block。 */
 type AnthropicContentBlock =
     | { type: 'text'; text: string }
+    | { type: 'thinking'; thinking: string }
     | { type: 'tool_use'; id: string; name: string; input: unknown };
 
 /** Anthropic Messages 非流式响应体。 */
@@ -78,6 +80,10 @@ interface OpenAIChatToAnthropicState {
     currentTextIndex?: number;
     /** 文本 block 是否打开。 */
     textBlockOpen: boolean;
+    /** 当前 thinking content block index。 */
+    currentThinkingIndex?: number;
+    /** thinking block 是否打开。 */
+    thinkingBlockOpen: boolean;
     /** OpenAI tool_calls[].index -> ToolCallStreamState。 */
     toolCalls: Map<number, ToolCallStreamState>;
     /** 下一个可用 Anthropic content block index。 */
@@ -110,12 +116,19 @@ export class OpenAIChatToAnthropicStreamConverter {
         model: '',
         messageStartEmitted: false,
         textBlockOpen: false,
+        thinkingBlockOpen: false,
         toolCalls: new Map<number, ToolCallStreamState>(),
         nextBlockIndex: 0,
         promptTokens: 0,
         completionTokens: 0,
         finished: false
     };
+
+    /**
+     * @param reasoningMode 模型级思考策略；仅 'passthrough' 时才把上游 reasoning
+     *                      合成为 Anthropic thinking block。缺省 'off' 保持既有行为。
+     */
+    constructor(private readonly reasoningMode: ModelReasoningMode = 'off') {}
 
     /** 转换 warning。 */
     private readonly warnings: ConversionWarning[] = [];
@@ -207,6 +220,13 @@ export class OpenAIChatToAnthropicStreamConverter {
         const choice = Array.isArray(chunk.choices) && isRecord(chunk.choices[0]) ? chunk.choices[0] : undefined;
         if (!choice) return out;
         const delta = isRecord(choice.delta) ? choice.delta : {};
+        // passthrough 时读回上游 reasoning。分支必须在 content 之前：真实报文里
+        // reasoning 分片先于正文到达且不与正文交错。length > 0 是硬要求——
+        // 上游正文阶段的每个 chunk 也带 "reasoning_content":""，用 !== undefined
+        // 会反复开出空 thinking block。
+        if (this.reasoningMode === 'passthrough' && typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
+            out += this.emitThinkingDelta(delta.reasoning_content);
+        }
         if (typeof delta.content === 'string' && delta.content.length > 0) {
             out += this.emitTextDelta(delta.content);
         }
@@ -218,6 +238,8 @@ export class OpenAIChatToAnthropicStreamConverter {
             // 收尾只关闭 content block，不发 message_delta：多数上游把 usage 放在
             // finish_reason 之后的独立 chunk 里，提前收尾会让那份 usage 永远发不出去。
             if (choice.finish_reason !== null) {
+                // thinking 先关：覆盖「只有思考、没有正文」的退化流。
+                out += this.closeThinkingBlockIfOpen();
                 out += this.closeTextBlockIfOpen();
                 out += this.closeAllToolBlocks();
             }
@@ -278,7 +300,8 @@ export class OpenAIChatToAnthropicStreamConverter {
      * @returns Anthropic SSE 文本。
      */
     private emitTextDelta(text: string): string {
-        let out = '';
+        // 正文开始前必须先关闭 thinking block，保证块顺序为 thinking → text。
+        let out = this.closeThinkingBlockIfOpen();
         if (!this.state.textBlockOpen) {
             const index = this.state.nextBlockIndex++;
             this.state.currentTextIndex = index;
@@ -295,6 +318,51 @@ export class OpenAIChatToAnthropicStreamConverter {
             delta: { type: 'text_delta', text }
         });
         return out;
+    }
+
+    /**
+     * 输出 thinking block 增量，必要时先开启 thinking block。
+     *
+     * 上游 reasoning 分片先于正文到达且不与正文交错，故 thinking block 天然
+     * 占据 index 0，正文与工具块顺次后移，无需重排。
+     *
+     * 不发 signature_delta：OpenAI 侧不产出 Anthropic 服务端签名，合成的块
+     * 仅供展示，不参与多轮回传（回传时会被 anthropicProxy 的签名校验剥离）。
+     *
+     * @param text 非空 reasoning 文本分片。
+     * @returns Anthropic SSE 文本。
+     */
+    private emitThinkingDelta(text: string): string {
+        let out = '';
+        if (!this.state.thinkingBlockOpen) {
+            const index = this.state.nextBlockIndex++;
+            this.state.currentThinkingIndex = index;
+            this.state.thinkingBlockOpen = true;
+            out += formatAnthropicSse('content_block_start', {
+                type: 'content_block_start',
+                index,
+                content_block: { type: 'thinking', thinking: '' }
+            });
+        }
+        out += formatAnthropicSse('content_block_delta', {
+            type: 'content_block_delta',
+            index: this.state.currentThinkingIndex ?? 0,
+            delta: { type: 'thinking_delta', thinking: text }
+        });
+        return out;
+    }
+
+    /**
+     * 关闭当前 thinking 块。
+     *
+     * @returns Anthropic SSE 文本；未打开时为空串。
+     */
+    private closeThinkingBlockIfOpen(): string {
+        if (!this.state.thinkingBlockOpen || this.state.currentThinkingIndex === undefined) return '';
+        const index = this.state.currentThinkingIndex;
+        this.state.thinkingBlockOpen = false;
+        this.state.currentThinkingIndex = undefined;
+        return formatAnthropicSse('content_block_stop', { type: 'content_block_stop', index });
     }
 
     /**
@@ -347,7 +415,9 @@ export class OpenAIChatToAnthropicStreamConverter {
      */
     private maybeStartToolBlock(toolCall: ToolCallStreamState): string {
         if (toolCall.started || !toolCall.id || !toolCall.name) return '';
-        let out = this.closeTextBlockIfOpen();
+        // thinking → text → tool_use 顺序关闭，保证块 index 单调递增。
+        let out = this.closeThinkingBlockIfOpen();
+        out += this.closeTextBlockIfOpen();
         const index = this.state.nextBlockIndex++;
         toolCall.anthropicBlockIndex = index;
         toolCall.started = true;
@@ -410,7 +480,8 @@ export class OpenAIChatToAnthropicStreamConverter {
      */
     private finishIfNeeded(): string {
         if (this.state.finished) return '';
-        let out = this.closeTextBlockIfOpen();
+        let out = this.closeThinkingBlockIfOpen();
+        out += this.closeTextBlockIfOpen();
         out += this.closeAllToolBlocks();
         const stopReason = mapFinishReason(
             this.state.finishReason,
@@ -470,14 +541,23 @@ function readToolArgumentsDelta(value: unknown): string {
  * 将 OpenAI Chat Completions 非流式 JSON 转为 Anthropic Messages JSON。
  *
  * @param json OpenAI Chat completion JSON。
+ * @param reasoningMode 模型级思考策略；'passthrough' 时把 message.reasoning_content
+ *                      合成为 thinking block 置于 content 最前。缺省 'off' 保持既有行为。
  * @returns Anthropic 响应体与 warning 列表。
  */
-export function convertOpenAIChatJsonToAnthropic(json: unknown): OpenAIChatToAnthropicJsonResult {
+export function convertOpenAIChatJsonToAnthropic(
+    json: unknown,
+    reasoningMode: ModelReasoningMode = 'off'
+): OpenAIChatToAnthropicJsonResult {
     const source = isRecord(json) ? json : {};
     const warnings: ConversionWarning[] = [];
     const choice = Array.isArray(source.choices) && isRecord(source.choices[0]) ? source.choices[0] : {};
     const message = isRecord(choice.message) ? choice.message : {};
     const content: AnthropicContentBlock[] = [];
+    // thinking 放在正文之前，与流式路径的块顺序保持一致。
+    if (reasoningMode === 'passthrough' && typeof message.reasoning_content === 'string' && message.reasoning_content.length > 0) {
+        content.push({ type: 'thinking', thinking: message.reasoning_content });
+    }
     if (typeof message.content === 'string' && message.content.length > 0) {
         content.push({ type: 'text', text: message.content });
     }

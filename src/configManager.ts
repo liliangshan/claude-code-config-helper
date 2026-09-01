@@ -572,9 +572,8 @@ export class ConfigManager implements vscode.Disposable {
             samplingMode: model.samplingMode || 'temperature',
             isUserSelectable: model.isUserSelectable !== false,
             enabled: model.enabled !== false,
-            transformThink: !!model.transformThink,
-            preserveReasoningContent: !!model.preserveReasoningContent,
-            cacheMode: model.cacheMode === 'passthrough' || model.cacheMode === 'off' ? model.cacheMode : 'auto'
+            cacheMode: model.cacheMode === 'passthrough' || model.cacheMode === 'off' ? model.cacheMode : 'auto',
+            reasoningMode: model.reasoningMode === 'passthrough' ? 'passthrough' : 'off'
         };
     }
 

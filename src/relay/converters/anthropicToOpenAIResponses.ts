@@ -5,7 +5,9 @@
  * 输入应当是已经完成 model 重写与 LLS 任务流注入的 Anthropic 请求体对象。
  */
 
-import type { ModelCacheMode } from '../../types';
+import type { ModelCacheMode, ModelReasoningMode } from '../../types';
+import { readThinkingEffort } from './reasoningEffort';
+import type { ReasoningEffort } from './reasoningEffort';
 
 /** Anthropic 消息角色。 */
 type AnthropicRole = 'user' | 'assistant';
@@ -63,6 +65,8 @@ export interface OpenAIResponsesRequestBody {
     metadata?: Record<string, unknown>;
     /** OpenAI user 字段，由 metadata.user_id 映射而来。 */
     user?: string;
+    /** Responses reasoning 参数；passthrough 模式下由 Anthropic thinking 预算映射而来。 */
+    reasoning?: { effort: ReasoningEffort };
 }
 
 /** 转换 warning，用于记录不兼容内容的降级。 */
@@ -87,6 +91,8 @@ export interface AnthropicToOpenAIResponsesResult {
 export interface AnthropicConversionOptions {
     /** 模型级缓存策略；缺省按 `'auto'` 处理，即丢弃 `cache_control` 断点。 */
     cacheMode?: ModelCacheMode;
+    /** 模型级思考策略；缺省按 `'off'` 处理，即不下发任何 reasoning 参数。 */
+    reasoningMode?: ModelReasoningMode;
 }
 
 /**
@@ -124,6 +130,12 @@ export function convertAnthropicToOpenAIResponses(
     if (source.top_p !== undefined) body.top_p = source.top_p;
     if (source.max_tokens !== undefined) body.max_output_tokens = source.max_tokens;
     if (source.stream !== undefined) body.stream = source.stream;
+    // passthrough 时把 Anthropic 顶层 thinking.budget_tokens 映射为 Responses
+    // reasoning.effort；off 模式下该分支整体短路，输出不变。
+    if (options?.reasoningMode === 'passthrough') {
+        const effort = readThinkingEffort(source.thinking);
+        if (effort) body.reasoning = { effort };
+    }
     const metadata = convertMetadata(source.metadata, warnings);
     if (metadata) {
         body.metadata = metadata;

@@ -2721,7 +2721,11 @@
             return;
         }
         // 文本内容走 Markdown 渲染（参考项目方式）
-        appendText(container, segment.text || segment.sourceText || '');
+        // 带稳定 id 的文本段（思考块打字机）需要在 DOM 上留下 data-segment-id，
+        // patchMessage 才能按 id 原地替换而不是不断追加新块。加法式：现有文本段
+        // 不带 id，行为逐字节不变。
+        var textNode = appendText(container, segment.text || segment.sourceText || '');
+        if (textNode && segment.id) textNode.dataset.segmentId = segment.id;
     }
 
     /**

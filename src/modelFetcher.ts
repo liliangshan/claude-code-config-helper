@@ -169,9 +169,8 @@ function createDefaultModelConfig(modelId: string, label?: string): ModelConfig 
         topP: 1,
         samplingMode: 'temperature',
         isUserSelectable: true,
-        transformThink: false,
-        preserveReasoningContent: false,
-        cacheMode: 'auto'
+        cacheMode: 'auto',
+        reasoningMode: 'off'
     };
 }
 

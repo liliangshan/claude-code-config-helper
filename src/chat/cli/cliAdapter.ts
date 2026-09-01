@@ -1050,7 +1050,11 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     }
 
     /**
-     * 处理 thinking_delta：累积思考文本，以"> 💭 "前缀作为独立 markdown 段输出。
+     * 处理 thinking_delta：每次补写整块累积的思考文本，并带稳定 id，供 Webview
+     * 按 id 原地替换，呈现为单个逐字增长的引用块而非每片一个 blockquote。
+     *
+     * 绕开 parseDisplayText：该函数会把文本喂进增量解析器并累积 parserState，
+     * 重复投喂整块会污染解析状态。思考块是纯引用文本，直接产出 markdown segment。
      *
      * @param index content block index。
      * @param delta delta 子对象。
@@ -1061,9 +1065,11 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         if (!text) return { type: 'segments', segments: [], done: false };
         const block = this.ensureBlockState(index, 'thinking');
         block.text += text;
-        const formatted = this.formatThinkingChunk(text);
-        const parsed = this.parseDisplayText(formatted);
-        return parsed.type === 'segments' ? { ...parsed, done: false } : parsed;
+        return {
+            type: 'segments',
+            segments: [{ id: `thinking:${index}`, kind: 'markdown', text: this.formatThinkingBlock(block.text) }],
+            done: false
+        };
     }
 
     /**
@@ -1297,6 +1303,22 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         // 把内部换行转成行内空格，避免破坏引用块渲染（流式增量 thinking 段往往很短）
         const inlined = text.replace(/\r?\n/g, ' ');
         return `${THINKING_SEGMENT_PREFIX}${inlined}\n`;
+    }
+
+    /**
+     * 把整块思考文本格式化为 Markdown 引用块（打字机路径专用）。
+     *
+     * 与按片处理的 formatThinkingChunk 不同，本方法用于「每次补写整块累积文本」
+     * 的打字机路径：首行带 `> 💭 `，续行带 `> `，保证 Webview 的 renderMarkdown
+     * 把它们合并成单个 blockquote 而非每片一个引用块。
+     *
+     * @param text 已累积的完整思考文本。
+     * @returns 可直接作为 markdown segment 的引用块文本。
+     */
+    private formatThinkingBlock(text: string): string {
+        if (!text) return text;
+        const lines = text.split(/\r?\n/);
+        return lines.map((line, i) => (i === 0 ? `${THINKING_SEGMENT_PREFIX}${line}` : `> ${line}`)).join('\n');
     }
 
     /**
