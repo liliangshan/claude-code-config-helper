@@ -50,9 +50,9 @@ export type ModelCacheMode = 'auto' | 'passthrough' | 'off';
 /**
  * 模型级思考内容策略，决定跨协议转换时如何处理 thinking / reasoning。
  *
- * - `off`（缺省）：完全保持现状，请求侧不下发 reasoning 参数，响应侧丢弃上游 reasoning。
- * - `passthrough`：请求侧把 Anthropic `thinking.budget_tokens` 映射为 OpenAI reasoning
+ * - `passthrough`（缺省）：请求侧把 Anthropic `thinking.budget_tokens` 映射为 OpenAI reasoning
  *   参数；响应侧把上游 reasoning 合成为 Anthropic thinking block（无 signature，仅供展示）。
+ * - `off`：完全关闭，请求侧不下发 reasoning 参数，响应侧丢弃上游 reasoning。
  */
 export type ModelReasoningMode = 'off' | 'passthrough';
 
@@ -107,13 +107,13 @@ export interface ModelConfig {
     /**
      * 思考内容处理策略。
      *
-     * - `off`（缺省）：完全保持现状，请求侧不下发 reasoning 参数，响应侧丢弃
-     *   上游 reasoning，转换器输出与未启用本特性时逐字节相同。
-     * - `passthrough`：请求侧把 Anthropic `thinking.budget_tokens` 映射为
+     * - `passthrough`（缺省）：请求侧把 Anthropic `thinking.budget_tokens` 映射为
      *   OpenAI `reasoning_effort`；响应侧把 `delta.reasoning_content` 合成为
      *   Anthropic thinking block（无 signature，仅供展示）。
+     * - `off`：完全关闭，请求侧不下发 reasoning 参数，响应侧丢弃上游 reasoning，
+     *   转换器输出与未启用本特性时逐字节相同。
      *
-     * 兼容旧数据：未显式设置时由 `ConfigManager.normalizeModel()` 补齐为 `'off'`。
+     * 兼容旧数据：未显式设置时由 `ConfigManager.normalizeModel()` 补齐为 `'passthrough'`。
      */
     reasoningMode?: ModelReasoningMode;
 }

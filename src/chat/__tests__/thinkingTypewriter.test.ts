@@ -99,6 +99,17 @@ test('打字机：多行思考首行带 > 💭 前缀、续行仅带 > 前缀', 
     assert.equal(seg.text, '> 💭 第一行\n> 第二行');
 });
 
+test('打字机：思考文本中的空行输出裸 > 且不带尾空格', () => {
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    const seg = feedThinking(adapter, '第一段\n\n第二段');
+    adapter.dispose();
+
+    assert.ok(seg);
+    // 空行必须是裸 ">"：带尾空格的 "> " 会被 Webview 的 trim 还原成 ">"，
+    // 两端不一致会导致空行把思考块劈成两个 blockquote。
+    assert.equal(seg.text, '> 💭 第一段\n>\n> 第二段');
+});
+
 test('打字机：空 thinking 分片不产出 segment', () => {
     const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
     const seg = feedThinking(adapter, '');
@@ -115,4 +126,102 @@ test('打字机：不同 block index 使用不同的稳定 id', () => {
 
     assert.equal(a?.id, 'thinking:0');
     assert.equal(b?.id, 'thinking:2');
+});
+
+/** 喂一条顶层 SDK assistant 聚合事件，返回全部产出的 segment。 */
+function feedAssistantMessage(
+    adapter: InstanceType<typeof StreamJsonCliAdapter>,
+    messageId: string,
+    text: string
+): unknown[] {
+    const line = JSON.stringify({
+        type: 'assistant',
+        message: { id: messageId, content: [{ type: 'text', text }] }
+    });
+    const events = adapter.parseOutput({ source: 'stdout', text: line + '\n', receivedAt: Date.now() });
+    const segments: unknown[] = [];
+    for (const ev of events) {
+        if (ev.type === 'segments') segments.push(...ev.segments);
+    }
+    return segments;
+}
+
+test('去重：流式渲染过的 message 再收到聚合 assistant 事件时被跳过', () => {
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    feedStreamEvent(adapter, { type: 'message_start', message: { id: 'msg_1' } });
+    feedStreamEvent(adapter, {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: '正文内容\n' }
+    });
+    const segments = feedAssistantMessage(adapter, 'msg_1', '正文内容');
+    adapter.dispose();
+
+    assert.deepEqual(segments, []);
+});
+
+test('去重：未走过流式增量的聚合 assistant 事件仍正常渲染', () => {
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    const segments = feedAssistantMessage(adapter, 'msg_2', '只有聚合事件');
+    adapter.dispose();
+
+    assert.ok(segments.length > 0, '无流式前缀时聚合事件必须照常渲染');
+});
+
+/** 喂一个 text_delta 分片，返回本次产出的全部 segment。 */
+function feedText(
+    adapter: InstanceType<typeof StreamJsonCliAdapter>,
+    text: string,
+    index = 0
+): { kind?: string; text?: string }[] {
+    const events = feedStreamEvent(adapter, {
+        type: 'content_block_delta',
+        index,
+        delta: { type: 'text_delta', text }
+    });
+    const segments: { kind?: string; text?: string }[] = [];
+    for (const ev of events) {
+        if (ev.type === 'segments') segments.push(...(ev.segments as { kind?: string; text?: string }[]));
+    }
+    return segments;
+}
+
+test('正文：不含换行的分片被缓冲，不再逐字产出独立 segment', () => {
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    feedStreamEvent(adapter, { type: 'message_start', message: { id: 'msg_t1' } });
+    const a = feedText(adapter, 'AI');
+    const b = feedText(adapter, '被');
+    const c = feedText(adapter, '设定');
+    adapter.dispose();
+
+    assert.deepEqual(a, [], '半行分片不应立即产出 segment');
+    assert.deepEqual(b, []);
+    assert.deepEqual(c, []);
+});
+
+test('正文：整行完成时按行产出合并后的文本', () => {
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    feedStreamEvent(adapter, { type: 'message_start', message: { id: 'msg_t2' } });
+    feedText(adapter, 'AI');
+    feedText(adapter, '被设定');
+    const segments = feedText(adapter, '为永远诚实\n');
+    adapter.dispose();
+
+    const merged = segments.map((s) => s.text).join('');
+    assert.ok(merged.includes('AI被设定为永远诚实'), `应合并为整行，实际：${merged}`);
+});
+
+test('正文：content_block_stop 会 flush 末尾未换行的半行', () => {
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    feedStreamEvent(adapter, { type: 'message_start', message: { id: 'msg_t3' } });
+    feedText(adapter, '没有换行的结尾');
+    const events = feedStreamEvent(adapter, { type: 'content_block_stop', index: 0 });
+    adapter.dispose();
+
+    const segments: { text?: string }[] = [];
+    for (const ev of events) {
+        if (ev.type === 'segments') segments.push(...(ev.segments as { text?: string }[]));
+    }
+    const merged = segments.map((s) => s.text).join('');
+    assert.ok(merged.includes('没有换行的结尾'), `末行必须被 flush，实际：${merged}`);
 });

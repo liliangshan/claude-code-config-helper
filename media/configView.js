@@ -1203,9 +1203,9 @@
                         </select></div>
                         <div class="field full"><label>${t('reasoningMode')}</label><select id="model-reasoning-mode">
                             ${[
-                                ['off', t('reasoningModeOff')],
-                                ['passthrough', t('reasoningModePassthrough')]
-                            ].map(([value, label]) => `<option value="${value}" ${(model.reasoningMode || 'off') === value ? 'selected' : ''}>${text(label)}</option>`).join('')}
+                                ['passthrough', t('reasoningModePassthrough')],
+                                ['off', t('reasoningModeOff')]
+                            ].map(([value, label]) => `<option value="${value}" ${(model.reasoningMode || 'passthrough') === value ? 'selected' : ''}>${text(label)}</option>`).join('')}
                         </select></div>
                     </div>
                     <div class="modal-footer">
@@ -1399,7 +1399,7 @@
         model.vision = document.getElementById('model-vision').checked;
         model.toolCalling = document.getElementById('model-tool').checked;
         model.cacheMode = document.getElementById('model-cache-mode').value || 'auto';
-        model.reasoningMode = document.getElementById('model-reasoning-mode').value || 'off';
+        model.reasoningMode = document.getElementById('model-reasoning-mode').value || 'passthrough';
         if (!existing) target.models.push(model);
         target.updatedAt = Date.now();
         modalState = null;
@@ -1499,7 +1499,7 @@
             isUserSelectable: true,
             enabled: true,
             cacheMode: 'auto',
-            reasoningMode: 'off'
+            reasoningMode: 'passthrough'
         };
     }
 

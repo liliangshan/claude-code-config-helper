@@ -573,7 +573,8 @@ export class ConfigManager implements vscode.Disposable {
             isUserSelectable: model.isUserSelectable !== false,
             enabled: model.enabled !== false,
             cacheMode: model.cacheMode === 'passthrough' || model.cacheMode === 'off' ? model.cacheMode : 'auto',
-            reasoningMode: model.reasoningMode === 'passthrough' ? 'passthrough' : 'off'
+            // 缺省即开启：思考内容默认透传，只有显式选择 off 才关闭。
+            reasoningMode: model.reasoningMode === 'off' ? 'off' : 'passthrough'
         };
     }
 

@@ -348,12 +348,25 @@ export class CliProcess implements vscode.Disposable {
      * 默认 `acceptEdits` 用于让 Edit/Write/Read 类工具在非交互模式下自动放行；
      * 若用户已在 `cliArgs` 中显式指定权限模式，则尊重用户配置不再追加，避免重复参数。
      *
+     * `--include-partial-messages` 用于让 CLI 输出 `content_block_delta` 增量事件；
+     * 不带该参数时 CLI 只在整条消息生成完毕后发一次聚合 assistant 事件，正文与
+     * 思考块都会「一次性全出来」而非逐字呈现。
+     *
      * @param cliArgs 用户附加参数。
      * @param resumeSessionId 需要恢复的 Claude CLI session_id。
      * @returns spawn 参数数组。
      */
     private buildStreamJsonArgs(cliArgs: string[], resumeSessionId?: string): string[] {
-        const args = ['--print', '--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json', ...cliArgs];
+        const args = [
+            '--print',
+            '--output-format',
+            'stream-json',
+            '--verbose',
+            '--include-partial-messages',
+            '--input-format',
+            'stream-json',
+            ...cliArgs
+        ];
         if (this.currentConfig?.model && !this.hasModelArgument(args)) args.push('--model', this.currentConfig.model);
         const permissionMode = this.currentConfig?.permissionMode;
         if (permissionMode === 'bypassPermissions') {

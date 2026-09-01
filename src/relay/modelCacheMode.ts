@@ -21,10 +21,13 @@ export function resolveModelCacheMode(provider: ProviderConfig, modelId: string)
 /**
  * 读取指定模型的思考内容策略。
  *
+ * 未配置时默认 `'passthrough'`：思考内容对用户有价值，应开箱即用；
+ * 只有用户在配置页显式选择「关闭」才会得到 `'off'`。
+ *
  * @param provider 目标提供商配置。
  * @param modelId 已剥离前缀的模型 ID。
- * @returns 模型上配置的思考策略；模型不存在或未配置时回落 `'off'`。
+ * @returns 模型上配置的思考策略；模型不存在或未配置时回落 `'passthrough'`。
  */
 export function resolveReasoningMode(provider: ProviderConfig, modelId: string): ModelReasoningMode {
-    return provider.models.find((item) => item.modelId === modelId)?.reasoningMode ?? 'off';
+    return provider.models.find((item) => item.modelId === modelId)?.reasoningMode ?? 'passthrough';
 }

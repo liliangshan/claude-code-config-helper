@@ -170,7 +170,7 @@ function createDefaultModelConfig(modelId: string, label?: string): ModelConfig 
         samplingMode: 'temperature',
         isUserSelectable: true,
         cacheMode: 'auto',
-        reasoningMode: 'off'
+        reasoningMode: 'passthrough'
     };
 }
 

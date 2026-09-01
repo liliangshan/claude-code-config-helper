@@ -221,6 +221,14 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     /** 最近累计的 assistant 可见文本，用于最终 result 兜底去重。 */
     private recentAssistantText = '';
 
+    /**
+     * 已经通过流式 delta 渲染过的 assistant message id 集合。
+     *
+     * 启用 `--include-partial-messages` 后，CLI 会先发 `content_block_delta` 增量，
+     * 再补发一条内容完全相同的聚合 `assistant` 事件；不去重会导致正文与思考各渲染两遍。
+     */
+    private readonly streamedMessageIds = new Set<string>();
+
     /** tool_use_id → 工具卡片 segment 引用，便于 tool_result 回填。 */
     private readonly toolSegmentById = new Map<string, ChatSegment>();
 
@@ -287,6 +295,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     public async sendUserMessage(text: string): Promise<void> {
         this.hasEmittedAssistantContent = false;
         this.recentAssistantText = '';
+        this.streamedMessageIds.clear();
         const jsonLine = JSON.stringify(this.buildUserMessageLine(text));
         this.process.send(jsonLine);
     }
@@ -868,8 +877,10 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
             case 'message_start':
                 return this.handleMessageStart(event);
             case 'content_block_start':
+                this.markCurrentMessageStreamed();
                 return this.handleContentBlockStart(event);
             case 'content_block_delta':
+                this.markCurrentMessageStreamed();
                 return this.handleContentBlockDelta(event);
             case 'content_block_stop':
                 return this.handleContentBlockStop(event);
@@ -937,6 +948,27 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
                 : '';
         this.currentMessage = { messageId, blocks: new Map() };
         return { type: 'segments', segments: [], done: false };
+    }
+
+    /**
+     * 标记当前 message 已经走过流式增量渲染。
+     *
+     * 供后续聚合 `assistant` 事件判断是否需要跳过，避免同一内容渲染两遍。
+     */
+    private markCurrentMessageStreamed(): void {
+        const messageId = this.currentMessage?.messageId;
+        if (messageId) this.streamedMessageIds.add(messageId);
+    }
+
+    /**
+     * 判断聚合 `assistant` 事件是否已被流式增量渲染过。
+     *
+     * @param message SDK 包装事件中的 message 对象。
+     * @returns 已流式渲染过时返回 true，调用方应跳过整条聚合事件。
+     */
+    private isAlreadyStreamedMessage(message: Record<string, unknown>): boolean {
+        const messageId = typeof message.id === 'string' ? message.id : '';
+        return messageId.length > 0 && this.streamedMessageIds.has(messageId);
     }
 
     /**
@@ -1122,6 +1154,14 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         const index = this.extractBlockIndex(event);
         const block = this.currentMessage?.blocks.get(index);
         if (!block) return { type: 'segments', segments: [], done: false };
+
+        // 文本块流式解析按整行产出，最后一行若没有换行符会滞留在 pendingLine 中；
+        // 块结束时必须强制 flush，否则末行在聊天区缺失。
+        if (block.type === 'text') {
+            const tailSegments = flushParser(this.parserState);
+            if (tailSegments.length > 0) this.hasEmittedAssistantContent = true;
+            return { type: 'segments', segments: tailSegments, done: false };
+        }
 
         if (block.type === 'tool_use' && block.toolUseId) {
             if (this.isHiddenChatToolName(block.toolName)) return { type: 'segments', segments: [], done: false };
@@ -1312,13 +1352,21 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      * 的打字机路径：首行带 `> 💭 `，续行带 `> `，保证 Webview 的 renderMarkdown
      * 把它们合并成单个 blockquote 而非每片一个引用块。
      *
+     * 空行输出裸 `>` 而非 `"> "`：Webview 渲染前会对每行 trim，带尾空格的 `"> "`
+     * 会被还原成 `>`，两端保持一致可避免空行把思考块劈成多个 blockquote。
+     *
      * @param text 已累积的完整思考文本。
      * @returns 可直接作为 markdown segment 的引用块文本。
      */
     private formatThinkingBlock(text: string): string {
         if (!text) return text;
         const lines = text.split(/\r?\n/);
-        return lines.map((line, i) => (i === 0 ? `${THINKING_SEGMENT_PREFIX}${line}` : `> ${line}`)).join('\n');
+        return lines
+            .map((line, i) => {
+                const prefix = i === 0 ? THINKING_SEGMENT_PREFIX : '> ';
+                return line ? `${prefix}${line}` : prefix.trimEnd();
+            })
+            .join('\n');
     }
 
     /**
@@ -1422,6 +1470,12 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         if (type !== 'assistant' && type !== 'user') return undefined;
         const message = record.message;
         if (!message || typeof message !== 'object') return undefined;
+
+        // 启用 --include-partial-messages 后，CLI 会在流式增量之后补发同 id 的聚合
+        // assistant 事件；此处直接跳过，避免正文与思考块重复渲染。
+        if (type === 'assistant' && this.isAlreadyStreamedMessage(message as Record<string, unknown>)) {
+            return { type: 'segments', segments: [], done: false };
+        }
 
         const content = (message as Record<string, unknown>).content;
         if (!Array.isArray(content)) return undefined;
@@ -2053,9 +2107,6 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
             return { type: 'segments', segments: stripped.systemSegments, done: false };
         }
         this.rememberAssistantText(text);
-        if (!text.includes('\n')) {
-            return { type: 'segments', segments: [...stripped.systemSegments, { kind: 'markdown', text }] };
-        }
         const parsed = parseChunk(this.parserState, { source: 'stdout', text });
         this.parserState = parsed.state;
         const segments = [...stripped.systemSegments, ...parsed.segments];

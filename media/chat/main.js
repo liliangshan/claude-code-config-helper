@@ -2241,6 +2241,28 @@
     }
 
     /**
+     * 判断一行是否为 Markdown 引用行。
+     *
+     * 同时接受 "> 内容" 与表示空引用行的裸 ">"。
+     *
+     * @param {string} trimmedLine 已 trim 的行文本。
+     * @returns {boolean} 是引用行时返回 true。
+     */
+    function isQuoteLine(trimmedLine) {
+        return trimmedLine === '>' || trimmedLine.startsWith('> ');
+    }
+
+    /**
+     * 去掉引用行的 ">" 标记，返回其内容。
+     *
+     * @param {string} trimmedLine 已 trim 的引用行文本。
+     * @returns {string} 去掉标记后的内容；裸 ">" 返回空串。
+     */
+    function stripQuoteMarker(trimmedLine) {
+        return trimmedLine === '>' ? '' : trimmedLine.substring(2);
+    }
+
+    /**
      * 参考项目风格的 Markdown 渲染器。
      * 将 Markdown 文本解析为 DOM 节点并追加到容器中，使用参考项目的 CSS 类名。
      *
@@ -2416,15 +2438,15 @@
             }
 
             // 引用块
-            if (trimmed.startsWith('> ')) {
+            // 思考块的空行会产出裸 ">"（"> " 经 trim 后丢掉尾空格），必须与 "> xxx"
+            // 一并视为引用行，否则空行会把同一个思考块劈成两个 blockquote。
+            if (isQuoteLine(trimmed)) {
                 closeLists(0);
                 var blockquote = document.createElement('blockquote');
-                var quoteContent = trimmed.substring(2);
-                // 收集所有连续引用行
-                var quoteLines = [quoteContent];
+                var quoteLines = [stripQuoteMarker(trimmed)];
                 i++;
-                while (i < lines.length && lines[i].trim().startsWith('> ')) {
-                    quoteLines.push(lines[i].trim().substring(2));
+                while (i < lines.length && isQuoteLine(lines[i].trim())) {
+                    quoteLines.push(stripQuoteMarker(lines[i].trim()));
                     i++;
                 }
                 var bp = document.createElement('p');

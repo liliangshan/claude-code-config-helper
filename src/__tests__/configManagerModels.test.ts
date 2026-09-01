@@ -141,26 +141,26 @@ test('replaceProviderModels: 本地 passthrough 设置不会被上游默认值�
     assert.equal(manager.getProvider('p1')?.models[0].cacheMode, 'passthrough');
 });
 
-test('normalizeModel: 旧数据缺少 reasoningMode 时补齐为 off', async () => {
+test('normalizeModel: 旧数据缺少 reasoningMode 时补齐为 passthrough', async () => {
     const manager = makeManager([makeModel('legacy')]);
 
     await manager.replaceProviderModels('p1', [makeModel('legacy')]);
 
-    assert.equal(manager.getProvider('p1')?.models[0].reasoningMode, 'off');
+    assert.equal(manager.getProvider('p1')?.models[0].reasoningMode, 'passthrough');
 });
 
-test('normalizeModel: 非法 reasoningMode 归一为 off', async () => {
+test('normalizeModel: 非法 reasoningMode 归一为 passthrough', async () => {
     const manager = makeManager([makeModel('weird', { reasoningMode: 'auto' as ModelConfig['reasoningMode'] })]);
 
     await manager.replaceProviderModels('p1', [makeModel('weird')]);
 
-    assert.equal(manager.getProvider('p1')?.models[0].reasoningMode, 'off');
+    assert.equal(manager.getProvider('p1')?.models[0].reasoningMode, 'passthrough');
 });
 
-test('replaceProviderModels: 本地 reasoningMode=passthrough 不会被上游默认值覆盖', async () => {
-    const manager = makeManager([makeModel('gpt-r', { reasoningMode: 'passthrough' })]);
+test('replaceProviderModels: 本地 reasoningMode=off 不会被默认值覆盖', async () => {
+    const manager = makeManager([makeModel('gpt-r', { reasoningMode: 'off' })]);
 
     await manager.replaceProviderModels('p1', [makeModel('gpt-r')]);
 
-    assert.equal(manager.getProvider('p1')?.models[0].reasoningMode, 'passthrough');
+    assert.equal(manager.getProvider('p1')?.models[0].reasoningMode, 'off');
 });
