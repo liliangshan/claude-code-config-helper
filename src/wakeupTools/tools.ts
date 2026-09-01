@@ -1,5 +1,7 @@
 /** @file 定时唤醒 MCP 工具常量与 schema。 */
 
+import { createToolNameGuard, type McpToolSchema } from '../mcpKit/types';
+
 /** 定时唤醒 MCP server 在 Claude CLI mcpServers 注册时使用的 server 名。 */
 export const WAKEUP_MCP_SERVER_NAME = 'llsccaiWakeup' as const;
 
@@ -12,23 +14,6 @@ export type WakeupToolName =
     | 'lls-ccai-list-wakeups'
     | 'lls-ccai-cancel-wakeup';
 
-/** MCP tools/list 返回的单个工具 schema。 */
-export interface WakeupToolSchema {
-    /** 工具裸名。 */
-    name: WakeupToolName;
-    /** 工具描述。 */
-    description: string;
-    /** JSON Schema 输入描述。 */
-    inputSchema: {
-        /** schema 根类型。 */
-        type: 'object';
-        /** 输入字段定义。 */
-        properties: Record<string, unknown>;
-        /** 必填字段列表。 */
-        required: string[];
-    };
-}
-
 /**
  * tools/list 返回的工具定义全集。
  *
@@ -36,7 +21,7 @@ export interface WakeupToolSchema {
  * 只把 `prompt` 写进 required：JSON Schema 的 oneOf / anyOf 在不同 provider
  * 的工具转换里支持程度不一，统一放到 WakeupHost 做运行时校验更稳。
  */
-export const WAKEUP_TOOL_SCHEMAS: readonly WakeupToolSchema[] = [
+export const WAKEUP_TOOL_SCHEMAS: readonly McpToolSchema<WakeupToolName>[] = [
     {
         name: 'lls-ccai-schedule-wakeup',
         description:
@@ -93,15 +78,10 @@ export const WAKEUP_TOOL_SCHEMAS: readonly WakeupToolSchema[] = [
     }
 ] as const;
 
-/** 定时唤醒工具名集合，用于校验 tools/call 入参。 */
-const WAKEUP_TOOL_NAMES = new Set<WakeupToolName>(WAKEUP_TOOL_SCHEMAS.map((tool) => tool.name));
-
 /**
  * 判断输入是否为受支持的定时唤醒工具名。
  *
  * @param value 待校验值（通常来自 tools/call 或 HTTP bridge 的入参）。
  * @returns 是合法工具名时返回 true 并收窄类型。
  */
-export function isWakeupToolName(value: unknown): value is WakeupToolName {
-    return typeof value === 'string' && WAKEUP_TOOL_NAMES.has(value as WakeupToolName);
-}
+export const isWakeupToolName = createToolNameGuard(WAKEUP_TOOL_SCHEMAS);

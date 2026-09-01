@@ -26,12 +26,10 @@ import {
 import { ConfigManager } from '../../configManager';
 import { readCompactionConfigFromVscode, readExpertConfigFromVscode, readPlanConfigFromVscode, readReviewConfigFromVscode } from '../../expertMode/expertConfig';
 import { ASK_EXPERT_MCP_SERVER_NAME } from '../../expertMode/askExpertMcpServer';
-import { BROWSER_MCP_SERVER_NAME } from '../../browserTools/tools';
-import { BROWSER_TOOL_RELAY_PORT_ENV } from '../../browserTools/httpBridge';
-import { VSCODE_MCP_SERVER_NAME } from '../../vscodeTools/tools';
-import { VSCODE_TOOL_RELAY_PORT_ENV } from '../../vscodeTools/httpBridge';
-import { WAKEUP_MCP_SERVER_NAME } from '../../wakeupTools/tools';
-import { WAKEUP_TOOL_RELAY_PORT_ENV } from '../../wakeupTools/httpBridge';
+import { BROWSER_BRIDGE } from '../../browserTools/bridge';
+import { VSCODE_BRIDGE } from '../../vscodeTools/bridge';
+import { WAKEUP_BRIDGE } from '../../wakeupTools/bridge';
+import type { McpBridgeDescriptor } from '../../mcpKit/registry';
 import {
     loadAllVscodeMcpJsons,
     mergeMcpServers,
@@ -305,18 +303,14 @@ export class ChatCliConfigService {
         const browserToolsEnabled = config.get<boolean>(CHAT_BROWSER_TOOLS_ENABLED_KEY, true) !== false
             && vscode.env.uiKind === vscode.UIKind.Desktop;
         const vscodeToolsGetErrorsEnabled = config.get<boolean>(VSCODE_TOOLS_GET_ERRORS_ENABLED_KEY, true) !== false;
-        const finalMcpServers = injectWakeupMcpServer(
-            injectVscodeMcpServer(
-                injectBrowserMcpServer(
-                    stripExpertServerFromMcp(mergedMcpServers),
-                    browserToolsEnabled,
-                    undefined
-                ),
-                vscodeToolsGetErrorsEnabled,
-                undefined
-            ),
-            true,
-            undefined
+        const builtinMcpEnabled: ReadonlyArray<[McpBridgeDescriptor, boolean]> = [
+            [BROWSER_BRIDGE, browserToolsEnabled],
+            [VSCODE_BRIDGE, vscodeToolsGetErrorsEnabled],
+            [WAKEUP_BRIDGE, true]
+        ];
+        const finalMcpServers = builtinMcpEnabled.reduce<ChatCliConfig['mcpServers']>(
+            (servers, [descriptor, enabled]) => injectBuiltinMcpServer(servers, descriptor, enabled, undefined),
+            stripExpertServerFromMcp(mergedMcpServers)
         );
         return {
             enabled: config.get<boolean>(CHAT_ENABLED_KEY, false),
@@ -384,20 +378,20 @@ export class ChatCliConfigService {
         const planSuffix = planAvailable
             ? DISPATCHER_PLAN_ROUTING_PRIORITY + '\n' + DISPATCHER_PLAN_REVIEW_PROMPT
             : '';
-        const browserToolsEnabled = baseConfig.mcpServers?.[BROWSER_MCP_SERVER_NAME] !== undefined;
-        const vscodeToolsGetErrorsEnabled = baseConfig.mcpServers?.[VSCODE_MCP_SERVER_NAME] !== undefined;
-        const wakeupToolsEnabled = baseConfig.mcpServers?.[WAKEUP_MCP_SERVER_NAME] !== undefined;
+        const browserToolsEnabled = baseConfig.mcpServers?.[BROWSER_BRIDGE.serverName] !== undefined;
+        const vscodeToolsGetErrorsEnabled = baseConfig.mcpServers?.[VSCODE_BRIDGE.serverName] !== undefined;
+        const wakeupToolsEnabled = baseConfig.mcpServers?.[WAKEUP_BRIDGE.serverName] !== undefined;
+        const builtinMcpEnabled: ReadonlyArray<[McpBridgeDescriptor, boolean]> = [
+            [BROWSER_BRIDGE, browserToolsEnabled],
+            [VSCODE_BRIDGE, vscodeToolsGetErrorsEnabled],
+            [WAKEUP_BRIDGE, wakeupToolsEnabled]
+        ];
         const normal: ChatCliConfig = {
             ...baseConfig,
             mcpServers: injectAskExpertMcpServer(
-                injectWakeupMcpServer(
-                    injectVscodeMcpServer(
-                        injectBrowserMcpServer(baseConfig.mcpServers, browserToolsEnabled, relayPort),
-                        vscodeToolsGetErrorsEnabled,
-                        relayPort
-                    ),
-                    wakeupToolsEnabled,
-                    relayPort
+                builtinMcpEnabled.reduce<ChatCliConfig['mcpServers']>(
+                    (servers, [descriptor, enabled]) => injectBuiltinMcpServer(servers, descriptor, enabled, relayPort),
+                    baseConfig.mcpServers
                 ),
                 expertAvailable
             ),
@@ -961,125 +955,54 @@ function injectAskExpertMcpServer(
 }
 
 /**
- * 根据浏览器工具总开关向 mcpServers 字典注入 browser MCP server。
+ * 按 descriptor 向 mcpServers 字典注入一个内置 MCP server。
+ *
+ * 三套桥（browser / vscode / wakeup）此前各有一份逐字相同的注入函数与入口脚本
+ * 构造函数，这里合并为一个，差异全部由 descriptor 承载。
  *
  * @param mcpServers 已规范化并剥除历史 expert server 的 MCP server 字典。
- * @param browserToolsEnabled 是否允许注入 desktop browser tools。
- * @returns 注入 browser server 后的字典；没有任何 server 时返回 undefined。
- */
-function injectBrowserMcpServer(
-    mcpServers: ChatCliConfig['mcpServers'],
-    browserToolsEnabled: boolean,
-    relayPort: number | undefined
-): ChatCliConfig['mcpServers'] {
-    if (!browserToolsEnabled) {
-        return mcpServers;
-    }
-    const next: NonNullable<ChatCliConfig['mcpServers']> = { ...(mcpServers ?? {}) };
-    if (!next[BROWSER_MCP_SERVER_NAME]) {
-        next[BROWSER_MCP_SERVER_NAME] = {
-            type: 'stdio',
-            command: process.execPath,
-            args: ['-e', buildBrowserMcpEntrypointScript()],
-            env: relayPort ? { [BROWSER_TOOL_RELAY_PORT_ENV]: String(relayPort) } : undefined
-        };
-    } else if (relayPort) {
-        next[BROWSER_MCP_SERVER_NAME] = {
-            ...next[BROWSER_MCP_SERVER_NAME],
-            env: {
-                ...(next[BROWSER_MCP_SERVER_NAME].env ?? {}),
-                [BROWSER_TOOL_RELAY_PORT_ENV]: String(relayPort)
-            }
-        };
-    }
-    return next;
-}
-
-function buildBrowserMcpEntrypointScript(): string {
-    const entry = require.resolve('../../browserTools/browserMcpServer');
-    return `require(${JSON.stringify(entry)}).startBrowserMcpServer();`;
-}
-
-/**
- * 根據 VS Code get_errors 開關向 mcpServers 字典注入 llsccaiVscode MCP server。
- *
- * @param mcpServers 已規範化的 MCP server 字典。
- * @param enabled 是否允許注入 VS Code get_errors 工具。
- * @param relayPort 本地 HTTP 中轉服務實際監聽端口。
- * @returns 注入 VS Code MCP server 後的字典；沒有任何 server 時返回 undefined。
- */
-function injectVscodeMcpServer(
-    mcpServers: ChatCliConfig['mcpServers'],
-    enabled: boolean,
-    relayPort: number | undefined
-): ChatCliConfig['mcpServers'] {
-    if (!enabled) {
-        return mcpServers;
-    }
-    const next: NonNullable<ChatCliConfig['mcpServers']> = { ...(mcpServers ?? {}) };
-    if (!next[VSCODE_MCP_SERVER_NAME]) {
-        next[VSCODE_MCP_SERVER_NAME] = {
-            type: 'stdio',
-            command: process.execPath,
-            args: ['-e', buildVscodeMcpEntrypointScript()],
-            env: relayPort ? { [VSCODE_TOOL_RELAY_PORT_ENV]: String(relayPort) } : undefined
-        };
-    } else if (relayPort) {
-        next[VSCODE_MCP_SERVER_NAME] = {
-            ...next[VSCODE_MCP_SERVER_NAME],
-            env: {
-                ...(next[VSCODE_MCP_SERVER_NAME].env ?? {}),
-                [VSCODE_TOOL_RELAY_PORT_ENV]: String(relayPort)
-            }
-        };
-    }
-    return next;
-}
-
-/** 建立 llsccaiVscode MCP server 子行程入口腳本。 */
-function buildVscodeMcpEntrypointScript(): string {
-    const entry = require.resolve('../../vscodeTools/vscodeMcpServer');
-    return `require(${JSON.stringify(entry)}).startVscodeMcpServer();`;
-}
-
-/**
- * 向 mcpServers 字典注入 llsccaiWakeup（定时唤醒）MCP server。
- *
- * @param mcpServers 已规范化的 MCP server 字典。
- * @param enabled 是否注入定时唤醒工具。
+ * @param descriptor 该套桥的静态声明。
+ * @param enabled 是否允许注入；为 false 时原样返回。
  * @param relayPort 本地 HTTP 中转服务实际监听端口。
- * @returns 注入后的字典。
+ * @returns 注入后的字典；没有任何 server 时返回 undefined。
  */
-function injectWakeupMcpServer(
+function injectBuiltinMcpServer(
     mcpServers: ChatCliConfig['mcpServers'],
+    descriptor: McpBridgeDescriptor,
     enabled: boolean,
     relayPort: number | undefined
 ): ChatCliConfig['mcpServers'] {
     if (!enabled) {
         return mcpServers;
     }
+    const { serverName, relayPortEnv } = descriptor;
     const next: NonNullable<ChatCliConfig['mcpServers']> = { ...(mcpServers ?? {}) };
-    if (!next[WAKEUP_MCP_SERVER_NAME]) {
-        next[WAKEUP_MCP_SERVER_NAME] = {
+    if (!next[serverName]) {
+        next[serverName] = {
             type: 'stdio',
             command: process.execPath,
-            args: ['-e', buildWakeupMcpEntrypointScript()],
-            env: relayPort ? { [WAKEUP_TOOL_RELAY_PORT_ENV]: String(relayPort) } : undefined
+            args: ['-e', buildBuiltinMcpEntrypointScript(descriptor)],
+            env: relayPort ? { [relayPortEnv]: String(relayPort) } : undefined
         };
     } else if (relayPort) {
-        next[WAKEUP_MCP_SERVER_NAME] = {
-            ...next[WAKEUP_MCP_SERVER_NAME],
+        next[serverName] = {
+            ...next[serverName],
             env: {
-                ...(next[WAKEUP_MCP_SERVER_NAME].env ?? {}),
-                [WAKEUP_TOOL_RELAY_PORT_ENV]: String(relayPort)
+                ...(next[serverName].env ?? {}),
+                [relayPortEnv]: String(relayPort)
             }
         };
     }
     return next;
 }
 
-/** 建立 llsccaiWakeup MCP server 子进程入口脚本。 */
-function buildWakeupMcpEntrypointScript(): string {
-    const entry = require.resolve('../../wakeupTools/wakeupMcpServer');
-    return `require(${JSON.stringify(entry)}).startWakeupMcpServer();`;
+/**
+ * 建立内置 MCP server 的子进程入口脚本。
+ *
+ * @param descriptor 该套桥的静态声明，提供入口模块与启动函数名。
+ * @returns `node -e` 执行的一行脚本。
+ */
+function buildBuiltinMcpEntrypointScript(descriptor: McpBridgeDescriptor): string {
+    const entry = require.resolve(descriptor.entryModule);
+    return `require(${JSON.stringify(entry)}).${descriptor.entryStarter}();`;
 }

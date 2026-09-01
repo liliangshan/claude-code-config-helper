@@ -283,6 +283,14 @@ Run selected lightweight tests after compiling:
 npm test
 ```
 
+### Built-in MCP bridges
+
+The extension ships three built-in MCP servers — `llsccaiBrowser`, `llsccaiVscode` and `llsccaiWakeup` — that the Claude CLI launches as Node subprocesses. Those subprocesses have no `vscode` runtime, so tool calls are forwarded over HTTP to a relay inside the extension host.
+
+Their shared machinery (stdio JSON-RPC server, HTTP relay handler, tool-name guards, CLI injection and startup logging) lives in `src/mcpKit/`. Each bridge only declares a descriptor — server name, HTTP path, relay port environment variable and tool schemas — in its own `bridge.ts`.
+
+Anything under `src/mcpKit/` is loaded by those subprocesses, so it may only statically import Node built-ins and `import type`. Importing `vscode` or any extension-host module there makes the subprocess crash at startup and the whole tool group vanish from the model's view with no visible error; `src/mcpKit/__tests__/noHostImports.test.ts` fails the build if that happens.
+
 ## Repository
 
 GitHub: <https://github.com/liliangshan/claude-code-config-helper.git>

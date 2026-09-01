@@ -18,6 +18,7 @@
 
 import { ExpertSubturnService, type ExpertSubturnServiceDeps } from './expertSubturnService';
 import { defaultExpertSubturnOptions } from './expertConfig';
+import { readExtensionVersion } from '../mcpKit/stdioServer';
 
 /** ask_expert 工具名（MCP 工具裸名，未加 mcp__askExpert__ 前缀）。 */
 export const ASK_EXPERT_TOOL_NAME = 'ask_expert' as const;
@@ -220,7 +221,7 @@ export class AskExpertMcpServer {
                 return {
                     protocolVersion: '2024-11-05',
                     capabilities: { tools: {} },
-                    serverInfo: { name: 'llsccai-ask-expert', version: '1.0.0' }
+                    serverInfo: { name: 'llsccai-ask-expert', version: readExtensionVersion() }
                 };
             case 'tools/list':
                 return {

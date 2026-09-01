@@ -1,5 +1,7 @@
 /** @file 浏览器 MCP 工具常量与 schema。 */
 
+import { createToolNameGuard, type McpToolSchema } from '../mcpKit/types';
+
 /** browser MCP server 在 Claude CLI mcpServers 注册时使用的 server 名。 */
 export const BROWSER_MCP_SERVER_NAME = 'llsccaiBrowser' as const;
 
@@ -24,25 +26,8 @@ export type BrowserToolName =
     | 'browser_console'
     | 'browser_eval';
 
-/** MCP tools/list 返回的单个工具 schema。 */
-export interface BrowserToolSchema {
-    /** 工具裸名。 */
-    name: BrowserToolName;
-    /** 工具描述。 */
-    description: string;
-    /** JSON Schema 输入描述。 */
-    inputSchema: {
-        /** schema 根类型。 */
-        type: 'object';
-        /** 输入字段定义。 */
-        properties: Record<string, unknown>;
-        /** 必填字段列表。 */
-        required: string[];
-    };
-}
-
 /** tools/list 返回的工具定义全集，不按 VS Code 版本裁剪。 */
-export const BROWSER_TOOL_SCHEMAS: readonly BrowserToolSchema[] = [
+export const BROWSER_TOOL_SCHEMAS: readonly McpToolSchema<BrowserToolName>[] = [
     {
         name: 'browser_open',
         description: 'Open a URL in the VS Code integrated browser (desktop only).',
@@ -100,10 +85,5 @@ export const BROWSER_TOOL_SCHEMAS: readonly BrowserToolSchema[] = [
     }
 ] as const;
 
-/** 浏览器工具名集合，用于校验 tools/call 入参。 */
-const BROWSER_TOOL_NAMES = new Set<BrowserToolName>(BROWSER_TOOL_SCHEMAS.map((tool) => tool.name));
-
 /** 判断输入是否为受支持的浏览器工具名。 */
-export function isBrowserToolName(value: unknown): value is BrowserToolName {
-    return typeof value === 'string' && BROWSER_TOOL_NAMES.has(value as BrowserToolName);
-}
+export const isBrowserToolName = createToolNameGuard(BROWSER_TOOL_SCHEMAS);

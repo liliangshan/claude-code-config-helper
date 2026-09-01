@@ -2,6 +2,27 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.31] - 2026-08-31
+
+### Internal
+
+- Added `docs/high-priority-fix-plan-2026-08-30.md`, a per-method fix plan for the three high-priority issues raised in the project review: wake-ups being lost when delivery fails after the job was already removed from disk, the same wake-up firing twice when two windows share one `wakeups.json`, and the settings webview rendering user-editable fields into `innerHTML` without HTML escaping. No behaviour changes in this release.
+
+## [3.2.30] - 2026-08-30
+
+### Changed
+
+- **The three built-in MCP bridges (browser / VS Code diagnostics / wake-ups) now share one implementation.** Each bridge previously carried its own copy of the same stdio JSON-RPC server, HTTP relay handler, tool-name guard, injection code and startup logging — four places where the same constants had to be kept in sync by hand. All of it now lives in `src/mcpKit/`, and each bridge is reduced to a single descriptor declaring its server name, HTTP path, relay port env var and tool schemas. No server name, tool name, HTTP path, environment variable or subprocess entrypoint changed, so existing configurations keep working untouched.
+- **MCP servers now report the real extension version.** `initialize` used to answer `1.0.0` for all four servers (browser, VS Code, wake-ups, ask-expert); they now report the version from `package.json`.
+
+### Fixed
+
+- **Browser and VS Code tools no longer disappear silently when the extension host relay is unreachable.** Both servers used to crash on the first tool call in that situation, which made the whole tool group vanish from the model's view with no visible error. They now behave like the wake-up server has all along: the tools stay listed, and a call returns an explicit "requires the extension host relay" message.
+
+### Internal
+
+- Added regression tests for the shared MCP kit: stdio line framing across chunks, JSON-RPC error codes, relay routing and body-size limits, plus a guard test asserting that nothing under `src/mcpKit/` statically imports `vscode` or any extension-host module — the failure mode behind the 3.2.23 incident where a subprocess crashed at startup and the tools went missing without a trace.
+
 ## [3.2.29] - 2026-08-30
 
 ### Fixed
