@@ -34,7 +34,7 @@ export type RelayRequestHandler = (
 
 /** 判断请求路径是否是 Relay 承载的 messages 转发路径。 */
 export function isRelayMessagesPath(path: string): boolean {
-    return path === '/v1/messages' || /^\/(normal|expert|plan|review)\/v1\/messages$/.test(path);
+    return path === '/v1/messages' || /^\/(normal|taskFlow)\/v1\/messages$/.test(path);
 }
 
 /** {@link RelayServer} 构造参数。 */

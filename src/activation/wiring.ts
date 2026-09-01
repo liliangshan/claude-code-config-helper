@@ -25,15 +25,7 @@ import {
     notifyPermissionDeniedToUser
 } from '../chatRuntime/cliEventHandlers';
 import { configureCliLifecycle } from '../chatRuntime/cliLifecycle';
-import { configureModelSelection, getModelLabelForRoute } from '../chatRuntime/modelSelection';
-import {
-    configurePlanReviewWorkflow,
-    handlePlanDone,
-    handleReviewDone,
-    runUserTriggeredExpertSubturn,
-    watchNormalForExpertHandoff,
-    watchNormalForPlanHandoff
-} from '../chatRuntime/planReviewWorkflow';
+import { applyTaskFlowModelForContinue, configureModelSelection, getModelLabelForRoute } from '../chatRuntime/modelSelection';
 import {
     armHttpExpectation,
     cancelPendingResend,
@@ -42,11 +34,9 @@ import {
 import {
     configureWebviewMessages,
     handleChatWebviewMessage,
-    postChatExpertModelOptions,
     postChatModelOptions,
     postChatPermissionMode,
-    postChatPlanModelOptions,
-    postChatReviewModelOptions,
+    postChatTaskFlowModelOptions,
     postChatUiLanguage,
     postModelsSnapshot,
     showChatToast,
@@ -54,7 +44,7 @@ import {
 } from '../chatRuntime/webviewMessages';
 import { Logger } from '../logger';
 import { AutoContinueScheduler } from '../llsTask/autoContinue';
-import { getChatViewHost, getConfigManager } from '../runtime';
+import { getChatViewHost, getConfigManager, getLlsTaskService } from '../runtime';
 import {
     configureTaskFlowCommands,
     getAutoContinueScheduler,
@@ -85,7 +75,6 @@ export function configureStatelessModules(): void {
     configureChatMessaging({
         openBuiltInChat,
         switchChatRoute,
-        runUserTriggeredExpertSubturn,
         armHttpExpectation,
         clearHttpExpectation,
         cancelPendingResend,
@@ -113,20 +102,10 @@ export function configureRuntimeModules(): void {
     });
     configureModelSelection({
         postChatModelOptions,
-        postChatExpertModelOptions,
-        postChatPlanModelOptions,
-        postChatReviewModelOptions,
         postModelsSnapshot,
         showChatToast
     });
-    configureCliEventHandlers({
-        watchNormalForExpertHandoff,
-        watchNormalForPlanHandoff,
-        handlePlanDone,
-        handleReviewDone,
-        showChatToast
-    });
-    configurePlanReviewWorkflow({ ensureRelayServerStarted });
+    configureCliEventHandlers({ showChatToast });
     configureTaskFlowCommands({ pasteTaskFlowToExternalClaudeCode });
     configureCliLifecycle({
         ensureRelayServerStarted,
@@ -146,7 +125,13 @@ export function configureRuntimeModules(): void {
         }
     });
     // 任务流续推走内置 Chat → CLI 链路，同时让续推提示词作为一条 user 消息正常显示，
-    // 避免"无声续推"。不注入 beforeSubmit，即续推前不再强制压缩上下文。
+    // 避免"无声续推"。beforeSubmit 用于每次续推前判断模型：配了任务流专用模型且当前
+    // 不是它时，先切换并重启 CLI（内部已静置等待新进程就绪）再提交续推 prompt。
+    // 创建阶段还没有活动 workflow，因此始终由主模型创建。
+    AutoContinueScheduler.setBeforeSubmit(async () => {
+        if (!getLlsTaskService()?.hasActiveWorkflow()) return;
+        await applyTaskFlowModelForContinue();
+    });
     AutoContinueScheduler.setSubmitter(async (text) => {
         await appendUserMessageAndSend(text);
     });
@@ -166,9 +151,7 @@ export function subscribeConfigManagerChanges(context: vscode.ExtensionContext):
             void syncClaudeCliModelSettingsSafely();
             const refreshers: Array<[string, () => Promise<void>]> = [
                 ['模型列表', postChatModelOptions],
-                ['专家模型列表', postChatExpertModelOptions],
-                ['方案模型列表', postChatPlanModelOptions],
-                ['审查模型列表', postChatReviewModelOptions],
+                ['任务流模型列表', postChatTaskFlowModelOptions],
                 ['模型选择快照', postModelsSnapshot]
             ];
             for (const [label, refresh] of refreshers) {

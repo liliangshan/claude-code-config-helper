@@ -5,8 +5,8 @@
  * 以及工具授权请求、AskUserQuestion 问答回写、最终回复日志收敛到一个模块。
  *
  * 依赖方向：本模块位于 routeState / cliLifecycle / chatSession 之上，
- * plan/review 编排与专家交棒等上层协作函数仍留在 extension.ts，
- * 通过 {@link configureCliEventHandlers} 注入，避免反向 import 造成循环依赖。
+ * 上层协作函数通过 {@link configureCliEventHandlers} 注入，
+ * 避免反向 import 造成循环依赖。
  */
 import * as vscode from 'vscode';
 
@@ -29,14 +29,6 @@ import {
 
 /** cliEventHandlers 需要但仍留在 extension.ts 的协作函数集合。 */
 export interface CliEventHandlerDeps {
-    /** 从 normal 最终回复中检测专家移交标记。 */
-    watchNormalForExpertHandoff: (text: string) => Promise<boolean>;
-    /** 从 normal 最终回复中检测 plan 移交标记。 */
-    watchNormalForPlanHandoff: (text: string) => Promise<boolean>;
-    /** plan 路由回合结束后的编排处理。 */
-    handlePlanDone: (finalText: string) => Promise<void>;
-    /** review 路由回合结束后的编排处理。 */
-    handleReviewDone: (finalText: string) => Promise<void>;
     /** 向 Webview 推送轻提示。 */
     showChatToast: (level: 'info' | 'success' | 'warn' | 'error', text: string) => Promise<void>;
 }
@@ -74,19 +66,6 @@ export function getSegmentLogText(segment: ChatSegment): string {
 export async function handleFinalAssistantText(source: ChatRoute, finalText: string): Promise<boolean> {
     if (!finalText) return false;
     Logger.info(`模型最终回复(${source})：${formatLogPreview(finalText)}`);
-    if (source === 'normal') {
-        const expertHandled = await requireDeps().watchNormalForExpertHandoff(finalText);
-        const planHandled = await requireDeps().watchNormalForPlanHandoff(finalText);
-        return expertHandled || planHandled;
-    }
-    if (source === 'plan') {
-        await requireDeps().handlePlanDone(finalText);
-        return false;
-    }
-    if (source === 'review') {
-        await requireDeps().handleReviewDone(finalText);
-        return false;
-    }
     return false;
 }
 
@@ -122,9 +101,7 @@ export function notifyPermissionDeniedToUser(resultText: string): void {
  * 处理 CLI 适配器解析出的事件，并更新 ChatSession/Webview。
  *
  * @param event 已解析的 CLI 事件。
- * @param source 事件来源 CLI；`'normal'` 时会在 segments 文本上做 `@llsExpert`
- *   路由检测（由任务 5 在切路由时使用），`'expert'` 仅做正常渲染、不做任何路由检测，
- *   避免循环触发。
+ * @param source 事件来源路由；taskFlow 复用 normal CLI，事件仍以 `'normal'` 上报。
  */
 export async function handleParsedCliEvent(event: ParsedCliEvent, source: ChatRoute = 'normal'): Promise<void> {
     switch (event.type) {
@@ -167,16 +144,11 @@ export async function handleParsedCliEvent(event: ParsedCliEvent, source: ChatRo
         case 'session/init':
             await getChatCliSessionStore()?.writeSessionId(event.cwd, event.sessionId, source);
             chatSessionRouteById.set(event.sessionId, source);
-            if (source === 'normal') {
-                routes.normal.sessionId = event.sessionId;
-                void pushSessionTitleToWebview(event.cwd, event.sessionId);
-            } else if (source === 'expert') {
-                routes.expert.sessionId = event.sessionId;
-            } else if (source === 'plan') {
-                routes.plan.sessionId = event.sessionId;
-            } else {
-                routes.review.sessionId = event.sessionId;
-            }
+            // taskFlow 复用 normal CLI 进程，session_id 同时记到两条路由，
+            // 保证 usageSink 在活动路由为 taskFlow 时也能拿到正确会话。
+            routes.normal.sessionId = event.sessionId;
+            routes.taskFlow.sessionId = event.sessionId;
+            void pushSessionTitleToWebview(event.cwd, event.sessionId);
             return;
         case 'compact/status':
             handleCliCompactStatus(event, source);

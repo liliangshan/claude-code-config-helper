@@ -131,8 +131,8 @@ test('集成：压缩在途时重复 afterRecv 不会产生任何 /compact', asy
     assert.deepEqual(sentCommands, [CLAUDE_COMPACT_COMMAND]);
 });
 
-test('集成：含 ask_expert tool_use/tool_result pair 的会话手动压缩仍按 session 发送一次 /compact', async () => {
-    // 回归：主对话里有 ask_expert 的 tool_use 与配对 tool_result 时，token budget
+test('集成：含 tool_use/tool_result pair 的会话手动压缩仍按 session 发送一次 /compact', async () => {
+    // 回归：主对话里有 tool_use 与配对 tool_result 时，token budget
     // 仍以原生 /compact 形式委托 CLI 压缩，不会在 Relay 侧自行截断半个 pair。
     const sentCommands: string[] = [];
     const service: any = new TokenBudgetService({
@@ -145,17 +145,17 @@ test('集成：含 ask_expert tool_use/tool_result pair 的会话手动压缩仍
 
     const bodyWithPair = JSON.stringify({
         messages: [
-            { role: 'user', content: [{ type: 'text', text: '请用专家分析' }] },
+            { role: 'user', content: [{ type: 'text', text: '请分��' }] },
             {
                 role: 'assistant',
                 content: [
-                    { type: 'text', text: '委托专家' },
-                    { type: 'tool_use', id: 'toolu_ask_p', name: 'mcp__askExpert__ask_expert', input: { question: 'q' } }
+                    { type: 'text', text: '我来查一下' },
+                    { type: 'tool_use', id: 'toolu_q_p', name: 'Bash', input: { command: 'ls' } }
                 ]
             },
             {
                 role: 'user',
-                content: [{ type: 'tool_result', tool_use_id: 'toolu_ask_p', content: '专家结论' }]
+                content: [{ type: 'tool_result', tool_use_id: 'toolu_q_p', content: '结论' }]
             }
         ]
     });
@@ -178,9 +178,9 @@ test('集成：含 ask_expert tool_use/tool_result pair 的会话手动压缩仍
     assert.equal(bucket.compact.inProgress, true);
 });
 
-test('集成：主 CLI 与专家 sub-turn 并发命中同一 Relay 时按各自 sessionId 独立计量，不误判', async () => {
-    // 回归：专家 sub-turn 走独立 sessionId（无历史），不应与主 CLI 的 session 共享
-    // token 桶。手动压缩主 session 时，专家 session 不应被牵连。
+test('集成：两个独立 session 并发命中同一 Relay 时按各自 sessionId 独立计量，不误判', async () => {
+    // 回归：独立 sessionId（无共享历史）不应与主 session 共享 token 桶。
+    // 手动压缩主 session 时，另一个 session 不应被牵连。
     const sentCommands: string[] = [];
     const service: any = new TokenBudgetService({
         configManager: makeConfigManager() as any,
@@ -195,10 +195,10 @@ test('集成：主 CLI 与专家 sub-turn 并发命中同一 Relay 时按各自 
         sessionId: 's-main', providerId: 'p1', modelId: 'm',
         anthropicBody: JSON.stringify({ messages: [{ role: 'user', content: 'main' }] })
     });
-    // 专家 sub-turn session：小上下文（无历史），远低于阈值。
+    // 次级 session：小上下文（无历史），远低于阈值。
     service.beforeSend({
-        sessionId: 's-expert-subturn', providerId: 'p1', modelId: 'm',
-        anthropicBody: JSON.stringify({ messages: [{ role: 'user', content: 'expert q' }] })
+        sessionId: 's-secondary', providerId: 'p1', modelId: 'm',
+        anthropicBody: JSON.stringify({ messages: [{ role: 'user', content: 'secondary q' }] })
     });
 
     service.afterRecv({
@@ -207,17 +207,17 @@ test('集成：主 CLI 与专家 sub-turn 并发命中同一 Relay 时按各自 
         requestBodyAtSend: ''
     });
     service.afterRecv({
-        sessionId: 's-expert-subturn', providerId: 'p1', modelId: 'm',
+        sessionId: 's-secondary', providerId: 'p1', modelId: 'm',
         usage: { inputTokens: 500 },
         requestBodyAtSend: ''
     });
     service.compactNow('s-main');
     await flushAsync();
 
-    // 仅主 session 触发一次 /compact；专家 session 桶不在压缩中。
+    // 仅主 session 触发一次 /compact；次级 session 桶不在压缩中。
     assert.deepEqual(sentCommands, [CLAUDE_COMPACT_COMMAND]);
     assert.equal(service.store.getSession('s-main').compact.inProgress, true);
-    assert.equal(service.store.getSession('s-expert-subturn').compact.inProgress, false);
+    assert.equal(service.store.getSession('s-secondary').compact.inProgress, false);
 });
 
 test('集成：发送 /compact 失败 → notifier failed + inProgress 复位', async () => {

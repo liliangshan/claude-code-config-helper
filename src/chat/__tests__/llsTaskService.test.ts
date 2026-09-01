@@ -45,7 +45,6 @@ test('buildContinuePrompt: 活跃任务流续推提示词只推第一条未完�
     assert.ok(prompt.includes('下一个待执行任务: 1. [in_progress] 继续执行'), '应点名带编号与状态的下一个待执行任务');
     assert.ok(prompt.includes('继续执行任务流'), '应包含该任务的描述');
     assert.ok(prompt.includes('update_llsccai_task_workflow'), '应指示调用状态回写工具');
-    assert.equal(prompt.startsWith('@llsExpert'), false);
 });
 
 test('buildContinuePrompt: 同时有方案文档与说明文字时两者都续推', () => {

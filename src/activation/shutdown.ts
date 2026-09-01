@@ -1,15 +1,14 @@
 /**
  * 扩展停用期的统一释放链路。
  *
- * 拆分自 extension.ts：把 deactivate 里「刷盘会话 → 取消各类定时器 → 释放四条
+ * 拆分自 extension.ts：把 deactivate 里「刷盘会话 → 取消各类定时器 → 释放各条
  * 路由的 adapter 与进程 → 释放 Webview/服务/ConfigManager → 清空全局单例」
  * 这条固定顺序的释放流程收敛到一个模块。
  *
  * 依赖方向：本模块位于所有功能模块之上，不被它们反向引用。
  */
 import { flushPersistedChatSession } from '../chatRuntime/chatSession';
-import { disposeCliLifecycleServices, disposePlanReviewIdleTimers } from '../chatRuntime/cliLifecycle';
-import { disposeExpertSubturnService } from '../chatRuntime/planReviewWorkflow';
+import { disposeCliLifecycleServices } from '../chatRuntime/cliLifecycle';
 import type { ChatRoute } from '../chat/protocol';
 import { routes } from '../chatRuntime/routeState';
 import { cancelPendingResend, clearHttpExpectation } from '../chatRuntime/selfHealing';
@@ -18,7 +17,7 @@ import { getAutoContinueScheduler, setAutoContinueScheduler } from '../taskFlow/
 import { getWakeupScheduler, setWakeupScheduler } from '../wakeup/wakeupWiring';
 
 /** 释放顺序固定：先 adapter 订阅与 adapter，再 CLI 进程，避免退出事件回调打到已释放对象。 */
-const ROUTE_DISPOSE_ORDER: readonly ChatRoute[] = ['normal', 'expert', 'plan', 'review'];
+const ROUTE_DISPOSE_ORDER: readonly ChatRoute[] = ['normal', 'taskFlow'];
 
 /** 释放全部路由的 adapter 订阅与 adapter 实例。 */
 function disposeRouteAdapters(): void {
@@ -53,7 +52,6 @@ export function shutdownExtension(): void {
     setAutoContinueScheduler(undefined);
     getWakeupScheduler()?.dispose();
     setWakeupScheduler(undefined);
-    disposePlanReviewIdleTimers();
 
     runtime.getRelayServer()?.dispose();
     runtime.setRelayServer(undefined);
@@ -63,7 +61,6 @@ export function shutdownExtension(): void {
 
     runtime.getChatViewHost()?.dispose();
     runtime.setChatViewHost(undefined);
-    disposeExpertSubturnService();
     disposeCliLifecycleServices();
 
     runtime.getConfigViewProvider()?.dispose();

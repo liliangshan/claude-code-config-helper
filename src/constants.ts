@@ -74,6 +74,14 @@ export const TASK_FLOW_BYPASS_PERMISSIONS_KEY = 'taskFlowBypassPermissions';
 /** 任务流发送目标配置字段：claudeCodeConfigHelper.taskFlow.target。 */
 export const TASK_FLOW_TARGET_KEY = 'taskFlow.target';
 
+/**
+ * 任务流模型（工作区级）：claudeCodeConfigHelper.chat.taskFlow.model。
+ *
+ * 形如 `providerId/modelId`；为空表示未配置，此时任务流回退到当前主模型。
+ * 仅写入 workspace 作用域，不写全局。
+ */
+export const CHAT_TASK_FLOW_MODEL_KEY = 'chat.taskFlow.model';
+
 /** 内置 Chat Webview 配置字段前缀：claudeCodeConfigHelper.chat。 */
 export const CHAT_CONFIG_SECTION = 'chat';
 
@@ -163,39 +171,6 @@ export const VSCODE_TOOLS_GET_ERRORS_ENABLED_KEY = 'vscodeTools.getErrors.enable
  */
 export const CHAT_CLI_INCLUDE_VSCODE_MCP_JSON_KEY = 'chat.includeVscodeMcpJson';
 
-/**
- * 项目级专家模式开关：`claudeCodeConfigHelper.chat.expertMode.project.enabled`。
- *
- * scope=`resource`，写入 `.vscode/settings.json`。`undefined` 表示「未在项目级显式
- * 设置」，会回退到全局级开关 {@link CHAT_EXPERT_MODE_GLOBAL_ENABLED_KEY}。
- *
- * 详见 `EXPERT_MODE_DESIGN.md` §8。
- */
-export const CHAT_EXPERT_MODE_PROJECT_ENABLED_KEY = 'chat.expertMode.project.enabled';
-
-/**
- * 项目级专家模型 id：`claudeCodeConfigHelper.chat.expertMode.project.model`。
- *
- * scope=`resource`。空字符串视为「未设置」，会回退到全局级
- * {@link CHAT_EXPERT_MODE_GLOBAL_MODEL_KEY}；两者都为空时由 ExpertRunner 回退到主模型。
- */
-export const CHAT_EXPERT_MODE_PROJECT_MODEL_KEY = 'chat.expertMode.project.model';
-
-/**
- * 全局专家模式开关：`claudeCodeConfigHelper.chat.expertMode.global.enabled`。
- *
- * scope=`application`，写入用户设置 / Settings Sync，跨工作区生效。
- * 项目级 {@link CHAT_EXPERT_MODE_PROJECT_ENABLED_KEY} 优先级更高。
- */
-export const CHAT_EXPERT_MODE_GLOBAL_ENABLED_KEY = 'chat.expertMode.global.enabled';
-
-/**
- * 全局专家模型 id：`claudeCodeConfigHelper.chat.expertMode.global.model`。
- *
- * scope=`application`。空字符串视为「未设置」，由 ExpertRunner 回退到主模型。
- */
-export const CHAT_EXPERT_MODE_GLOBAL_MODEL_KEY = 'chat.expertMode.global.model';
-
 export const CHAT_COMPACTION_MODE_PROJECT_ENABLED_KEY = 'chat.compactionMode.project.enabled';
 
 /** 压缩请求专用模型 id：`claudeCodeConfigHelper.chat.compactionMode.project.model`。 */
@@ -206,76 +181,6 @@ export const CHAT_COMPACTION_MODE_GLOBAL_ENABLED_KEY = 'chat.compactionMode.glob
 
 /** 全局压缩请求专用模型 id：`claudeCodeConfigHelper.chat.compactionMode.global.model`。 */
 export const CHAT_COMPACTION_MODE_GLOBAL_MODEL_KEY = 'chat.compactionMode.global.model';
-
-/**
- * 项目级方案模式开关：`claudeCodeConfigHelper.chat.planMode.project.enabled`。
- *
- * scope=`resource`，写入 `.vscode/settings.json`。`undefined` 表示「未在项目级显式
- * 设置」，会回退到全局级开关 {@link CHAT_PLAN_MODE_GLOBAL_ENABLED_KEY}。
- */
-export const CHAT_PLAN_MODE_PROJECT_ENABLED_KEY = 'chat.planMode.project.enabled';
-
-/**
- * 项目级方案模型 id：`claudeCodeConfigHelper.chat.planMode.project.model`。
- *
- * scope=`resource`。空字符串视为「未设置」，会回退到全局级
- * {@link CHAT_PLAN_MODE_GLOBAL_MODEL_KEY}。
- */
-export const CHAT_PLAN_MODE_PROJECT_MODEL_KEY = 'chat.planMode.project.model';
-
-/**
- * 全局方案模式开关：`claudeCodeConfigHelper.chat.planMode.global.enabled`。
- *
- * scope=`application`，写入用户设置 / Settings Sync，跨工作区生效。
- * 项目级 {@link CHAT_PLAN_MODE_PROJECT_ENABLED_KEY} 优先级更高。
- */
-export const CHAT_PLAN_MODE_GLOBAL_ENABLED_KEY = 'chat.planMode.global.enabled';
-
-/**
- * 全局方案模型 id：`claudeCodeConfigHelper.chat.planMode.global.model`。
- */
-export const CHAT_PLAN_MODE_GLOBAL_MODEL_KEY = 'chat.planMode.global.model';
-
-/**
- * 方案 CLI 的 append-system-prompt 覆盖配置：
- * `claudeCodeConfigHelper.chat.plan.appendSystemPrompt`。
- */
-export const CHAT_PLAN_APPEND_SYSTEM_PROMPT_KEY = 'chat.plan.appendSystemPrompt';
-
-/**
- * 项目级审查模式开关：`claudeCodeConfigHelper.chat.reviewMode.project.enabled`。
- *
- * scope=`resource`，写入 `.vscode/settings.json`。`undefined` 表示「未在项目级显式
- * 设置」，会回退到全局级开关 {@link CHAT_REVIEW_MODE_GLOBAL_ENABLED_KEY}。
- */
-export const CHAT_REVIEW_MODE_PROJECT_ENABLED_KEY = 'chat.reviewMode.project.enabled';
-
-/**
- * 项目级审查模型 id：`claudeCodeConfigHelper.chat.reviewMode.project.model`。
- *
- * scope=`resource`。空字符串视为「未设置」，会回退到全局级
- * {@link CHAT_REVIEW_MODE_GLOBAL_MODEL_KEY}。
- */
-export const CHAT_REVIEW_MODE_PROJECT_MODEL_KEY = 'chat.reviewMode.project.model';
-
-/**
- * 全局审查模式开关：`claudeCodeConfigHelper.chat.reviewMode.global.enabled`。
- *
- * scope=`application`，写入用户设置 / Settings Sync，跨工作区生效。
- * 项目级 {@link CHAT_REVIEW_MODE_PROJECT_ENABLED_KEY} 优先级更高。
- */
-export const CHAT_REVIEW_MODE_GLOBAL_ENABLED_KEY = 'chat.reviewMode.global.enabled';
-
-/**
- * 全局审查模型 id：`claudeCodeConfigHelper.chat.reviewMode.global.model`。
- */
-export const CHAT_REVIEW_MODE_GLOBAL_MODEL_KEY = 'chat.reviewMode.global.model';
-
-/**
- * 审查 CLI 的 append-system-prompt 覆盖配置：
- * `claudeCodeConfigHelper.chat.review.appendSystemPrompt`。
- */
-export const CHAT_REVIEW_APPEND_SYSTEM_PROMPT_KEY = 'chat.review.appendSystemPrompt';
 
 /**
  * 普通 CLI（dispatcher）的 append-system-prompt 覆盖配置：
@@ -289,43 +194,9 @@ export const CHAT_REVIEW_APPEND_SYSTEM_PROMPT_KEY = 'chat.review.appendSystemPro
 export const CHAT_DISPATCHER_APPEND_SYSTEM_PROMPT_KEY = 'chat.dispatcher.appendSystemPrompt';
 
 /**
- * 专家 CLI 的 append-system-prompt 覆盖配置：
- * `claudeCodeConfigHelper.chat.expert.appendSystemPrompt`。
- *
- * 双 CLI 路由方案下，专家 CLI 默认会注入一段「专家声明」系统提示词，
- * 告知它是被 dispatcher 切换路由后激活的高能力模型。本配置允许用户
- * 用自定义文案完全替换默认提示词；留空时使用扩展内置默认。
- */
-export const CHAT_EXPERT_APPEND_SYSTEM_PROMPT_KEY = 'chat.expert.appendSystemPrompt';
-
-/**
- * 用户触发专家（@llsExpert / /expert 前缀）时的处理方式配置 key：
- * `claudeCodeConfigHelper.chat.expert.userTriggerMode`。
- *
- * 取值：
- * - `'direct'`：直接把专家回答作为最终回复展示给用户（不再让主模型续写）。
- * - `'tool_result'`：把专家回答以 tool_result 形式写回主 CLI，让主模型继续编排。
- */
-export const CHAT_EXPERT_USER_TRIGGER_MODE_KEY = 'chat.expert.userTriggerMode';
-
-/** 专家 mini-agent 循环最大步数配置 key。 */
-export const CHAT_EXPERT_MAX_STEPS_KEY = 'chat.expert.maxSteps';
-
-/** 专家 mini-agent 循环单步超时配置 key。 */
-export const CHAT_EXPERT_STEP_TIMEOUT_MS_KEY = 'chat.expert.stepTimeoutMs';
-
-/** 专家 sub-turn 总超时配置 key。 */
-export const CHAT_EXPERT_TOTAL_TIMEOUT_MS_KEY = 'chat.expert.totalTimeoutMs';
-
-/** 单个 dispatcher turn 内 ask_expert 最大调用次数配置 key。 */
-export const CHAT_EXPERT_MAX_CALLS_PER_TURN_KEY = 'chat.expert.maxCallsPerTurn';
-
-/**
  * 双 CLI 路由的默认初始路由值。
  *
- * 扩展激活后默认按 `'normal'` 路由：用户每条消息默认走 dispatcher CLI；
- * 当 dispatcher 输出 `@llsExpert` 或用户消息以 `@llsExpert` 开头时，
- * 切换到 `'expert'`。
+ * 扩展激活后默认按 `'normal'` 路由。
  */
 export const CHAT_ROUTE_DEFAULT = 'normal' as const;
 

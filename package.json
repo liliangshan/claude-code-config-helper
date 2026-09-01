@@ -2,7 +2,7 @@
     "name": "claude-code-config-helper",
     "displayName": "%extension.displayName%",
     "description": "%extension.description%",
-    "version": "3.2.34",
+    "version": "3.2.43",
     "publisher": "liliangshan",
     "license": "MIT",
     "repository": {
@@ -400,29 +400,11 @@
                     "description": "%configuration.chat.currentModel.description%",
                     "scope": "resource"
                 },
-                "claudeCodeConfigHelper.chat.expertMode.project.enabled": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "%configuration.chat.expertMode.project.enabled.description%",
-                    "scope": "resource"
-                },
-                "claudeCodeConfigHelper.chat.expertMode.project.model": {
+                "claudeCodeConfigHelper.chat.taskFlow.model": {
                     "type": "string",
                     "default": "",
-                    "description": "%configuration.chat.expertMode.project.model.description%",
+                    "description": "%configuration.chat.taskFlow.model.description%",
                     "scope": "resource"
-                },
-                "claudeCodeConfigHelper.chat.expertMode.global.enabled": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "%configuration.chat.expertMode.global.enabled.description%",
-                    "scope": "application"
-                },
-                "claudeCodeConfigHelper.chat.expertMode.global.model": {
-                    "type": "string",
-                    "default": "",
-                    "description": "%configuration.chat.expertMode.global.model.description%",
-                    "scope": "application"
                 },
                 "claudeCodeConfigHelper.chat.compactionMode.project.enabled": {
                     "type": "boolean",
@@ -448,101 +430,10 @@
                     "description": "%configuration.chat.compactionMode.global.model.description%",
                     "scope": "application"
                 },
-                "claudeCodeConfigHelper.chat.planMode.project.enabled": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "%configuration.chat.planMode.project.enabled.description%",
-                    "scope": "resource"
-                },
-                "claudeCodeConfigHelper.chat.planMode.project.model": {
-                    "type": "string",
-                    "default": "",
-                    "description": "%configuration.chat.planMode.project.model.description%",
-                    "scope": "resource"
-                },
-                "claudeCodeConfigHelper.chat.planMode.global.enabled": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "%configuration.chat.planMode.global.enabled.description%",
-                    "scope": "application"
-                },
-                "claudeCodeConfigHelper.chat.planMode.global.model": {
-                    "type": "string",
-                    "default": "",
-                    "description": "%configuration.chat.planMode.global.model.description%",
-                    "scope": "application"
-                },
-                "claudeCodeConfigHelper.chat.reviewMode.project.enabled": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "%configuration.chat.reviewMode.project.enabled.description%",
-                    "scope": "resource"
-                },
-                "claudeCodeConfigHelper.chat.reviewMode.project.model": {
-                    "type": "string",
-                    "default": "",
-                    "description": "%configuration.chat.reviewMode.project.model.description%",
-                    "scope": "resource"
-                },
-                "claudeCodeConfigHelper.chat.reviewMode.global.enabled": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "%configuration.chat.reviewMode.global.enabled.description%",
-                    "scope": "application"
-                },
-                "claudeCodeConfigHelper.chat.reviewMode.global.model": {
-                    "type": "string",
-                    "default": "",
-                    "description": "%configuration.chat.reviewMode.global.model.description%",
-                    "scope": "application"
-                },
                 "claudeCodeConfigHelper.chat.dispatcher.appendSystemPrompt": {
                     "type": "string",
                     "default": "",
                     "description": "%configuration.chat.dispatcher.appendSystemPrompt.description%",
-                    "scope": "resource"
-                },
-                "claudeCodeConfigHelper.chat.expert.appendSystemPrompt": {
-                    "type": "string",
-                    "default": "",
-                    "description": "%configuration.chat.expert.appendSystemPrompt.description%",
-                    "scope": "resource"
-                },
-                "claudeCodeConfigHelper.chat.expert.userTriggerMode": {
-                    "type": "string",
-                    "enum": ["direct", "tool_result"],
-                    "default": "direct",
-                    "description": "%configuration.chat.expert.userTriggerMode.description%",
-                    "scope": "resource"
-                },
-                "claudeCodeConfigHelper.chat.expert.maxSteps": {
-                    "type": "number",
-                    "default": 6,
-                    "minimum": 1,
-                    "maximum": 50,
-                    "description": "%configuration.chat.expert.maxSteps.description%",
-                    "scope": "resource"
-                },
-                "claudeCodeConfigHelper.chat.expert.stepTimeoutMs": {
-                    "type": "number",
-                    "default": 60000,
-                    "minimum": 1000,
-                    "description": "%configuration.chat.expert.stepTimeoutMs.description%",
-                    "scope": "resource"
-                },
-                "claudeCodeConfigHelper.chat.expert.totalTimeoutMs": {
-                    "type": "number",
-                    "default": 300000,
-                    "minimum": 1000,
-                    "description": "%configuration.chat.expert.totalTimeoutMs.description%",
-                    "scope": "resource"
-                },
-                "claudeCodeConfigHelper.chat.expert.maxCallsPerTurn": {
-                    "type": "number",
-                    "default": 1,
-                    "minimum": 1,
-                    "maximum": 10,
-                    "description": "%configuration.chat.expert.maxCallsPerTurn.description%",
                     "scope": "resource"
                 },
                 "openapicopilot.systemPrompt": {
@@ -645,7 +536,7 @@
         "compile": "tsc -p ./",
         "watch": "tsc -watch -p ./",
         "typecheck": "tsc --noEmit -p ./",
-        "test": "npm run compile && node --test out/chat/__tests__/*.test.js out/browserTools/__tests__/*.test.js out/wakeupTools/__tests__/*.test.js out/mcpKit/__tests__/*.test.js out/__tests__/*.test.js out/relay/tokenBudget/__tests__/service.test.js out/relay/__tests__/tokenBudgetIntegration.test.js out/relay/converters/__tests__/cachePassthrough.test.js out/relay/converters/__tests__/cachedTokens.test.js out/relay/converters/__tests__/reasoningMode.test.js out/relay/converters/__tests__/protocolConverters.test.js"
+        "test": "npm run compile && node --test out/chat/__tests__/*.test.js out/chat/cli/__tests__/*.test.js out/chatRuntime/__tests__/*.test.js out/llsTask/__tests__/*.test.js out/browserTools/__tests__/*.test.js out/wakeupTools/__tests__/*.test.js out/mcpKit/__tests__/*.test.js out/__tests__/*.test.js out/relay/tokenBudget/__tests__/service.test.js out/relay/tokenBudget/__tests__/compactor.test.js out/relay/__tests__/routerPath.test.js out/relay/__tests__/tokenBudgetIntegration.test.js out/relay/converters/__tests__/cachePassthrough.test.js out/relay/converters/__tests__/cachedTokens.test.js out/relay/converters/__tests__/reasoningMode.test.js out/relay/converters/__tests__/protocolConverters.test.js"
     },
     "devDependencies": {
         "@types/node": "^20.11.0",

@@ -82,9 +82,9 @@ test('打字机：连续 3 个 thinking_delta 产出同 id、逐次增长整块 
 
     assert.ok(first && second && third, '三次都应产出 segment');
     assert.equal(first.kind, 'markdown');
-    assert.equal(first.id, 'thinking:0');
-    assert.equal(second.id, 'thinking:0');
-    assert.equal(third.id, 'thinking:0');
+    assert.equal(first.id, 'thinking:1:0');
+    assert.equal(second.id, 'thinking:1:0');
+    assert.equal(third.id, 'thinking:1:0');
     assert.equal(first.text, '> 💭 A');
     assert.equal(second.text, '> 💭 AB');
     assert.equal(third.text, '> 💭 ABC');
@@ -124,8 +124,24 @@ test('打字机：不同 block index 使用不同的稳定 id', () => {
     const b = feedThinking(adapter, 'Y', 2);
     adapter.dispose();
 
-    assert.equal(a?.id, 'thinking:0');
-    assert.equal(b?.id, 'thinking:2');
+    assert.equal(a?.id, 'thinking:1:0');
+    assert.equal(b?.id, 'thinking:1:2');
+});
+
+test('打字机：新一条 message 的思考块拿到全新 id', () => {
+    // block index 每条 message 都从 0 重新计数；若 id 只含 index，第二段思考会
+    // 命中第一段的 id 被原地替换，表现为「新思考只更新顶部那一块」。
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    feedStreamEvent(adapter, { type: 'message_start', message: { id: 'msg_a' } });
+    const first = feedThinking(adapter, '第一段思考');
+    feedStreamEvent(adapter, { type: 'message_stop' });
+    feedStreamEvent(adapter, { type: 'message_start', message: { id: 'msg_b' } });
+    const second = feedThinking(adapter, '第二段思考');
+    adapter.dispose();
+
+    assert.ok(first?.id && second?.id);
+    assert.notEqual(second.id, first.id, '不同 message 的思考块必须是不同 segment');
+    assert.equal(second.text, '> 💭 第二段思考', '新思考块不应继承上一段的文本');
 });
 
 /** 喂一条顶层 SDK assistant 聚合事件，返回全部产出的 segment。 */
@@ -186,8 +202,7 @@ function feedText(
     return segments;
 }
 
-test('正文：不含换行的分片被缓冲，不再逐字产出独立 segment', () => {
-    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+test('正文：不含换行的分片被缓冲，不再逐字产出独立 segment', () => {    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
     feedStreamEvent(adapter, { type: 'message_start', message: { id: 'msg_t1' } });
     const a = feedText(adapter, 'AI');
     const b = feedText(adapter, '被');
@@ -199,16 +214,42 @@ test('正文：不含换行的分片被缓冲，不再逐字产出独立 segment
     assert.deepEqual(c, []);
 });
 
-test('正文：整行完成时按行产出合并后的文本', () => {
+test('正文：整行完成时也不产出 segment，正文攒到块结束再整块渲染', () => {
     const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
     feedStreamEvent(adapter, { type: 'message_start', message: { id: 'msg_t2' } });
     feedText(adapter, 'AI');
     feedText(adapter, '被设定');
-    const segments = feedText(adapter, '为永远诚实\n');
+    const duringStream = feedText(adapter, '为永远诚实\n');
+    const events = feedStreamEvent(adapter, { type: 'content_block_stop', index: 0 });
     adapter.dispose();
 
+    assert.deepEqual(duringStream, [], '整行到达也不应在 delta 阶段产出 segment');
+    const segments: { text?: string }[] = [];
+    for (const ev of events) {
+        if (ev.type === 'segments') segments.push(...(ev.segments as { text?: string }[]));
+    }
     const merged = segments.map((s) => s.text).join('');
-    assert.ok(merged.includes('AI被设定为永远诚实'), `应合并为整行，实际：${merged}`);
+    assert.ok(merged.includes('AI被设定为永远诚实'), `块结束时应整块产出，实际：${merged}`);
+});
+
+test('正文：跨行 Markdown 表格在块结束时作为单个 segment 产出', () => {
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    feedStreamEvent(adapter, { type: 'message_start', message: { id: 'msg_t4' } });
+    feedText(adapter, '| 项目 | 位置 |\n');
+    feedText(adapter, '| --- | --- |\n');
+    feedText(adapter, '| admin | src/a.ts |\n');
+    const events = feedStreamEvent(adapter, { type: 'content_block_stop', index: 0 });
+    adapter.dispose();
+
+    const markdown: string[] = [];
+    for (const ev of events) {
+        if (ev.type !== 'segments') continue;
+        for (const seg of ev.segments as { kind?: string; text?: string }[]) {
+            if (seg.kind === 'markdown' && seg.text) markdown.push(seg.text);
+        }
+    }
+    assert.equal(markdown.length, 1, `表格必须整块产出，实际拆成 ${markdown.length} 段`);
+    assert.ok(markdown[0].includes('| --- | --- |'), '表格分隔行必须与表头同属一段');
 });
 
 test('正文：content_block_stop 会 flush 末尾未换行的半行', () => {

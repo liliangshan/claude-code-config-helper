@@ -156,7 +156,7 @@ test('route-specific ANTHROPIC_BASE_URL 不一致时配置比较应判定为不�
         cliEnv: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:12345/normal' }
     });
     const right = makeConfig({
-        cliEnv: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:12345/expert' }
+        cliEnv: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:12345/taskFlow' }
     });
     const same = (proc as unknown as {
         isSameConfig(leftConfig: ChatCliConfig, rightConfig: ChatCliConfig): boolean;
@@ -168,10 +168,10 @@ test('route-specific ANTHROPIC_BASE_URL 不一致时配置比较应判定为不�
 test('route-specific ANTHROPIC_BASE_URL 相同时配置比较应保持一致', () => {
     const proc = new CliProcess();
     const left = makeConfig({
-        cliEnv: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:12345/plan' }
+        cliEnv: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:12345/taskFlow' }
     });
     const right = makeConfig({
-        cliEnv: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:12345/plan' }
+        cliEnv: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:12345/taskFlow' }
     });
     const same = (proc as unknown as {
         isSameConfig(leftConfig: ChatCliConfig, rightConfig: ChatCliConfig): boolean;
@@ -181,26 +181,26 @@ test('route-specific ANTHROPIC_BASE_URL 相同时配置比较应保持一致', (
 });
 
 // ---------------------------------------------------------------------------
-// 按需专家：ask_expert 经 MCP 注入时的权限流回归
+// MCP 注入时的 stdio 权限流回归
 // ---------------------------------------------------------------------------
 
-const ASK_EXPERT_MCP = {
-    askExpert: { type: 'stdio' as const, command: 'node', args: ['ask-expert-mcp.js'] }
+const SAMPLE_MCP = {
+    memory: { type: 'stdio' as const, command: 'node', args: ['memory-mcp.js'] }
 };
 
-test('plan 权限模式下注入 ask_expert MCP，仍走 stdio 权限流（仅 bypass 才跳过）', () => {
-    // 回归：plan/default/acceptEdits 等非 bypass 模式下，ask_expert MCP server 被
-    // 注入到 --mcp-config，同时 --permission-prompt-tool stdio 仍然存在——这是
-    // 非交互模式下让需要确认的工具能弹授权的通道，不应因 ask_expert 而被关闭。
+test('plan 权限模式下注入 MCP，仍走 stdio 权限流（仅 bypass 才跳过）', () => {
+    // 回归：plan/default/acceptEdits 等非 bypass 模式下，MCP server 被注入到
+    // --mcp-config，同时 --permission-prompt-tool stdio 仍然存在——这是非交互模式
+    // 下让需要确认的工具能弹授权的通道，不应因 MCP 注入而被关闭。
     const args = buildArgs(makeConfig({
         permissionMode: 'plan',
-        mcpServers: ASK_EXPERT_MCP,
+        mcpServers: SAMPLE_MCP,
         strictMcpConfig: true
     }));
-    // ask_expert MCP 已注入。
+    // MCP 已注入。
     const mcpIdx = args.indexOf('--mcp-config');
     assert.notEqual(mcpIdx, -1);
-    assert.match(args[mcpIdx + 1], /askExpert/);
+    assert.match(args[mcpIdx + 1], /memory/);
     assert.ok(args.includes('--strict-mcp-config'));
     // plan 模式仍保留 stdio 权限流。
     const permIdx = args.indexOf('--permission-prompt-tool');
@@ -209,28 +209,28 @@ test('plan 权限模式下注入 ask_expert MCP，仍走 stdio 权限流（仅 b
     assert.equal(args.indexOf('--permission-mode') !== -1 && args[args.indexOf('--permission-mode') + 1], 'plan');
 });
 
-test('bypassPermissions 模式下注入 ask_expert MCP，仍保留 stdio 通道以拦截 AskUserQuestion', () => {
+test('bypassPermissions 模式下注入 MCP，仍保留 stdio 通道以拦截 AskUserQuestion', () => {
     // bypass 模式保留 --dangerously-skip-permissions 的同时追加 stdio 权限流：
     // AskUserQuestion 需经授权通道回传答案（否则空答案导致模型立即继续）；
     // 其余工具由扩展宿主 handleToolPermissionRequest 自动放行，保持 bypass 体验。
     const args = buildArgs(makeConfig({
         permissionMode: 'bypassPermissions',
-        mcpServers: ASK_EXPERT_MCP,
+        mcpServers: SAMPLE_MCP,
         strictMcpConfig: true
     }));
     const mcpIdx = args.indexOf('--mcp-config');
     assert.notEqual(mcpIdx, -1);
-    assert.match(args[mcpIdx + 1], /askExpert/);
+    assert.match(args[mcpIdx + 1], /memory/);
     assert.ok(args.includes('--dangerously-skip-permissions'), 'bypass 模式应保留 --dangerously-skip-permissions');
     const permIdx = args.indexOf('--permission-prompt-tool');
     assert.notEqual(permIdx, -1, 'bypass 模式应保留 stdio 权限流以拦截 AskUserQuestion');
     assert.equal(args[permIdx + 1], 'stdio');
 });
 
-test('用户已在 cliArgs 指定 --permission-prompt-tool 时不因 ask_expert 注入重复', () => {
+test('用户已在 cliArgs 指定 --permission-prompt-tool 时不因 MCP 注入重复', () => {
     const args = buildArgs(makeConfig({
         permissionMode: 'plan',
-        mcpServers: ASK_EXPERT_MCP,
+        mcpServers: SAMPLE_MCP,
         cliArgs: ['--permission-prompt-tool', 'mcp__custom__ask']
     }));
     const occurrences = args.filter((arg) => arg === '--permission-prompt-tool' || arg.startsWith('--permission-prompt-tool='));

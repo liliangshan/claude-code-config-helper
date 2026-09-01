@@ -68,24 +68,8 @@ export interface ChatCliConfig {
      */
     skills?: 'all' | string[];
 
-    /**
-     * 专家模式配置（按「项目 > 全局 > 默认」三层合并后的最终结果）。
-     *
-     * 由 `resolveExpertConfig()` 从 `chat.expertMode.project.*` /
-     * `chat.expertMode.global.*` 两个 scope 合并得到。双 CLI 路由方案下，
-     * 该字段仅决定是否启动 expert CLI 与「webview 顶部专家名是否常驻显示」，
-     * 不再控制 MCP 注入。
-     */
-    expertMode?: RoutedModelModeConfig;
-
-    /** 方案模式配置（按「项目 > 全局 > 默认」三层合并后的最终结果）。 */
-    planMode?: RoutedModelModeConfig;
-
     /** 压缩请求专用模型配置（按「项目 > 全局 > 默认」三层合并后的最终结果）。 */
     compactionMode?: RoutedModelModeConfig;
-
-    /** 审查模式配置（按「项目 > 全局 > 默认」三层合并后的最终结果）。 */
-    reviewMode?: RoutedModelModeConfig;
 
     /**
      * 启动 CLI 时附加的系统提示词，会被转换为 `--append-system-prompt <text>` 启动参数。

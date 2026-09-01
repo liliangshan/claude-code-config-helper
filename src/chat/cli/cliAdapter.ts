@@ -164,6 +164,14 @@ interface ContentBlockState {
     toolUseId?: string;
     /** tool_use 的累积 input JSON delta。 */
     toolInputJson: string;
+    /**
+     * 文本块是否已整块解析并输出过。
+     *
+     * text 块采用「攒完整块再渲染」策略：delta 阶段只累积不产出，直到
+     * content_block_stop / message_stop / 流结束时才一次性解析。该标记防止
+     * 多个收尾时机重复输出同一块正文。
+     */
+    textEmitted?: boolean;
 }
 
 /**
@@ -214,6 +222,15 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
 
     /** 当前正在累积的 assistant message 状态机；null 表示当前没有进行中的消息。 */
     private currentMessage: MessageParseState | null = null;
+
+    /**
+     * assistant message 序号，每次 `message_start` 自增。
+     *
+     * content block index 在每条 message 内从 0 重新计数，若思考块只用 index 作
+     * segment id，后续 message 的思考块就会命中前一条的 id 被原地替换，表现为
+     * 「新的思考只更新顶部那一块」。带上本序号即可保证每条 message 的思考块独立。
+     */
+    private messageOrdinal = 0;
 
     /** 当前用户轮次是否已经向聊天区输出过 assistant 正文，用于 result 兜底去重。 */
     private hasEmittedAssistantContent = false;
@@ -540,6 +557,11 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         this.stderrBuffer = '';
         if (stdout) this.emitParsed(this.parseLine('stdout', stdout));
         if (stderr) this.emitParsed(this.parseLine('stderr', stderr));
+        // 进程/流提前结束时，仍在累积中的文本块必须整块结算，否则正文丢失。
+        const pendingText = this.flushPendingTextBlocks();
+        if (pendingText.length > 0) {
+            this.emitParsed({ type: 'segments', segments: pendingText });
+        }
         const parserSegments = flushParser(this.parserState);
         if (parserSegments.length > 0) {
             this.emitParsed({ type: 'segments', segments: parserSegments });
@@ -886,9 +908,14 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
                 return this.handleContentBlockStop(event);
             case 'message_delta':
                 return { type: 'segments', segments: [], done: false };
-            case 'message_stop':
+            case 'message_stop': {
+                // 部分上游会省略 content_block_stop 直接发 message_stop，
+                // 这里兜底结算仍未输出的文本块，避免整段正文丢失。
+                const tail = this.flushPendingTextBlocks();
                 this.currentMessage = null;
+                if (tail.length > 0) return { type: 'segments', segments: tail, done: true };
                 return { type: 'done' };
+            }
             default:
                 return undefined;
         }
@@ -947,6 +974,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
                 ? ((message as Record<string, unknown>).id as string)
                 : '';
         this.currentMessage = { messageId, blocks: new Map() };
+        this.messageOrdinal += 1;
         return { type: 'segments', segments: [], done: false };
     }
 
@@ -1065,20 +1093,48 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     }
 
     /**
-     * 处理 text_delta：累积文本并通过 ChatParser 流式产出 markdown/code/diff/fileRef segments。
+     * 处理 text_delta：只累积文本，不产出 segment。
+     *
+     * 逐 delta 解析会把一段 Markdown 按到达边界切成多个独立 segment：表格、列表、
+     * 多行引用等跨行结构会被拆散到不同的 markdownRoot 里各自解析，表头、分隔行、
+     * 数据行最终各渲染成一个孤立块。因此正文改为攒到整块结束再一次性解析，
+     * 由 {@link flushPendingTextBlocks} 在 content_block_stop / message_stop /
+     * 流结束时统一产出。
      *
      * @param index content block index。
      * @param delta delta 子对象。
-     * @returns segments 事件。
+     * @returns 空 segments 事件。
      */
     private handleTextDelta(index: number, delta: Record<string, unknown>): ParsedCliEvent {
         const text = typeof delta.text === 'string' ? delta.text : '';
         if (!text) return { type: 'segments', segments: [], done: false };
         const block = this.ensureBlockState(index, 'text');
         block.text += text;
-        const parsed = this.parseDisplayText(text);
-        if (parsed.type === 'segments' && parsed.segments.length > 0) this.hasEmittedAssistantContent = true;
-        return parsed.type === 'segments' ? { ...parsed, done: false } : parsed;
+        return { type: 'segments', segments: [], done: false };
+    }
+
+    /**
+     * 把尚未输出的文本块整块解析为 segments。
+     *
+     * @param index 仅结算该 content block；省略时结算当前 message 的全部文本块。
+     * @returns 本次产出的 segments。
+     */
+    private flushPendingTextBlocks(index?: number): ChatSegment[] {
+        const blocks = this.currentMessage?.blocks;
+        if (!blocks) return [];
+        const segments: ChatSegment[] = [];
+        for (const [blockIndex, block] of blocks) {
+            if (index !== undefined && blockIndex !== index) continue;
+            if (block.type !== 'text' || block.textEmitted) continue;
+            block.textEmitted = true;
+            if (!block.text) continue;
+            const parsed = this.parseCompleteDisplayText(block.text);
+            if (parsed.type === 'segments' && parsed.segments.length > 0) {
+                this.hasEmittedAssistantContent = true;
+                segments.push(...parsed.segments);
+            }
+        }
+        return segments;
     }
 
     /**
@@ -1099,9 +1155,22 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         block.text += text;
         return {
             type: 'segments',
-            segments: [{ id: `thinking:${index}`, kind: 'markdown', text: this.formatThinkingBlock(block.text) }],
+            segments: [{ id: this.buildThinkingSegmentId(index), kind: 'markdown', text: this.formatThinkingBlock(block.text) }],
             done: false
         };
+    }
+
+    /**
+     * 构造思考块的稳定 segment id。
+     *
+     * 以 `message 序号 + block index` 组合，保证同一块思考在流式增量中原地增长，
+     * 而下一条 message 的思考块拿到全新 id，在聊天区按出现顺序独立成块。
+     *
+     * @param index content block index。
+     * @returns 思考块 segment id。
+     */
+    private buildThinkingSegmentId(index: number): string {
+        return `thinking:${this.messageOrdinal}:${index}`;
     }
 
     /**
@@ -1155,12 +1224,10 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         const block = this.currentMessage?.blocks.get(index);
         if (!block) return { type: 'segments', segments: [], done: false };
 
-        // 文本块流式解析按整行产出，最后一行若没有换行符会滞留在 pendingLine 中；
-        // 块结束时必须强制 flush，否则末行在聊天区缺失。
+        // 文本块在 delta 阶段只累积不渲染（见 handleTextDelta），块结束时整块
+        // 解析一次，跨行 Markdown 结构才能被完整识别。
         if (block.type === 'text') {
-            const tailSegments = flushParser(this.parserState);
-            if (tailSegments.length > 0) this.hasEmittedAssistantContent = true;
-            return { type: 'segments', segments: tailSegments, done: false };
+            return { type: 'segments', segments: this.flushPendingTextBlocks(index), done: false };
         }
 
         if (block.type === 'tool_use' && block.toolUseId) {
@@ -1200,10 +1267,23 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      * @param state block 状态。
      */
     private registerBlockState(index: number, state: ContentBlockState): void {
+        this.ensureCurrentMessage().blocks.set(index, state);
+    }
+
+    /**
+     * 取得当前 message 状态机；缺失时按需新建并推进 message 序号。
+     *
+     * CLI 偶尔会在 `message_start` 之前直接发 content block 事件，此时同样要让
+     * 思考块拿到新的序号，否则会复用上一条 message 的 segment id。
+     *
+     * @returns 当前 message 解析状态。
+     */
+    private ensureCurrentMessage(): MessageParseState {
         if (!this.currentMessage) {
             this.currentMessage = { messageId: '', blocks: new Map() };
+            this.messageOrdinal += 1;
         }
-        this.currentMessage.blocks.set(index, state);
+        return this.currentMessage;
     }
 
     /**
@@ -1217,13 +1297,11 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      * @returns block 状态。
      */
     private ensureBlockState(index: number, expectedType: ContentBlockState['type']): ContentBlockState {
-        if (!this.currentMessage) {
-            this.currentMessage = { messageId: '', blocks: new Map() };
-        }
-        let block = this.currentMessage.blocks.get(index);
+        const message = this.ensureCurrentMessage();
+        let block = message.blocks.get(index);
         if (!block) {
             block = { type: expectedType, text: '', toolInputJson: '' };
-            this.currentMessage.blocks.set(index, block);
+            message.blocks.set(index, block);
         }
         return block;
     }
@@ -1576,7 +1654,10 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         const text = typeof record.result === 'string' ? record.result : '';
         const usageSegment = this.buildUsageSegmentFromResult(record);
         // 优先把已有正文与 usage 合并到同一帧返回。
-        const tailSegments: ChatSegment[] = [];
+        // result 可能先于 message_stop 到达，先结算仍在累积中的文本块，
+        // 这样 hasEmittedAssistantContent 与 recentAssistantText 都是最新的，
+        // 下面的重复判定才不会把正文重复渲染一遍。
+        const tailSegments: ChatSegment[] = [...this.flushPendingTextBlocks()];
         if (text) {
             // result.result 兜底渲染时也要先把 <think>...</think> 转成引用块，
             // 与 parseSdkWrapperEvent 中的 text 分支保持一致的渲染行为。

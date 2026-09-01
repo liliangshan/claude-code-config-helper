@@ -20,8 +20,8 @@
                     </span>
                     <span class="chat-models__sep">·</span>
                     <span class="chat-models__item">
-                        <span class="chat-models__label" data-i18n="modelsBarExpert">Expert:</span>
-                        <span class="chat-models__name" data-role="expert-model-name">—</span>
+                        <span class="chat-models__label" data-i18n="modelsBarTaskFlow">Task flow:</span>
+                        <span class="chat-models__name" data-role="taskflow-model-name">—</span>
                     </span>
                     <button type="button" class="chat-models__edit" data-role="open-model-picker"
                             data-i18n-title="openModelPicker" title="Choose models">⚙</button>
@@ -66,9 +66,9 @@
                             <span class="composer-model-chip__label" data-i18n="modelsBarNormal">Normal:</span>
                             <span class="composer-model-chip__name" data-role="composer-normal-chip-name">—</span>
                         </button>
-                        <button type="button" class="composer-model-chip" data-role="composer-expert-chip" data-i18n-title="openModelPicker" title="Choose models">
-                            <span class="composer-model-chip__label" data-i18n="modelsBarExpert">Expert:</span>
-                            <span class="composer-model-chip__name" data-role="composer-expert-chip-name">—</span>
+                        <button type="button" class="composer-model-chip" data-role="composer-taskflow-chip" data-i18n-title="openModelPicker" title="Choose models">
+                            <span class="composer-model-chip__label" data-i18n="modelsBarTaskFlow">Task flow:</span>
+                            <span class="composer-model-chip__name" data-role="composer-taskflow-chip-name">—</span>
                         </button>
                         <span class="token-meter-wrap" data-role="token-meter-wrap" hidden>
                             <button type="button" class="token-meter" data-role="token-meter" aria-haspopup="dialog" aria-expanded="false" aria-live="polite"></button>
@@ -108,16 +108,8 @@
                 <select class="model-picker__select" data-role="model-picker-normal-select"></select>
             </section>
             <section class="model-picker__section">
-                <h3 data-i18n="pickerExpertSection">Expert task model</h3>
-                <select class="model-picker__select" data-role="model-picker-expert-select"></select>
-            </section>
-            <section class="model-picker__section">
-                <h3 data-i18n="pickerPlanSection">Plan task model</h3>
-                <select class="model-picker__select" data-role="model-picker-plan-select"></select>
-            </section>
-            <section class="model-picker__section">
-                <h3 data-i18n="pickerReviewSection">Review task model</h3>
-                <select class="model-picker__select" data-role="model-picker-review-select"></select>
+                <h3 data-i18n="pickerTaskFlowSection">Task flow model</h3>
+                <select class="model-picker__select" data-role="model-picker-taskflow-select"></select>
             </section>
             <section class="model-picker__section">
                 <h3 data-i18n="pickerCompactionSection">Compaction model</h3>

@@ -43,7 +43,7 @@ export function buildUpdateLlsCcaiTaskWorkflowTool(): AnthropicToolDefinition {
                             taskId: { type: 'string' },
                             status: {
                                 type: 'string',
-                                enum: ['pending', 'in_progress', 'completed', 'blocked']
+                                enum: ['pending', 'in_progress', 'completed']
                             }
                         },
                         required: ['taskId', 'status']
@@ -86,7 +86,7 @@ export function buildCreateLlsCcaiTaskWorkflowTool(): AnthropicToolDefinition {
                                     description: { type: 'string' },
                                     status: {
                                         type: 'string',
-                                        enum: ['pending', 'in_progress', 'completed', 'blocked']
+                                        enum: ['pending', 'in_progress', 'completed']
                                     }
                                 },
                                 required: ['id', 'title', 'description', 'status']

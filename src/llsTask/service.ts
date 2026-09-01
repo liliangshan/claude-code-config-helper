@@ -14,8 +14,14 @@ import type {
     LlsTaskWorkflow
 } from './types';
 
-/** 允许任务流使用的状态集合。 */
-const VALID_STATUSES: ReadonlySet<LlsTaskStatus> = new Set(['pending', 'in_progress', 'completed', 'blocked']);
+/**
+ * 允许工具回写的状态集合。
+ *
+ * 不含 'blocked'：阻塞/失败的任务若能被标记，续推会因为「没有 pending 也没有全部完成」
+ * 而陷入死循环。模型遇到做不下去的任务时应把原因写进 .LLSOAI/task_error.md，任务本身
+ * 仍保持 pending 或标记 completed。历史落盘数据里的 'blocked' 仍可正常读入。
+ */
+const VALID_STATUSES: ReadonlySet<LlsTaskStatus> = new Set(['pending', 'in_progress', 'completed']);
 /**
  * LLS CCAI 任务流核心服务。
  *
@@ -246,12 +252,13 @@ export class LlsTaskService implements vscode.Disposable {
             (task) => task.status === 'pending' || task.status === 'in_progress'
         );
         const nextTask = nextIndex >= 0 ? workflow.tasks[nextIndex] : undefined;
-        const nextLine = nextTask
-            ? `${texts.continueNextTaskLabel}: ${nextIndex + 1}. [${nextTask.status}] ${nextTask.title}`
-            : '';
-        const descriptionLine = nextTask && nextTask.description.trim()
-            ? nextTask.description.trim()
-            : '';
+        // 没有可执行任务（例如剩下的全是历史 blocked）时返回空串，让调度器停止续推，
+        // 否则会一直推送一条没有下一步的提示，形成死循环。
+        if (!nextTask) {
+            return '';
+        }
+        const nextLine = `${texts.continueNextTaskLabel}: ${nextIndex + 1}. [${nextTask.status}] ${nextTask.title}`;
+        const descriptionLine = nextTask.description.trim();
         const updateInstruction = texts.continueUpdateInstruction.replace('{{tool}}', LLS_CCAI_TASK_TOOL_NAME);
         const pathSuffix = snapshot.planningDocumentPath
             ? `\n\n${texts.planningPathLabel}: ${snapshot.planningDocumentPath}`

@@ -42,13 +42,12 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
     /**
      * 微批合并的最大保留时长（毫秒）。
      *
-     * 取值 4ms 大致对应 ~240Hz 的合并节奏：
-     * - 低于浏览器一帧（约 16ms），用户感知不到延迟。
-     * - 又略大于一次 microtask 队列长度，足以把同一段 CLI 解析中相邻产出的
-     *   多个 segment 合并成单条 message/patch，避免流式高峰期对 webview
-     *   postMessage 通道造成抖动。
+     * 取值 50ms 大致对应 ~20Hz 的合并节奏：
+     * - 用户感知不到额外延迟。
+     * - 足以把同一段 CLI 解析中相邻产出的多个 segment 合并成单条 message/patch，
+     *   避免流式高峰期对 webview postMessage 通道造成抖动。
      */
-    private static readonly PATCH_FLUSH_WINDOW_MS = 4;
+    private static readonly PATCH_FLUSH_WINDOW_MS = 50;
 
     /** Webview 消息事件发送器。 */
     private readonly messageEmitter = new vscode.EventEmitter<WebviewToExtension>();
@@ -193,18 +192,28 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
     /**
      * 把高频 message/patch 按消息 ID 合并到短周期队列中。
      *
+     * 合并时按 `segment.id` 去重：工具卡片在 tool_use / input_json_delta / tool_result
+     * 各阶段会被适配器就地改写并反复投递同一个对象引用，若直接 push，一次 flush 就会
+     * 把同一张卡片的多份快照发给 Webview，导致卡片在同一帧内被重建多次（视觉抖动）。
+     *
      * @param message 待合并的 patch 消息。
      */
     private enqueuePatchMessage(message: Extract<ExtensionToWebview, { type: 'message/patch' }>): void {
         const existing = this.patchQueue.get(message.id);
         if (existing) {
-            existing.segments.push(...message.segments);
+            for (const segment of message.segments) {
+                const index = segment.id
+                    ? existing.segments.findIndex((item) => item.id === segment.id)
+                    : -1;
+                if (index >= 0) existing.segments[index] = segment;
+                else existing.segments.push(segment);
+            }
             existing.pending = message.pending;
         } else {
             this.patchQueue.set(message.id, { ...message, segments: [...message.segments] });
         }
         if (!this.patchFlushTimer) {
-            this.patchFlushTimer = setTimeout(() => this.flushPatchQueue(), 50);
+            this.patchFlushTimer = setTimeout(() => this.flushPatchQueue(), ChatViewHost.PATCH_FLUSH_WINDOW_MS);
         }
     }
 

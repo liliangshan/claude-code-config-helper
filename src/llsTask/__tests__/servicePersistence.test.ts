@@ -124,6 +124,49 @@ test('restore skips a fully completed workflow', async () => {
     assert.equal(service.hasActiveWorkflow(), false);
 });
 
+test('buildContinuePrompt returns empty when no pending or in_progress task remains', async () => {
+    // 历史落盘数据里可能残留 blocked 任务：既不算全部完成，也没有可执行的下一步。
+    // 若此时仍返回续推提示，调度器会无限续推。
+    const store = new FakeStore();
+    store.loadResult = {
+        workflow: {
+            title: 'Stuck',
+            summary: '',
+            tasks: [
+                { id: '1', title: 'A', description: '', status: 'completed' },
+                { id: '2', title: 'B', description: '', status: 'blocked' }
+            ]
+        },
+        updatedAt: Date.now()
+    };
+    const service = new LlsTaskService(makeConfigManager(), asStore(store));
+    await service.restore();
+    assert.equal(service.isWorkflowCompleted(), false);
+    assert.equal(service.buildContinuePrompt(), '');
+});
+
+test('createWorkflow downgrades an unsupported blocked status to pending', () => {
+    const service = new LlsTaskService(makeConfigManager(), asStore(new FakeStore()));
+    service.createWorkflow({
+        title: 'Demo',
+        summary: '',
+        tasks: [{ id: '1', title: 'A', description: '', status: 'blocked' }]
+    });
+    assert.equal(service.getSnapshot().workflow?.tasks[0].status, 'pending');
+});
+
+test('updateTaskStatuses rejects the blocked status', () => {
+    const service = new LlsTaskService(makeConfigManager(), asStore(new FakeStore()));
+    service.createWorkflow({
+        title: 'Demo',
+        summary: '',
+        tasks: [{ id: '1', title: 'A', description: '', status: 'pending' }]
+    });
+    const result = service.updateTaskStatuses([{ taskId: '1', status: 'blocked' }]);
+    assert.equal(result.updated, 0);
+    assert.equal(service.getSnapshot().workflow?.tasks[0].status, 'pending');
+});
+
 test('restore does not write back on load (no save during restore)', async () => {
     const store = new FakeStore();
     store.loadResult = {

@@ -18,7 +18,7 @@ import * as vscode from 'vscode';
 
 import type { ChatRoute } from '../chat/protocol';
 import type { ConfigManager } from '../configManager';
-import { readCompactionConfigFromVscode } from '../expertMode/expertConfig';
+import { readCompactionConfigFromVscode } from '../chatRuntime/compactionConfig';
 import { Logger } from '../logger';
 import type { AutoContinueScheduler } from '../llsTask/autoContinue';
 import { isLlsCcaiTaskTriggered } from '../llsTask/detector';
@@ -109,7 +109,7 @@ export function parseLocalCliPath(path: string): ParsedLocalCliPath | undefined 
     if (path === RELAY_PATH) {
         return { route: 'normal', upstreamPath: path };
     }
-    const match = path.match(/^\/(normal|expert|plan|review)(\/.*)$/);
+    const match = path.match(/^\/(normal|taskFlow)(\/.*)$/);
     if (!match) return undefined;
     return {
         route: match[1] as LocalCliHttpRoute,
@@ -125,7 +125,7 @@ export interface RelayRouterDeps {
     adapters: UpstreamAdapter[];
     /** 上游超时通知回调，用于宿主层触发自动续发。 */
     onUpstreamTimeout?: (kind: UpstreamTimeoutKind) => void;
-    /** 上游请求生命周期回调，用于宿主按 normal/expert 路由维护执行中状态。 */
+    /** 上游请求生命周期回调，用于宿主按 normal/taskFlow 路由维护执行中状态。 */
     onUpstreamRequestStart?: (info: RelayUpstreamRequestInfo) => void;
     onUpstreamRequestEnd?: (info: RelayUpstreamRequestInfo) => void;
     /** 可选任务流服务，用于处理 @llsccai-task 触发。 */

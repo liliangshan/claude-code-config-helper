@@ -148,28 +148,10 @@ const tests: TestCase[] = [
         }
     },
     {
-        name: '/expert/v1/messages 应解析为 expert 路由',
+        name: '/taskFlow/v1/messages 应解析为 taskFlow 路由',
         run: () => {
-            assert.deepStrictEqual(parseLocalCliPath('/expert/v1/messages'), {
-                route: 'expert',
-                upstreamPath: '/v1/messages'
-            });
-        }
-    },
-    {
-        name: '/plan/v1/messages 应解析为 plan 路由',
-        run: () => {
-            assert.deepStrictEqual(parseLocalCliPath('/plan/v1/messages'), {
-                route: 'plan',
-                upstreamPath: '/v1/messages'
-            });
-        }
-    },
-    {
-        name: '/review/v1/messages 应解析为 review 路由',
-        run: () => {
-            assert.deepStrictEqual(parseLocalCliPath('/review/v1/messages'), {
-                route: 'review',
+            assert.deepStrictEqual(parseLocalCliPath('/taskFlow/v1/messages'), {
+                route: 'taskFlow',
                 upstreamPath: '/v1/messages'
             });
         }
@@ -181,23 +163,30 @@ const tests: TestCase[] = [
         }
     },
     {
+        name: '已下线的 expert/plan/review 前缀不再被识别',
+        run: () => {
+            assert.strictEqual(parseLocalCliPath('/expert/v1/messages'), undefined);
+            assert.strictEqual(parseLocalCliPath('/plan/v1/messages'), undefined);
+            assert.strictEqual(parseLocalCliPath('/review/v1/messages'), undefined);
+        }
+    },
+    {
         name: 'route 前缀下的非 messages 路径只负责剥离 route',
         run: () => {
-            assert.deepStrictEqual(parseLocalCliPath('/expert/other'), {
-                route: 'expert',
+            assert.deepStrictEqual(parseLocalCliPath('/taskFlow/other'), {
+                route: 'taskFlow',
                 upstreamPath: '/other'
             });
         }
     },
     {
-        name: 'Relay 命中路径应包含四路 CLI messages path',
+        name: 'Relay 命中路径应包含 normal/taskFlow 两路 CLI messages path',
         run: () => {
             assert.strictEqual(isRelayMessagesPath('/v1/messages'), true);
             assert.strictEqual(isRelayMessagesPath('/normal/v1/messages'), true);
-            assert.strictEqual(isRelayMessagesPath('/expert/v1/messages'), true);
-            assert.strictEqual(isRelayMessagesPath('/plan/v1/messages'), true);
-            assert.strictEqual(isRelayMessagesPath('/review/v1/messages'), true);
-            assert.strictEqual(isRelayMessagesPath('/plan/other'), false);
+            assert.strictEqual(isRelayMessagesPath('/taskFlow/v1/messages'), true);
+            assert.strictEqual(isRelayMessagesPath('/taskFlow/other'), false);
+            assert.strictEqual(isRelayMessagesPath('/expert/v1/messages'), false);
             assert.strictEqual(isRelayMessagesPath('/bad/v1/messages'), false);
         }
     },
@@ -205,11 +194,11 @@ const tests: TestCase[] = [
         name: 'Relay 生命周期归因应优先使用 path route 而不是 model',
         run: async () => {
             const starts: RelayUpstreamRequestInfo[] = [];
-            const result = await requestRouter('/expert/v1/messages', (info) => starts.push(info));
+            const result = await requestRouter('/taskFlow/v1/messages', (info) => starts.push(info));
             assert.strictEqual(result.status, 200);
             assert.strictEqual(JSON.parse(result.body).ok, true);
             assert.strictEqual(starts.length, 1);
-            assert.strictEqual(starts[0].route, 'expert');
+            assert.strictEqual(starts[0].route, 'taskFlow');
             assert.strictEqual(starts[0].providerId, 'p');
             assert.strictEqual(starts[0].modelId, 'same-model');
         }

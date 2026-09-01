@@ -14,14 +14,11 @@ import * as path from 'path';
 import { promises as fs } from 'fs';
 
 import type { ChatCacheTtl } from '../constants';
-import type { ChatMessage, ChatModelOption, LlsTaskSnapshotPayload, ChatQuickPermissionMode, ChatRoute, ChatUiLanguage, SessionListItem, WebviewToExtension } from '../chat/protocol';
-import { startsWithExpertPrefix, stripExpertPrefix } from '../expertMode/expertTriggers';
+import type { ChatMessage, ChatModelOption, LlsTaskSnapshotPayload, ChatQuickPermissionMode, ChatRoute, ChatRoutedModelSelection, ChatUiLanguage, SessionListItem, WebviewToExtension } from '../chat/protocol';
 import { Logger } from '../logger';
 import { getChatViewHost, getConfigManager, getLlsTaskService } from '../runtime';
 import {
     currentChatCliSessionIdSync,
-    disposePlanCli,
-    disposeReviewCli,
     getChatCliConfigService,
     getChatCliSessionStore,
     restartChatCli,
@@ -52,18 +49,15 @@ import {
 } from './chatMessaging';
 import { handleAskUserAnswers } from './cliEventHandlers';
 import {
+    findModelDisplayName,
     handleModelsApplyPair,
     isSelectableModel,
     readEffectiveCompactionModelSelection,
-    readEffectiveExpertModelSelection,
-    readEffectivePlanModelSelection,
-    readEffectiveReviewModelSelection,
-    selectChatExpertModel,
-    selectChatModel,
-    selectChatPlanModel,
-    selectChatReviewModel
+    readEffectiveTaskFlowModelSelection,
+    saveTaskFlowModelSelection,
+    selectChatModel
 } from './modelSelection';
-import { cancelRouteProcess, chatCliCancelState, chatRouteState, chatSessionRouteById, getStreamAdapterForRoute, isRouteBusy, routes } from './routeState';
+import { cancelRouteProcess, chatCliCancelState, chatRouteState, chatSessionRouteById, routes } from './routeState';
 
 /** webviewMessages 需要但仍留在 extension.ts 的协作函数集合。 */
 export interface WebviewMessagesDeps {
@@ -110,11 +104,6 @@ export async function switchChatRoute(route: ChatRoute, reason: string): Promise
     await getChatViewHost()?.postMessage({ type: 'route/changed', route });
 }
 
-/** normal CLI 输出包含 @llsExpert 时把下一条用户消息切到 expert。 */
-export async function switchRouteToExpert(reason: string): Promise<void> {
-    await switchChatRoute('expert', reason);
-}
-
 /**
  * 处理 Chat Webview 发回扩展宿主的基础消息。
  *
@@ -133,9 +122,7 @@ export async function handleChatWebviewMessage(message: WebviewToExtension): Pro
                 cliPath: getChatCliConfigService()!.getConfig().cliPath ?? ''
             });
             await postChatModelOptions();
-            await postChatExpertModelOptions();
-            await postChatPlanModelOptions();
-            await postChatReviewModelOptions();
+            await postChatTaskFlowModelOptions();
             await postModelsSnapshot();
             await getChatViewHost()?.postMessage({ type: 'route/changed', route: chatRouteState.active });
             await postChatPermissionMode();
@@ -147,16 +134,10 @@ export async function handleChatWebviewMessage(message: WebviewToExtension): Pro
             return;
         case 'user/send':
             {
-                const rawText = message.text;
-                const forceExpert = startsWithExpertPrefix(rawText);
-                if (!forceExpert && chatRouteState.active === 'expert' && !isRouteBusy('expert')) {
-                    await switchChatRoute('normal', 'expert-idle-fallback');
-                }
-                const bodyText = forceExpert ? stripExpertPrefix(rawText) : rawText;
-                const prompt = buildPromptWithAttachments(bodyText, message.attachments);
+                const prompt = buildPromptWithAttachments(message.text, message.attachments);
                 await appendLocalChatMessage('user', prompt, await buildUserDisplaySegments(prompt, message.attachments));
                 requireDeps().armHttpExpectation(prompt);
-                await sendUserMessageToCli(prompt, { forceExpert });
+                await sendUserMessageToCli(prompt);
             }
             return;
         case 'file/pick':
@@ -174,14 +155,8 @@ export async function handleChatWebviewMessage(message: WebviewToExtension): Pro
         case 'cacheTtl/select':
             await selectChatCacheTtl(message.ttl);
             return;
-        case 'expert/model/select':
-            await selectChatExpertModel(message.modelId);
-            return;
-        case 'plan/model/select':
-            await selectChatPlanModel(message.modelId);
-            return;
-        case 'review/model/select':
-            await selectChatReviewModel(message.modelId);
+        case 'taskFlow/model/select':
+            await selectChatTaskFlowModel(message.modelId);
             return;
         case 'taskFlow/open':
             await requireDeps().openLlsCcaiTaskMenu();
@@ -211,7 +186,7 @@ export async function handleChatWebviewMessage(message: WebviewToExtension): Pro
             await handleRouteSelect(message.route);
             return;
         case 'models/applyPair':
-            await handleModelsApplyPair(message.normal, message.expert, message.plan, message.review, message.compaction);
+            await handleModelsApplyPair(message.normal, message.taskFlow, message.compaction);
             return;
         case 'user/cancel':
             chatCliCancelState.requested = true;
@@ -240,17 +215,10 @@ export async function handleChatWebviewMessage(message: WebviewToExtension): Pro
                 const cwd = getChatCliConfigService()?.getConfig().cwd;
                 if (cwd) {
                     await getChatCliSessionStore()?.clearSessionId(cwd, 'normal');
-                    await getChatCliSessionStore()?.clearSessionId(cwd, 'expert');
-                    await getChatCliSessionStore()?.clearSessionId(cwd, 'plan');
-                    await getChatCliSessionStore()?.clearSessionId(cwd, 'review');
                     routes.normal.sessionId = '';
-                    routes.expert.sessionId = '';
-                    routes.plan.sessionId = '';
-                    routes.review.sessionId = '';
+                    routes.taskFlow.sessionId = '';
                     chatSessionRouteById.clear();
-                    Logger.info(`[session/clear] 已删除 normal/expert/plan/review CLI sessionId 文件：cwd=${cwd}`);
-                    await disposePlanCli('session/clear');
-                    await disposeReviewCli('session/clear');
+                    Logger.info(`[session/clear] 已删除 normal CLI sessionId 文件：cwd=${cwd}`);
                 }
             } catch (err) {
                 Logger.warn('[session/clear] 删除 CLI sessionId 失败：' + (err instanceof Error ? err.message : String(err)));
@@ -325,16 +293,9 @@ export async function handleChatWebviewMessage(message: WebviewToExtension): Pro
                 const cwd = getChatCliConfigService()?.getConfig().cwd;
                 if (cwd && targetSessionId) {
                     await getChatCliSessionStore()?.writeSessionId(cwd, targetSessionId, 'normal');
-                    await getChatCliSessionStore()?.clearSessionId(cwd, 'expert');
-                    await getChatCliSessionStore()?.clearSessionId(cwd, 'plan');
-                    await getChatCliSessionStore()?.clearSessionId(cwd, 'review');
                     routes.normal.sessionId = '';
-                    routes.expert.sessionId = '';
-                    routes.plan.sessionId = '';
-                    routes.review.sessionId = '';
+                    routes.taskFlow.sessionId = '';
                     chatSessionRouteById.clear();
-                    await disposePlanCli('session/resume');
-                    await disposeReviewCli('session/resume');
                     Logger.info(`[session/resume] 已写入目标 sessionId，准备重启 CLI`);
                     await restartChatCliPair({ silent: true });
                 }
@@ -464,92 +425,75 @@ export async function postChatModelOptions(): Promise<void> {
 }
 
 /**
- * 读取专家模型下拉框可选项，并推送当前按「项目 > 全局 > 关闭」解析的选择。
- */
-export async function postChatExpertModelOptions(): Promise<void> {
-    const manager = getConfigManager();
-    if (!manager) return;
-    const current = readEffectiveExpertModelSelection();
-    const models: ChatModelOption[] = [];
-    for (const provider of manager.listProviders()) {
-        for (const model of provider.models) {
-            if (!isSelectableModel(provider, model)) continue;
-            models.push({
-                providerId: provider.id,
-                providerName: provider.name,
-                modelId: model.modelId,
-                displayName: model.displayName || model.modelId,
-                selected: current.enabled && current.modelId === model.modelId
-            });
-        }
-    }
-    await getChatViewHost()?.postMessage({ type: 'expert/model/options', models, current });
-}
-
-/**
- * 读取方案模型下拉框可选项，并推送当前按「项目 > 全局 > 关闭」解析的选择。
- */
-export async function postChatPlanModelOptions(): Promise<void> {
-    const manager = getConfigManager();
-    if (!manager) return;
-    const current = readEffectivePlanModelSelection();
-    const models: ChatModelOption[] = [];
-    for (const provider of manager.listProviders()) {
-        for (const model of provider.models) {
-            if (!isSelectableModel(provider, model)) continue;
-            models.push({
-                providerId: provider.id,
-                providerName: provider.name,
-                modelId: model.modelId,
-                displayName: model.displayName || model.modelId,
-                selected: current.enabled && current.modelId === model.modelId
-            });
-        }
-    }
-    await getChatViewHost()?.postMessage({ type: 'plan/model/options', models, current });
-}
-
-/**
- * 读取审查模型下拉框可选项，并推送当前按「项目 > 全局 > 关闭」解析的选择。
- */
-export async function postChatReviewModelOptions(): Promise<void> {
-    const manager = getConfigManager();
-    if (!manager) return;
-    const current = readEffectiveReviewModelSelection();
-    const models: ChatModelOption[] = [];
-    for (const provider of manager.listProviders()) {
-        for (const model of provider.models) {
-            if (!isSelectableModel(provider, model)) continue;
-            models.push({
-                providerId: provider.id,
-                providerName: provider.name,
-                modelId: model.modelId,
-                displayName: model.displayName || model.modelId,
-                selected: current.enabled && current.modelId === model.modelId
-            });
-        }
-    }
-    await getChatViewHost()?.postMessage({ type: 'review/model/options', models, current });
-}
-
-/**
- * 一次性推送普通 + 专家两栏模型可选项与当前选择，用于「模型选择弹窗」。
+ * 把任务流模型标识解析为 ChatRoutedModelSelection 结构，供 Webview 渲染。
  *
- * 与 `postChatModelOptions` / `postChatExpertModelOptions` 共用底层 provider/model
+ * `modelId` 形如 `providerId/modelId`；未配置时 enabled=false、modelId 为空串，
+ * Webview 据此展示「未配置（跟随主模型）」。
+ *
+ * @param rawModelId 工作区配置里的任务流模型标识。
+ * @returns 解析后的选择状态。
+ */
+function toTaskFlowSelection(rawModelId: string): ChatRoutedModelSelection {
+    const modelId = (rawModelId || '').trim();
+    if (!modelId) return { enabled: false, modelId: '' };
+    return { enabled: true, modelId };
+}
+
+/**
+ * 读取任务流模型下拉框可选项，并推送当前工作区配置解析出的选择。
+ */
+export async function postChatTaskFlowModelOptions(): Promise<void> {
+    const manager = getConfigManager();
+    if (!manager) return;
+    const current = toTaskFlowSelection(readEffectiveTaskFlowModelSelection());
+    const models: ChatModelOption[] = [];
+    for (const provider of manager.listProviders()) {
+        for (const model of provider.models) {
+            if (!isSelectableModel(provider, model)) continue;
+            models.push({
+                providerId: provider.id,
+                providerName: provider.name,
+                modelId: model.modelId,
+                displayName: model.displayName || model.modelId,
+                selected: current.enabled && `${provider.id}/${model.modelId}` === current.modelId
+            });
+        }
+    }
+    await getChatViewHost()?.postMessage({ type: 'taskFlow/model/options', models, current });
+}
+
+/**
+ * 从 Chat 输入框下方任务流下拉框切换任务流模型（仅写入工作区配置）。
+ *
+ * @param modelId 形如 `providerId/modelId`；空字符串表示清除配置、回退主模型。
+ */
+export async function selectChatTaskFlowModel(modelId: string): Promise<void> {
+    await saveTaskFlowModelSelection(modelId);
+    await postChatTaskFlowModelOptions();
+    const effective = readEffectiveTaskFlowModelSelection();
+    if (!effective) {
+        Logger.info('Chat 输入框清除任务流模型配置，后续任务流回退主模型');
+        await showChatToast('success', '任务流模型已清除，将跟随主模型');
+        return;
+    }
+    Logger.info(`Chat 输入框切换任务流模型：${findModelDisplayName(effective)}`);
+    await showChatToast('success', `任务流模型已切换为：${findModelDisplayName(effective)}`);
+}
+
+/**
+ * 一次性推送普通 + 任务流 + 压缩三栏模型可选项与当前选择，用于「模型选择弹窗」。
+ *
+ * 与 `postChatModelOptions` / `postChatTaskFlowModelOptions` 共用底层 provider/model
  * 数据源，但合并为一条 `models/snapshot` 消息，避免弹窗打开时刷新闪动。
  */
 export async function postModelsSnapshot(): Promise<void> {
     const manager = getConfigManager();
     if (!manager) return;
     const currentNormal = manager.getCurrentModel() ?? null;
-    const currentExpert = readEffectiveExpertModelSelection();
-    const currentPlan = readEffectivePlanModelSelection();
-    const currentReview = readEffectiveReviewModelSelection();
+    const currentTaskFlow = toTaskFlowSelection(readEffectiveTaskFlowModelSelection());
     const currentCompaction = readEffectiveCompactionModelSelection();
     const normalModels: ChatModelOption[] = [];
-    const expertModels: ChatModelOption[] = [];
-    const planModels: ChatModelOption[] = [];
-    const reviewModels: ChatModelOption[] = [];
+    const taskFlowModels: ChatModelOption[] = [];
     const compactionModels: ChatModelOption[] = [];
     for (const provider of manager.listProviders()) {
         for (const model of provider.models) {
@@ -565,17 +509,9 @@ export async function postModelsSnapshot(): Promise<void> {
                 ...baseOption,
                 selected: currentNormal?.providerId === provider.id && currentNormal.modelId === model.modelId
             });
-            expertModels.push({
+            taskFlowModels.push({
                 ...baseOption,
-                selected: currentExpert.enabled && currentExpert.modelId === model.modelId
-            });
-            planModels.push({
-                ...baseOption,
-                selected: currentPlan.enabled && currentPlan.modelId === model.modelId
-            });
-            reviewModels.push({
-                ...baseOption,
-                selected: currentReview.enabled && currentReview.modelId === model.modelId
+                selected: currentTaskFlow.enabled && `${provider.id}/${model.modelId}` === currentTaskFlow.modelId
             });
             compactionModels.push({
                 ...baseOption,
@@ -586,14 +522,10 @@ export async function postModelsSnapshot(): Promise<void> {
     await getChatViewHost()?.postMessage({
         type: 'models/snapshot',
         normalModels,
-        expertModels,
-        planModels,
-        reviewModels,
+        taskFlowModels,
         compactionModels,
         currentNormal: currentNormal ? { providerId: currentNormal.providerId, modelId: currentNormal.modelId } : null,
-        currentExpert,
-        currentPlan,
-        currentReview,
+        currentTaskFlow,
         currentCompaction
     });
 }
@@ -601,17 +533,12 @@ export async function postModelsSnapshot(): Promise<void> {
 /**
  * 处理 webview 路由徽章 / 顶部按钮发回的手动路由切换。
  *
- * 第一版仅支持手动切回 `'normal'`：清除 normal 输出可能存在的 @llsExpert
- * 标记带来的副作用，让下一条用户消息回到普通 CLI；切到 `'expert'` 时也走
- * 同一条路径，便于用户主动锁定专家。
+ * taskFlow 复用 normal CLI 进程，切换只改变 `chatRouteState.active`，下一条用户
+ * 消息即按该路由解析出的任务流模型发起（未配置时回退主模型）。
  *
  * @param route 用户希望切换到的路由。
  */
 export async function handleRouteSelect(route: ChatRoute): Promise<void> {
-    if (route === 'expert' && !getStreamAdapterForRoute('expert')) {
-        await showChatToast('warn', '未配置专家任务模型，无法切换到专家路由。');
-        return;
-    }
     await switchChatRoute(route, 'user-route-select');
 }
 

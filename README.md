@@ -1,12 +1,33 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.25
+**Version:** 3.2.43
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
 
+## What's New in 3.2.43
+
+- **The task flow model is now used for continuation, not for creation.** Previously, starting a task flow switched the main model permanently and it was never switched back. The main model now always creates the workflow; before each auto-continue the extension checks the current model and, only when it differs, switches the main CLI to the configured task flow model and restarts it (the session is resumed with `--resume`, so context and session id are preserved). When the workflow completes or is cleared, the original main model is restored.
+- The check is idempotent: no task flow model configured, or already on it, means no restart at all — a whole run restarts the CLI twice at most, and only the switching restart waits a short settle delay before the continue prompt is sent. The original model is stored in `workspaceState`, so a crash mid-flow still restores on the next activation.
+
+## What's New in 3.2.42
+
+- **Fixed task flow auto-continuing forever on a blocked or failed task.** The loop only stopped when every task was `completed`, yet a continue prompt was still generated when nothing was `pending` or `in_progress`, so a stuck workflow was re-pushed indefinitely. No actionable task now means no continue prompt.
+- **`blocked` is gone as a writable status.** Tasks can only be `pending`, `in_progress` or `completed`. When something truly cannot be done, the model is instructed to append the reason to `.LLSOAI/task_error.md`, mark the task completed and move on — so failures are recorded instead of stalling the workflow. Existing `.LLSOAI/task-flow.json` files containing `blocked` still load fine.
+
+## What's New in 3.2.41
+
+- **Assistant body text now renders as a whole block instead of line by line.** The streaming chunker used to emit every buffered line as its own markdown segment, so multi-line structures — tables, nested lists, multi-line quotes — were split across separate render roots and each row was parsed on its own (a table came out as a stack of one-cell boxes). Text deltas are now accumulated and parsed in a single pass when the content block ends.
+
+## What's New in 3.2.40
+
+- **Task flow guide card on an empty chat.** A brand-new conversation now opens with a card that walks you through the recommended plan-first workflow: let the main model write a plan document, add it to context with the ＋ button above the input, click `CC task flow` at the bottom of the composer, then send. It follows your configured UI language and links to the full [Task Flow usage guide](./docs/taskflow-usage-guide.md); dismiss it and it stays hidden for the session.
+- **Fixed streaming long text stacking duplicate 「Long text output」 blocks.** Thinking blocks stream as full accumulated text under one stable segment id, but the collapsible long-text branch dropped its DOM node instead of returning it, so the id was never stamped and each delta appended yet another collapsed block. Long text is now patched in place, and a block you expanded stays open while it keeps growing.
+- **Task flow model replaces the expert / plan / review modes.** The model picker is now a three-way **Normal / Task flow / Compaction** choice. A task-flow prompt can switch the main model to a dedicated model right before sending, and internal routing collapses to just `normal` and `taskFlow`.
+
 ## Highlights
 
-- Fixed compaction still firing at around 166k tokens after it was made manual: the Claude CLI was compacting on its own because it never saw the model's configured context length and fell back to its built-in 200k default. The context length from the model config panel is now passed to the CLI as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, so the CLI and the token meter share one limit; expert/plan/review routes resolve it from their own model, and nothing is injected when the field is empty.
+- Plan-driven **Task Flow** mode: the model writes a plan document first, then drives it to completion step by step with automatic continuation, live status-bar progress, restart-safe persistence, and a circuit breaker that pauses the loop if the model stops calling tools. See [`docs/taskflow-usage-guide.md`](./docs/taskflow-usage-guide.md).
+- Fixed compaction still firing at around 166k tokens after it was made manual: the Claude CLI was compacting on its own because it never saw the model's configured context length and fell back to its built-in 200k default. The context length from the model config panel is now passed to the CLI as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, so the CLI and the token meter share one limit, and nothing is injected when the field is empty.
 - Made context compaction **manual only**: the token budget no longer fires `/compact` by itself once a session crosses its threshold, since that competed with the CLI's own compaction and could compact a conversation still in progress. Token metering is unchanged — the meter, threshold, and per-session accounting all keep working; compaction now happens only via the compact button on the token meter or a `/compact` you type yourself.
 - Fixed the built-in **`browser_*` MCP tools disappearing entirely**: the MCP server runs as a standalone Node child process without the `vscode` module, but it statically imported `browserToolHost` (which chains into `require('vscode')`), so it crashed on startup and the whole browser tool group silently vanished from the model's tool list. `BrowserToolHost` is now a type-only import, required lazily on the extension-host path.
 - Added **click-to-copy inline code** in Chat: a single-backtick span (typically a one-line shell command) now shows a copy icon and copies the whole command on click, with a green confirmation flash. Also fixed multiple code blocks in one message stacking all their copy buttons in the message's top-right corner.
@@ -22,12 +43,12 @@ Claude Code Config Helper is a VS Code extension for enhancing Claude Code workf
 - Added a **past conversations panel** in the Chat header: list previous sessions, resume one to reload its full message history into the webview, and the header now shows the resumed session's title.
 - Replaced the Chat header **Copy source** and **Clear** buttons with a single **New chat** button that starts a fresh empty session.
 - Made session list/content retrieval **Windows-compatible**: project directory names are encoded exactly like the official Claude CLI (no truncation), `CLAUDE_CONFIG_DIR` is honored, and the read path matches the CLI's write `cwd`.
-- Fixed Chat model-picker refresh after adding or editing provider models: normal, expert, plan, review, and compaction model dropdowns now update without requiring a VS Code restart.
+- Fixed Chat model-picker refresh after adding or editing provider models: the normal, task-flow and compaction model dropdowns now update without requiring a VS Code restart.
 - Anthropic direct providers no longer receive the OpenAI-style `stream_options.include_usage` request field; OpenAI-compatible streaming requests still keep usage options where supported.
 - Added token budget context compression for the built-in Chat: the token meter can trigger compression, large contexts auto-trigger compression near the configured threshold, tool call/tool result blocks are removed from the summary input, and the compressed summary is injected into a fresh hidden CLI session.
 - Native Claude `TodoWrite` todos now appear in a separate footer panel, independent from the CC task-flow Todo panel, so both can be shown and collapsed independently.
 - Tool call cards are collapsed by default: only the summary row (icon + name + status badge + chevron) is shown; clicking the row toggles the body. Collapse state is preserved across tool status updates.
-- Running state lockdown: while the chat is responding, the bottom composer controls (model select, permission mode, expert model select, CC task flow button) are disabled, and the comet-beam border animation stays visible even when the textarea is focused.
+- Running state lockdown: while the chat is responding, the bottom composer controls (model select, permission mode, task-flow model select, CC task flow button) are disabled, and the comet-beam border animation stays visible even when the textarea is focused.
 - Upstream CLI `system/taskstarted` and `system/tasknotification` JSON events are rendered as a compact task card (status icon + description + task type + status badge) instead of leaking raw JSON into the chat.
 - Chat footer Todo card for LLS CCAI task workflows, with live status refresh and animated in-progress indicators.
 - Improved LLS CCAI task menu behavior: completed workflows are cleared silently, while running workflows still require confirmation before replacement.
@@ -42,18 +63,34 @@ Claude Code Config Helper is a VS Code extension for enhancing Claude Code workf
 - Import/export of provider configuration and shared prompts.
 - Multi-language UI support.
 
-## On-Demand Expert (v2.1.0+)
+## Task Flow Mode
 
-The built-in Chat now runs a **single** long-lived Claude CLI that handles everything by default. A separate expert model is only invoked **on demand**, with no expert CLI kept resident:
+Task Flow turns the built-in Chat into a plan-driven, self-continuing agent. Instead of one-shot prompts, the main model writes a plan document first, and the task-flow model then drives that plan to completion.
 
-- When an expert task model is configured, the main CLI is given an `ask_expert` MCP tool. The main model decides on its own whether to delegate — typically for a non-trivial architecture trade-off, an unfamiliar high-blast-radius subsystem, or when the user explicitly asks for the expert.
-- The expert sub-turn starts a **fresh request with no conversation history**: it receives only the self-contained `question` plus a read-only tool whitelist (`read_file`, `grep_search`, `get_errors`). Its result is returned to the main model as a `tool_result`, so the dispatcher writes the final reply.
-- Users can force the expert directly by prefixing a message with `@llsExpert …` or `/expert …`; the prefix is stripped before the question is sent. `chat.expert.userTriggerMode` controls whether that answer is shown directly (`direct`) or written back to the main CLI as a `tool_result`.
-- The whole expert sub-turn (its tool calls and final conclusion) streams into the Chat panel as an expert card, but never enters the main conversation context.
+The recommended loop:
 
-The Chat header shows `Normal: <main model> · Expert: <expert model / Not configured>`. There is **no route badge** anymore — routing decisions are made by the model via `ask_expert`, not by an in-extension route state.
+1. Ask the main model to write an implementation plan into a Markdown file (for example `docs/plan-x.md`). That file is the contract for everything that follows.
+2. Add the plan file to context with the **＋** button in the file area above the input box (or drag it onto the chat).
+3. Click **CC task flow** below the input box to insert the start prompt.
+4. Send. From here the model executes each pending step and reports it back through the `update_llsccai_task_workflow` tool, while the extension keeps the loop going.
 
-Pick both models from the header model bar's gear button. User-overridable system prompts are exposed as `claudeCodeConfigHelper.chat.dispatcher.appendSystemPrompt` and `claudeCodeConfigHelper.chat.expert.appendSystemPrompt`; leaving either blank uses the built-in default. Sub-turn limits are tunable via `chat.expert.maxSteps`, `chat.expert.stepTimeoutMs`, `chat.expert.totalTimeoutMs`, and `chat.expert.maxCallsPerTurn`. Design and migration notes live in [`EXPERT_ON_DEMAND_PLAN.md`](./EXPERT_ON_DEMAND_PLAN.md).
+Progress is visible in the status bar (`completed/total`), the full task list opens from a QuickPick panel, and an unfinished workflow is persisted to `.LLSOAI/task-flow.json` so a VS Code restart offers to resume it. If the model keeps replying with plain text without calling any tool, a circuit breaker pauses auto-continuation instead of spamming the CLI.
+
+A dedicated task-flow model can be picked from the model bar's gear button and is persisted under `claudeCodeConfigHelper.chat.taskFlow.model` (workspace value first, global as fallback); leave it unset to reuse the normal model. `claudeCodeConfigHelper.taskFlow.target` chooses where task-flow prompts go — `builtinChat` (default) or `externalClaudeCode`.
+
+Full walkthrough: [`docs/taskflow-usage-guide.md`](./docs/taskflow-usage-guide.md).
+
+## Model Roles
+
+The model picker exposes three roles, all switchable from the header gear button or by clicking either model chip in the composer:
+
+| Role | Setting | Used for |
+| --- | --- | --- |
+| Normal | `claudeCodeConfigHelper.chat.currentModel` | Everyday chat. |
+| Task flow | `claudeCodeConfigHelper.chat.taskFlow.model` | Swapped in right before a task-flow prompt is sent; falls back to Normal when unset. |
+| Compaction | `claudeCodeConfigHelper.chat.compactionMode.*` | The `/compact` summary request. |
+
+This replaces the older on-demand expert / plan / review routing. The `chat.expertMode`, `chat.planMode`, `chat.reviewMode` and `chat.expert*` keys are no longer registered; if they linger in your `settings.json` they simply show up as unknown settings and can be deleted.
 
 ## Built-in Chat and Claude CLI Transport
 
@@ -131,7 +168,7 @@ Command titles may be localized according to your configured UI language.
 npm install
 npm run compile
 npx @vscode/vsce package
-code --install-extension claude-code-config-helper-2.0.0.vsix
+code --install-extension claude-code-config-helper-3.2.43.vsix
 ```
 
 ### Windows Claude CLI install hint

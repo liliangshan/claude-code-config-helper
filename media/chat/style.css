@@ -316,13 +316,125 @@ select:focus-visible {
 }
 
 .emptyStateContent_07S1Yg {
-    max-width: 360px;
+    max-width: 420px;
 }
 
 .emptyStateText_07S1Yg {
     color: var(--lls-fg-muted);
     font-size: var(--lls-font-md);
     line-height: 1.6;
+}
+
+/* 空会话「任务流工作模式」推荐卡片 */
+.taskflowGuide_07S1Yg {
+    position: relative;
+    margin-top: var(--lls-space-5);
+    padding: var(--lls-space-4);
+    text-align: left;
+    border: 1px solid color-mix(in srgb, var(--lls-accent) 26%, var(--lls-border));
+    border-radius: var(--lls-radius-lg);
+    background:
+        linear-gradient(180deg,
+            color-mix(in srgb, var(--lls-accent) 10%, var(--lls-bg-elevated)) 0%,
+            var(--lls-bg-elevated) 68%);
+    box-shadow: var(--lls-shadow-md);
+}
+
+.taskflowGuideHead_07S1Yg {
+    display: flex;
+    align-items: center;
+    gap: var(--lls-space-2);
+    padding-right: var(--lls-space-5);
+    margin-bottom: var(--lls-space-3);
+}
+
+.taskflowGuideBadge_07S1Yg {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: var(--lls-radius-pill);
+    background: color-mix(in srgb, var(--lls-accent) 28%, transparent);
+    color: var(--lls-accent-fg);
+    font-size: var(--lls-font-sm);
+    line-height: 1;
+}
+
+.taskflowGuideTitle_07S1Yg {
+    color: var(--lls-fg);
+    font-weight: 600;
+    font-size: var(--lls-font-md);
+    letter-spacing: 0.2px;
+}
+
+.taskflowGuideSteps_07S1Yg {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.taskflowGuideStep_07S1Yg {
+    position: relative;
+    padding: var(--lls-space-1) 0 var(--lls-space-1) var(--lls-space-3);
+    color: var(--lls-fg);
+    font-size: var(--lls-font-sm);
+    line-height: 1.65;
+}
+
+.taskflowGuideStep_07S1Yg::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 11px;
+    width: 4px;
+    height: 4px;
+    border-radius: var(--lls-radius-pill);
+    background: color-mix(in srgb, var(--lls-accent) 70%, transparent);
+}
+
+.taskflowGuideLink_07S1Yg {
+    display: inline-flex;
+    align-items: center;
+    margin-top: var(--lls-space-3);
+    padding: var(--lls-space-1) var(--lls-space-3);
+    border: 1px solid color-mix(in srgb, var(--lls-accent) 45%, transparent);
+    border-radius: var(--lls-radius-pill);
+    color: var(--lls-accent);
+    font-size: var(--lls-font-sm);
+    text-decoration: none;
+    transition: background var(--lls-transition-fast), color var(--lls-transition-fast);
+}
+
+.taskflowGuideLink_07S1Yg:hover {
+    background: var(--lls-accent);
+    color: var(--lls-accent-fg);
+}
+
+.taskflowGuideDismiss_07S1Yg {
+    position: absolute;
+    top: var(--lls-space-2);
+    right: var(--lls-space-2);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: var(--lls-radius-sm);
+    background: transparent;
+    color: var(--lls-fg-subtle);
+    font-size: var(--lls-font-md);
+    line-height: 1;
+    cursor: pointer;
+    transition: background var(--lls-transition-fast), color var(--lls-transition-fast);
+}
+
+.taskflowGuideDismiss_07S1Yg:hover {
+    background: var(--lls-bg-hover);
+    color: var(--lls-fg);
 }
 
 /* 任务流 Todo 状态卡片（位于输入框上方的 footer 内） */

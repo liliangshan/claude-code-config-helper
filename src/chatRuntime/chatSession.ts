@@ -128,7 +128,7 @@ export function sanitizePersistedChatMessages(messages: ChatMessage[]): ChatMess
             segments: message.segments,
             text: message.text,
             pending: !!message.pending,
-            route: message.route === 'expert' || message.route === 'normal' || message.route === 'plan' || message.route === 'review' ? message.route : undefined,
+            route: message.route === 'normal' || message.route === 'taskFlow' ? message.route : undefined,
             modelLabel: typeof message.modelLabel === 'string' && message.modelLabel.trim() ? message.modelLabel : undefined,
             createdAt: typeof message.createdAt === 'number' ? message.createdAt : Date.now()
         }));
@@ -461,6 +461,7 @@ export async function appendAssistantSegments(segments: ChatSegment[], done: boo
     const visibleSegments = segments.filter((segment) => !isHiddenChatToolSegment(segment));
     if (visibleSegments.length === 0 && !done) return;
     const message = await getActiveAssistantMessageForPatch();
+    const activeSegments: ChatSegment[] = [];
     // 按 segment.id 去重合并：相同 id 的片段视为对同一 segment 的多次更新（典型场景为工具卡片）
     // —— 此时应原地替换已有 segment，而不是追加新条目，以避免重复渲染。
     for (const incoming of visibleSegments) {
@@ -469,23 +470,56 @@ export async function appendAssistantSegments(segments: ChatSegment[], done: boo
             const existingIndex = message.segments.findIndex((item) => item.id === incoming.id);
             if (existingIndex >= 0) {
                 message.segments[existingIndex] = incoming;
+                activeSegments.push(incoming);
                 continue;
             }
+            // 工具卡片的 tool_result 常常晚于 message_stop 到达，此时活动消息已经
+            // 换成新的一条，直接追加会让同一次调用渲染出「执行中」「成功」两张卡片。
+            // 找到最初承载该 segment 的历史消息并就地回填，卡片才能原地更新。
+            if (await patchSegmentIntoOwnerMessage(incoming, message.id)) continue;
         }
         message.segments.push(incoming);
+        activeSegments.push(incoming);
     }
     if (done) message.pending = false;
     schedulePersistChatSession();
     // 这里只发送本次 incoming segments（append: true），交由 ChatViewHost 微批合并：
     // 同一 message id 的多次 patch 会在 ~4ms 窗口内 concat 成单条 message/patch
     // 投递给 webview，避免流式高峰期对 postMessage 通道造成抖动。
+    if (activeSegments.length === 0 && !done) return;
     await getChatViewHost()?.postMessage({
         type: 'message/patch',
         id: message.id,
-        segments: visibleSegments,
+        segments: activeSegments,
         pending: message.pending,
         append: true
     });
+}
+
+/**
+ * 把带稳定 id 的 segment 回填到最初渲染它的历史 assistant 消息。
+ *
+ * @param incoming        本次到达的 segment（必须带 id）。
+ * @param activeMessageId 当前活动 assistant 消息 id，用于跳过自身。
+ * @returns 命中历史消息并已回填时返回 true。
+ */
+async function patchSegmentIntoOwnerMessage(incoming: ChatSegment, activeMessageId: string): Promise<boolean> {
+    for (let i = chatSessionState.messages.length - 1; i >= 0; i -= 1) {
+        const candidate = chatSessionState.messages[i];
+        if (candidate.role !== 'assistant' || candidate.id === activeMessageId) continue;
+        const index = candidate.segments.findIndex((item) => item.id === incoming.id);
+        if (index < 0) continue;
+        candidate.segments[index] = incoming;
+        await getChatViewHost()?.postMessage({
+            type: 'message/patch',
+            id: candidate.id,
+            segments: [incoming],
+            pending: candidate.pending,
+            append: true
+        });
+        return true;
+    }
+    return false;
 }
 
 export function isHiddenChatToolSegment(segment: ChatSegment): boolean {

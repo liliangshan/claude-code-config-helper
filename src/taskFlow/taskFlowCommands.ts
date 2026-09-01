@@ -208,6 +208,9 @@ export interface TaskFlowPromptSendOptions {
 /**
  * 根据 taskFlow.target 配置把任务流提示词路由到内置 Chat 或旧 Claude Code 输入框。
  *
+ * 这里不切换模型：任务流的创建阶段始终使用主模型，任务流专用模型只在自动续推
+ * 前由 `applyTaskFlowModelForContinue()` 切入，并在工作流结束后还原。
+ *
  * @param prompt 任务流提示词。
  * @param options 发送选项。
  */
@@ -226,6 +229,9 @@ export async function sendTaskFlowPrompt(prompt: string, options: TaskFlowPrompt
 /**
  * 尝试把任务流提示词发送或填充到内置 Chat。
  *
+ * `forceRoute: 'taskFlow'` 只影响 busy 记账与工具注入，不改变模型，
+ * 因此创建阶段天然走主模型。
+ *
  * @param prompt 任务流提示词。
  * @param options 发送选项。
  * @returns 成功使用内置 Chat 时返回 true；需要降级时返回 false。
@@ -233,7 +239,7 @@ export async function sendTaskFlowPrompt(prompt: string, options: TaskFlowPrompt
 export async function trySendTaskFlowPromptToBuiltInChat(prompt: string, options: TaskFlowPromptSendOptions): Promise<boolean> {
     try {
         if (options.autoSubmit) {
-            await appendUserMessageAndSend(prompt);
+            await appendUserMessageAndSend(prompt, { forceRoute: 'taskFlow' });
         } else {
             await fillBuiltInChatComposer(prompt, true);
         }

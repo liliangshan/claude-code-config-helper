@@ -2,6 +2,51 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.43] - 2026-09-02
+
+### Changed
+
+- **Task flow model switching moved from creation time to continuation time.** `sendTaskFlowPrompt` / `trySendTaskFlowPromptToBuiltInChat` used to call `selectChatModel()` when a task flow was started, which changed the global current model permanently and never restored it — the exact opposite of the intended behavior. Workflow creation now always runs on the main model.
+- **The model is checked before every auto-continue.** A new `beforeSubmit` hook on `AutoContinueScheduler` (the slot existed but was never injected) calls `applyTaskFlowModelForContinue()`, which returns `skipped` (no task flow model configured), `unchanged` (already on it — no restart, no delay) or `switched`. Only `switched` saves the previous main model to `workspaceState`, calls `selectChatModel(..., { silent: true })` and waits 1.5s for the restarted CLI to settle before the continue prompt is written to stdin. The restart resumes the same session via `--resume`, so context and session id survive the switch.
+- **The main model is restored when the workflow ends.** `llsTaskService.onDidChange` restores it as soon as the workflow is cleared or all tasks are completed, and activation compensates for a window that was closed mid-flow (restore only when no active workflow remains).
+- `selectChatModel()` gained a `silent` option so automatic switches do not spam the chat with toasts; the model dropdown is still refreshed.
+- 6 new unit tests cover the three switch results, the failure degradation path and the restore/key-clearing behavior (274 tests).
+
+## [3.2.42] - 2026-09-02
+
+### Fixed
+
+- **Task flow no longer loops forever when a task is blocked or failed.** Auto-continue only stopped when *every* task was `completed`, but the continue prompt was still produced when no `pending` / `in_progress` task was left — so a workflow holding a blocked task was re-pushed every few seconds with no next step to name. `buildContinuePrompt` now returns an empty string when there is no actionable task, which makes the scheduler stand down.
+
+### Changed
+
+- **`blocked` is no longer a writable task status.** Both task tool schemas and the service validator accept only `pending`, `in_progress` and `completed`; a legacy `blocked` value in `.LLSOAI/task-flow.json` is still readable and is normalized to `pending` on load. The continue instruction (all 7 UI languages) now tells the model that when a task cannot be finished it must append a short explanation to `.LLSOAI/task_error.md`, mark the task completed and move on, instead of parking the workflow in a dead state.
+- Task flow unit tests are now part of `npm run test` (268 tests).
+
+## [3.2.41] - 2026-09-02
+
+### Changed
+
+- **Assistant body text is now rendered once per content block instead of line by line.** The streaming chunker emitted every buffered line as its own markdown segment, so a multi-line structure — a table, a nested list, a multi-line quote — was split across separate render roots and each row was parsed in isolation (a table showed up as a stack of one-cell boxes). Text deltas are now accumulated only, and the whole block is parsed in one pass at `content_block_stop`, with fallbacks at `message_stop`, the final `result` frame, and stream teardown so nothing is lost if an upstream skips an event.
+
+## [3.2.40] - 2026-09-02
+
+### Added
+
+- **Task flow guide card on an empty chat.** A new conversation now shows a recommendation card explaining the plan-first task flow (let the main model write a plan document → add it to context with the ＋ button → click `CC task flow` → send). It follows the configured UI language, links to the full [Task Flow usage guide](https://github.com/liliangshan/claude-code-config-helper/blob/main/docs/taskflow-usage-guide.md), and can be dismissed for the session.
+- `docs/taskflow-usage-guide.md`: a standalone English guide covering why task flow exists, the recommended workflow, start/continue/resume behavior, and how to configure the task flow model.
+
+### Fixed
+
+- **Streaming long text no longer stacks duplicate 「Long text output」 blocks.** Thinking blocks stream as full accumulated text under one stable segment id, but the collapsible long-text branch dropped its DOM node instead of returning it, so `data-segment-id` was never written and every delta appended yet another collapsed block (13321 chars, 13324 chars, 13350 chars…). The node is now returned and patched in place, and a block you expanded stays open across updates.
+
+## [3.2.39] - 2026-09-02
+
+### Changed
+
+- **Task flow model replaces the expert/plan/review modes.** The model picker, header bar and composer chips are now 「Normal / Task flow / Compaction」 three-way; task flow prompts optionally switch the main model to the configured task flow model before sending, and relay routing collapses to the `normal` / `taskFlow` paths.
+- Heads-up: the old `chat.expertMode` / `chat.planMode` / `chat.reviewMode` / `chat.expert*` settings keys are no longer registered, so they show up as unknown settings in `settings.json`. They do not affect functionality; delete them at your convenience.
+
 ## [3.2.31] - 2026-08-31
 
 ### Internal

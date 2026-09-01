@@ -1,5 +1,5 @@
 /**
- * 四路由（normal / expert / plan / review）Chat CLI 运行期状态。
+ * 双路由（normal / taskFlow）Chat CLI 运行期状态。
  *
  * 拆分自 extension.ts：原本散落的 40 余个模块级 `let` 在这里收敛为一个
  * `routes` 记录对象——容器本身是 `const`，字段可变，既满足「禁止导出可变 let」
@@ -45,19 +45,17 @@ function createRouteRuntime(): ChatRouteRuntime {
     return { busy: false, relayActiveCount: 0, sessionId: '' };
 }
 
-/** 四条路由的运行期状态容器。 */
+/** 两条路由（normal / taskFlow）的运行期状态容器。 */
 export const routes: Record<ChatRoute, ChatRouteRuntime> = {
     normal: createRouteRuntime(),
-    expert: createRouteRuntime(),
-    plan: createRouteRuntime(),
-    review: createRouteRuntime()
+    taskFlow: createRouteRuntime()
 };
 
-/** 按 CLI 来源累计当前一轮 assistant 文本，用于 done 时记录最终回复与检测专家交棒。 */
-export const assistantTurnTextBySource: Record<ChatRoute, string> = { normal: '', expert: '', plan: '', review: '' };
+/** 按 CLI 来源累计当前一轮 assistant 文本，用于 done 时记录最终回复。 */
+export const assistantTurnTextBySource: Record<ChatRoute, string> = { normal: '', taskFlow: '' };
 
 /** 需要静默吞掉的内部 CLI 响应轮数，按路由分别统计。 */
-export const hiddenCliResponseTurnsByRoute: Record<ChatRoute, number> = { normal: 0, expert: 0, plan: 0, review: 0 };
+export const hiddenCliResponseTurnsByRoute: Record<ChatRoute, number> = { normal: 0, taskFlow: 0 };
 
 /** session_id 到 CLI 路由的内存映射，用于 token budget 压缩时选中正确 resetter。 */
 export const chatSessionRouteById = new Map<string, ChatRoute>();
@@ -76,7 +74,7 @@ export const pendingAskUserRequests = new Map<string, { route: ChatRoute; input:
 
 /** 是否有任意一条路由正在执行任务。 */
 export function isAnyRouteBusy(): boolean {
-    return routes.normal.busy || routes.expert.busy || routes.plan.busy || routes.review.busy;
+    return routes.normal.busy || routes.taskFlow.busy;
 }
 
 /**
@@ -122,12 +120,10 @@ export function resetRouteBusy(route: ChatRoute): void {
     void getChatViewHost()?.postMessage({ type: 'chat/running', running: isAnyRouteBusy(), route });
 }
 
-/** 归零全部四条路由的 busy 状态。 */
+/** 归零全部两条路由（normal / taskFlow）的 busy 状态。 */
 export function resetAllRouteBusy(): void {
     resetRouteBusy('normal');
-    resetRouteBusy('expert');
-    resetRouteBusy('plan');
-    resetRouteBusy('review');
+    resetRouteBusy('taskFlow');
 }
 
 /** 取消指定路由正在执行的任务并归零其 busy 状态。 */

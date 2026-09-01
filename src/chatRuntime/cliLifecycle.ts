@@ -1,5 +1,5 @@
 /**
- * 四路由 Chat CLI 的生命周期管理：启动、重启、停止、按需惰性启停与适配器重建。
+ * Chat CLI 的生命周期管理：启动、重启、停止与适配器重建。
  *
  * 拆分自 extension.ts。依赖方向：本模块位于 routeState 之上、webviewMessages 之下。
  * 对上层模块（会话消息、CLI 事件处理、自愈、激活期装配）的调用一律通过
@@ -16,13 +16,11 @@ import type { ChatRoute, ChatSegment } from '../chat/protocol';
 import { Logger } from '../logger';
 import { getChatViewHost, getRelayServer } from '../runtime';
 import {
-    PLAN_REVIEW_IDLE_DISPOSE_MS,
     chatCliCancelState,
     chatRouteState,
     getSessionIdForRoute,
     pendingAskUserRequests,
     resetAllRouteBusy,
-    resetRouteBusy,
     routes
 } from './routeState';
 
@@ -101,12 +99,6 @@ export function disposeCliLifecycleServices(): void {
     cliResolver = undefined;
     chatCliConfigService = undefined;
     chatCliSessionStore = undefined;
-}
-
-/** 清除 plan/review 两条路由的闲置释放计时器（deactivate 调用）。 */
-export function disposePlanReviewIdleTimers(): void {
-    clearPlanIdleDisposeTimer();
-    clearReviewIdleDisposeTimer();
 }
 
 /**
@@ -256,14 +248,10 @@ export async function restartChatRelayAndCli(options: { silent?: boolean } = {})
 }
 
 /**
- * 按当前配置启动 Chat CLI 长连接进程（双 CLI 路由：normal + expert）。
+ * 按当前配置启动 Chat CLI 长连接进程。
  *
- * 内部委托 {@link startChatCliPair}：normal CLI 总是启动，expert CLI 仅在
- * `expertMode.enabled === true` 且选中了具体专家模型时启动；专家未配置时
- * 会显式 dispose 旧 expert 实例与适配器，避免遗留旧的环境变量。
- *
- * 保留本函数名是为了让 token budget 自愈、selectChatCli 等老调用点维持原 API；
- * 新增代码请直接调用 {@link startChatCliPair}。
+ * 内部委托 {@link startChatCliPair}。保留本函数名是为了让 token budget 自愈、
+ * selectChatCli 等老调用点维持原 API；新增代码请直接调用 {@link startChatCliPair}。
  *
  * @throws 配置无效或子进程启动失败时抛出错误。
  */
@@ -272,16 +260,11 @@ export async function startChatCliFromCurrentConfig(options: { forceRestart?: bo
 }
 
 /**
- * 同时启动 normal / expert 两条 Chat CLI 长连接，并重建对应的 stream-json 适配器。
+ * 启动 normal Chat CLI 长连接并重建对应的 stream-json 适配器。
  *
- * 关键差异：
- * - normal CLI 总是启动；其 `--append-system-prompt` 来自
- *   {@link ChatCliConfigService.getDualConfigsWithRelayEnv} 的 dispatcher 默认文案
- *   或用户配置 `chat.dispatcher.appendSystemPrompt` 覆盖值。
- * - expert CLI 仅在 expertMode.enabled === true 且选中具体模型时启动；未配置时
- *   会显式 stop / dispose 旧 expert 实例，避免上一次启动残留。
- * - 两条 CLI 使用各自的 sessionStore kind（'normal' / 'expert'），互不覆盖；
- *   token budget 自动压缩按 sessionId 分桶，自然不串流。
+ * 任务流模型复用 normal CLI（仅切换模型后重启），因此这里只维护 normal 一路。
+ * 其 `--append-system-prompt` 来自 {@link ChatCliConfigService.getRoutedConfigsWithRelayEnv}
+ * 的 dispatcher 默认文案或用户配置 `chat.dispatcher.appendSystemPrompt` 覆盖值。
  *
  * @param options.forceRestart 为 true 时即使配置未变也强制重启。
  * @throws Chat CLI 组件未初始化时抛出错误。
@@ -291,7 +274,7 @@ export async function startChatCliPair(options: { forceRestart?: boolean } = {})
         throw new Error('Chat CLI 组件尚未初始化');
     }
     const relayPort = await requireDeps().ensureRelayServerStarted();
-    const { normal, expert, plan, review } = await chatCliConfigService.getRoutedConfigsWithRelayEnv(relayPort);
+    const { normal } = await chatCliConfigService.getRoutedConfigsWithRelayEnv(relayPort);
     await requireDeps().syncClaudeCliModelSettingsSafely();
 
     // ── normal CLI ─────────────────────────────────────────────────────
@@ -321,211 +304,12 @@ export async function startChatCliPair(options: { forceRestart?: boolean } = {})
         rebuildNormalAdapter();
     }
     await getChatViewHost()?.postMessage({ type: 'cli/status', status: 'running', detail: normal.cliPath });
-
-    // ── expert CLI ─────────────────────────────────────────────────────
-    // 按需专家方案：不再常驻 expert CLI。无论配置如何，均确保旧 expert CLI 已释放。
-    // 专家由 ExpertSubturnService 在主模型调用 ask_expert MCP 工具时按需经 Relay 执行。
-    void expert;
-    await disposeExpertCli('按需专家方案：expert CLI 已停用');
-    if (!plan) {
-        routes.plan.launchConfigCache = undefined;
-        await disposePlanCli('未配置方案任务模型');
-    } else {
-        routes.plan.launchConfigCache = { ...plan, resumeSessionId: undefined };
-        if (routes.plan.process && !routes.plan.process.isRunningWithConfig(routes.plan.launchConfigCache)) {
-            await disposePlanCli('方案任务模型配置已变更');
-        }
-    }
-    if (!review) {
-        routes.review.launchConfigCache = undefined;
-        await disposeReviewCli('未配置审查任务模型');
-    } else {
-        routes.review.launchConfigCache = { ...review, resumeSessionId: undefined };
-        if (routes.review.process && !routes.review.process.isRunningWithConfig(routes.review.launchConfigCache)) {
-            await disposeReviewCli('审查任务模型配置已变更');
-        }
-    }
 }
 
 /**
- * 显式停止并释放 plan CLI 实例与适配器。
+ * 重启 Chat CLI。
  *
- * @param reason 仅用于日志诊断的原因描述。
- */
-export async function disposePlanCli(reason: string): Promise<void> {
-    resetRouteBusy('plan');
-    clearPlanIdleDisposeTimer();
-    if (!routes.plan.process && !routes.plan.adapter) return;
-    Logger.info(`释放 plan Chat CLI：reason=${reason}`);
-    routes.plan.statusSubscription?.dispose();
-    routes.plan.statusSubscription = undefined;
-    routes.plan.exitSubscription?.dispose();
-    routes.plan.exitSubscription = undefined;
-    routes.plan.adapterSubscription?.dispose();
-    routes.plan.adapterSubscription = undefined;
-    routes.plan.adapter?.dispose();
-    routes.plan.adapter = undefined;
-    if (routes.plan.process) {
-        try {
-            await routes.plan.process.stop();
-        } catch (err) {
-            Logger.warn('停止 plan Chat CLI 失败：' + (err instanceof Error ? err.message : String(err)));
-        }
-        routes.plan.process.dispose();
-        routes.plan.process = undefined;
-    }
-}
-
-/**
- * 显式停止并释放 review CLI 实例与适配器。
- *
- * @param reason 仅用于日志诊断的原因描述。
- */
-export async function disposeReviewCli(reason: string): Promise<void> {
-    resetRouteBusy('review');
-    clearReviewIdleDisposeTimer();
-    if (!routes.review.process && !routes.review.adapter) return;
-    Logger.info(`释放 review Chat CLI：reason=${reason}`);
-    routes.review.statusSubscription?.dispose();
-    routes.review.statusSubscription = undefined;
-    routes.review.exitSubscription?.dispose();
-    routes.review.exitSubscription = undefined;
-    routes.review.adapterSubscription?.dispose();
-    routes.review.adapterSubscription = undefined;
-    routes.review.adapter?.dispose();
-    routes.review.adapter = undefined;
-    if (routes.review.process) {
-        try {
-            await routes.review.process.stop();
-        } catch (err) {
-            Logger.warn('停止 review Chat CLI 失败：' + (err instanceof Error ? err.message : String(err)));
-        }
-        routes.review.process.dispose();
-        routes.review.process = undefined;
-    }
-}
-
-/** 清除 plan CLI 闲置释放计时器。 */
-export function clearPlanIdleDisposeTimer(): void {
-    if (!routes.plan.idleDisposeTimer) return;
-    clearTimeout(routes.plan.idleDisposeTimer);
-    routes.plan.idleDisposeTimer = undefined;
-}
-
-/** 清除 review CLI 闲置释放计时器。 */
-export function clearReviewIdleDisposeTimer(): void {
-    if (!routes.review.idleDisposeTimer) return;
-    clearTimeout(routes.review.idleDisposeTimer);
-    routes.review.idleDisposeTimer = undefined;
-}
-
-/** 安排 plan/review CLI 在闲置窗口后释放。 */
-export function schedulePlanReviewIdleDispose(reason: string): void {
-    clearPlanIdleDisposeTimer();
-    clearReviewIdleDisposeTimer();
-    routes.plan.idleDisposeTimer = setTimeout(() => {
-        routes.plan.idleDisposeTimer = undefined;
-        void disposePlanCli(`idle-timeout:${reason}`);
-    }, PLAN_REVIEW_IDLE_DISPOSE_MS);
-    routes.plan.idleDisposeTimer.unref?.();
-    routes.review.idleDisposeTimer = setTimeout(() => {
-        routes.review.idleDisposeTimer = undefined;
-        void disposeReviewCli(`idle-timeout:${reason}`);
-    }, PLAN_REVIEW_IDLE_DISPOSE_MS);
-    routes.review.idleDisposeTimer.unref?.();
-}
-
-/** 确保 plan CLI 已按当前缓存配置启动。 */
-export async function ensurePlanCliStarted(): Promise<void> {
-    clearPlanIdleDisposeTimer();
-    if (!routes.plan.launchConfigCache) {
-        await startChatCliPair();
-    }
-    if (!routes.plan.launchConfigCache) {
-        throw new Error('未配置方案任务模型');
-    }
-    if (!routes.plan.process) {
-        routes.plan.process = new CliProcess();
-        bindPlanCliStatusHandlers();
-    }
-    const launchConfig = { ...routes.plan.launchConfigCache, resumeSessionId: undefined };
-    if (routes.plan.process.isRunningWithConfig(launchConfig)) {
-        rebuildPlanAdapter();
-        return;
-    }
-    Logger.info('按需启动 plan Chat CLI：' + JSON.stringify({
-        cwd: launchConfig.cwd,
-        cliPath: launchConfig.cliPath,
-        model: launchConfig.model
-    }));
-    await routes.plan.process.start(launchConfig);
-    rebuildPlanAdapter();
-}
-
-/** 确保 review CLI 已按当前缓存配置启动。 */
-export async function ensureReviewCliStarted(): Promise<void> {
-    clearReviewIdleDisposeTimer();
-    if (!routes.review.launchConfigCache) {
-        await startChatCliPair();
-    }
-    if (!routes.review.launchConfigCache) {
-        throw new Error('未配置审查任务模型');
-    }
-    if (!routes.review.process) {
-        routes.review.process = new CliProcess();
-        bindReviewCliStatusHandlers();
-    }
-    const launchConfig = { ...routes.review.launchConfigCache, resumeSessionId: undefined };
-    if (routes.review.process.isRunningWithConfig(launchConfig)) {
-        rebuildReviewAdapter();
-        return;
-    }
-    Logger.info('按需启动 review Chat CLI：' + JSON.stringify({
-        cwd: launchConfig.cwd,
-        cliPath: launchConfig.cliPath,
-        model: launchConfig.model
-    }));
-    await routes.review.process.start(launchConfig);
-    rebuildReviewAdapter();
-}
-
-/**
- * 显式停止并释放 expert CLI 实例与适配器。
- *
- * 在「专家模型从已选切到关闭」「pair 重启时检测到 expertMode 关闭」等场景调用，
- * 避免旧 expert 子进程占用资源、遗留旧的 ANTHROPIC_MODEL 环境变量。
- *
- * @param reason 仅用于日志诊断的原因描述。
- */
-export async function disposeExpertCli(reason: string): Promise<void> {
-    resetRouteBusy('expert');
-    if (!routes.expert.process && !routes.expert.adapter) return;
-    Logger.info(`释放 expert Chat CLI：reason=${reason}`);
-    routes.expert.statusSubscription?.dispose();
-    routes.expert.statusSubscription = undefined;
-    routes.expert.exitSubscription?.dispose();
-    routes.expert.exitSubscription = undefined;
-    routes.expert.adapterSubscription?.dispose();
-    routes.expert.adapterSubscription = undefined;
-    routes.expert.adapter?.dispose();
-    routes.expert.adapter = undefined;
-    if (routes.expert.process) {
-        try {
-            await routes.expert.process.stop();
-        } catch (err) {
-            Logger.warn('停止 expert Chat CLI 失败：' + (err instanceof Error ? err.message : String(err)));
-        }
-        routes.expert.process.dispose();
-        routes.expert.process = undefined;
-    }
-}
-
-/**
- * 同步重启 normal + expert 两条 Chat CLI（pair 视角）。
- *
- * 用于「模型选择保存」「Relay 端口变化」等需要让两条 CLI 同时拿到最新启动参数
- * 的场景；调用方应优先使用本函数而不是单独调用 startChatCliPair，让重启语义
- * 在调用点更清晰。
+ * 用于「模型选择保存」「Relay 端口变化」等需要让 CLI 拿到最新启动参数的场景。
  *
  * @param options.silent 是否抑制成功 toast。
  */
@@ -540,7 +324,7 @@ export async function restartChatCliPair(options: { silent?: boolean } = {}): Pr
 }
 
 /**
- * 同时停止 normal + expert 两条 Chat CLI（pair 视角）。
+ * 停止 Chat CLI。
  *
  * 与 `dispose` 的区别：仅终止子进程，保留模块级实例引用与订阅，便于后续
  * 重新调用 {@link startChatCliPair}。
@@ -556,16 +340,10 @@ export async function stopChatCliPair(): Promise<void> {
             Logger.warn('停止 normal Chat CLI 失败：' + (err instanceof Error ? err.message : String(err)));
         }
     }
-    await disposeExpertCli('stopChatCliPair');
-    await disposePlanCli('stopChatCliPair');
-    await disposeReviewCli('stopChatCliPair');
 }
 
 /**
- * 重建 normal CLI 的 stream-json 适配器并订阅 ParsedCliEvent。
- *
- * 双 CLI 路由方案下，normal CLI 的输出会经过 `@llsExpert` 路由检测
- * （由 `requireDeps().handleParsedCliEvent(event, 'normal')` 内部处理）。每次 normal CLI
+ * 重建 normal CLI 的 stream-json 适配器并订阅 ParsedCliEvent。每次 normal CLI
  * 启动 / 重启时本函数会被调用，确保订阅指向最新子进程。
  */
 export function rebuildNormalAdapter(): void {
@@ -583,65 +361,12 @@ export function rebuildNormalAdapter(): void {
 }
 
 /**
- * 重建 expert CLI 的 stream-json 适配器并订阅 ParsedCliEvent。
- *
- * expert CLI 的事件不参与 `@llsExpert` 路由检测，避免循环触发；其它处理
- * 流程（segments / done / error / session/init）与 normal 一致。
- */
-export function rebuildExpertAdapter(): void {
-    if (!routes.expert.process) throw new Error('Expert Chat CLI 进程尚未初始化');
-    routes.expert.adapterSubscription?.dispose();
-    routes.expert.adapter?.dispose();
-    routes.expert.adapter = new StreamJsonCliAdapter(routes.expert.process, (resultText) => {
-        requireDeps().notifyPermissionDeniedToUser(resultText);
-    });
-    routes.expert.adapterSubscription = routes.expert.adapter.onParsedEvent((event) => {
-        void requireDeps().handleParsedCliEvent(event, 'expert').catch((err: unknown) => {
-            Logger.error('处理 expert CLI 流式事件失败', err);
-        });
-    });
-}
-
-/** 重建 plan CLI 的 stream-json 适配器并订阅 ParsedCliEvent。 */
-export function rebuildPlanAdapter(): void {
-    if (!routes.plan.process) throw new Error('Plan Chat CLI 进程尚未初始化');
-    routes.plan.adapterSubscription?.dispose();
-    routes.plan.adapter?.dispose();
-    routes.plan.adapter = new StreamJsonCliAdapter(routes.plan.process, (resultText) => {
-        requireDeps().notifyPermissionDeniedToUser(resultText);
-    });
-    routes.plan.adapterSubscription = routes.plan.adapter.onParsedEvent((event) => {
-        void requireDeps().handleParsedCliEvent(event, 'plan').catch((err: unknown) => {
-            Logger.error('处理 plan CLI 流式事件失败', err);
-        });
-    });
-}
-
-/** 重建 review CLI 的 stream-json 适配器并订阅 ParsedCliEvent。 */
-export function rebuildReviewAdapter(): void {
-    if (!routes.review.process) throw new Error('Review Chat CLI 进程尚未初始化');
-    routes.review.adapterSubscription?.dispose();
-    routes.review.adapter?.dispose();
-    routes.review.adapter = new StreamJsonCliAdapter(routes.review.process, (resultText) => {
-        requireDeps().notifyPermissionDeniedToUser(resultText);
-    });
-    routes.review.adapterSubscription = routes.review.adapter.onParsedEvent((event) => {
-        void requireDeps().handleParsedCliEvent(event, 'review').catch((err: unknown) => {
-            Logger.error('处理 review CLI 流式事件失败', err);
-        });
-    });
-}
-
-/**
  * 订阅 Chat CLI 进程状态变化并把异常状态同步到 Webview。
  *
  * @param context 扩展上下文，用于注册 Disposable。
  */
 export function registerChatCliStatusHandlers(context?: vscode.ExtensionContext): void {
     bindNormalCliStatusHandlers();
-    bindExpertCliStatusHandlers();
-    bindPlanCliStatusHandlers();
-    bindReviewCliStatusHandlers();
     if (context) {
         context.subscriptions.push({
             dispose: () => {
@@ -649,18 +374,6 @@ export function registerChatCliStatusHandlers(context?: vscode.ExtensionContext)
                 routes.normal.statusSubscription = undefined;
                 routes.normal.exitSubscription?.dispose();
                 routes.normal.exitSubscription = undefined;
-                routes.expert.statusSubscription?.dispose();
-                routes.expert.statusSubscription = undefined;
-                routes.expert.exitSubscription?.dispose();
-                routes.expert.exitSubscription = undefined;
-                routes.plan.statusSubscription?.dispose();
-                routes.plan.statusSubscription = undefined;
-                routes.plan.exitSubscription?.dispose();
-                routes.plan.exitSubscription = undefined;
-                routes.review.statusSubscription?.dispose();
-                routes.review.statusSubscription = undefined;
-                routes.review.exitSubscription?.dispose();
-                routes.review.exitSubscription = undefined;
             }
         });
     }
@@ -677,51 +390,6 @@ export function bindNormalCliStatusHandlers(): void {
     routes.normal.exitSubscription = routes.normal.process.onExit((event) => {
         void handleChatCliExit(event, 'normal').catch((err: unknown) => {
             Logger.error('处理 normal Chat CLI 退出事件失败', err);
-        });
-    });
-}
-
-/**
- * 订阅 expert CLI 进程状态变化。
- */
-export function bindExpertCliStatusHandlers(): void {
-    if (!routes.expert.process || routes.expert.statusSubscription || routes.expert.exitSubscription) return;
-    routes.expert.statusSubscription = routes.expert.process.onStatus((status) => {
-        Logger.info(`expert Chat CLI 状态变化：${status}`);
-    });
-    routes.expert.exitSubscription = routes.expert.process.onExit((event) => {
-        void handleChatCliExit(event, 'expert').catch((err: unknown) => {
-            Logger.error('处理 expert Chat CLI 退出事件失败', err);
-        });
-    });
-}
-
-/**
- * 订阅 plan CLI 进程状态变化。
- */
-export function bindPlanCliStatusHandlers(): void {
-    if (!routes.plan.process || routes.plan.statusSubscription || routes.plan.exitSubscription) return;
-    routes.plan.statusSubscription = routes.plan.process.onStatus((status) => {
-        Logger.info(`plan Chat CLI 状态变化：${status}`);
-    });
-    routes.plan.exitSubscription = routes.plan.process.onExit((event) => {
-        void handleChatCliExit(event, 'plan').catch((err: unknown) => {
-            Logger.error('处理 plan Chat CLI 退出事件失败', err);
-        });
-    });
-}
-
-/**
- * 订阅 review CLI 进程状态变化。
- */
-export function bindReviewCliStatusHandlers(): void {
-    if (!routes.review.process || routes.review.statusSubscription || routes.review.exitSubscription) return;
-    routes.review.statusSubscription = routes.review.process.onStatus((status) => {
-        Logger.info(`review Chat CLI 状态变化：${status}`);
-    });
-    routes.review.exitSubscription = routes.review.process.onExit((event) => {
-        void handleChatCliExit(event, 'review').catch((err: unknown) => {
-            Logger.error('处理 review Chat CLI 退出事件失败', err);
         });
     });
 }

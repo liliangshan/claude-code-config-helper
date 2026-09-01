@@ -14,10 +14,9 @@ import * as path from 'path';
 import * as os from 'os';
 
 import type { ChatComposerAttachment, ChatRoute, ChatSegment, WebviewToExtension } from '../chat/protocol';
-import { startsWithExpertPrefix, stripExpertPrefix } from '../expertMode/expertTriggers';
 import { Logger } from '../logger';
 import { getChatViewHost } from '../runtime';
-import { ensureChatCliStarted, ensurePlanCliStarted, ensureReviewCliStarted } from './cliLifecycle';
+import { ensureChatCliStarted } from './cliLifecycle';
 import {
     appendAssistantSegments,
     appendLocalChatMessage,
@@ -36,8 +35,6 @@ export interface ChatMessagingDeps {
     openBuiltInChat: () => Promise<void>;
     /** 切换当前活动路由。 */
     switchChatRoute: (route: ChatRoute, reason: string) => Promise<void>;
-    /** 由用户消息前缀触发的一次专家子回合。 */
-    runUserTriggeredExpertSubturn: (text: string, options: { hidden?: boolean }) => Promise<void>;
     /** 提交后启动 Relay 命中等待计时器。 */
     armHttpExpectation: (prompt: string) => void;
     /** 清除 Relay 命中等待计时器。 */
@@ -464,26 +461,26 @@ export function isPathInside(target: string, root: string): boolean {
 /**
  * 通过 stream-json CLI 适配器发送用户消息。
  *
+ * taskFlow 路由复用 normal CLI 进程（仅模型不同），因此适配器与隐藏回合计数
+ * 统一挂在 normal 一路；`forceRoute: 'taskFlow'` 是任务流唯一入口。
+ *
  * @param text 用户输入文本。
  */
-export async function sendUserMessageToCli(text: string, options: { hidden?: boolean; suppressResponse?: boolean; forceExpert?: boolean; forceRoute?: ChatRoute } = {}): Promise<void> {
+export async function sendUserMessageToCli(text: string, options: { hidden?: boolean; suppressResponse?: boolean; forceRoute?: ChatRoute } = {}): Promise<void> {
     chatCliCancelState.requested = false;
     chatSessionState.activeAssistantMessageId = undefined;
 
-    let route = options.forceRoute ?? chatRouteState.active;
-    let outgoingText = text;
-    const trimmed = text.trim();
-    if (options.forceExpert || startsWithExpertPrefix(trimmed)) {
-        route = 'expert';
-        outgoingText = startsWithExpertPrefix(trimmed) ? stripExpertPrefix(text) : text;
-        await requireDeps().switchChatRoute('expert', 'user-prefix');
-    } else if (options.forceRoute) {
+    const route = options.forceRoute ?? chatRouteState.active;
+    const outgoingText = text;
+    // taskFlow 复用 normal CLI，进程与适配器均挂在 normal 路由下。
+    const cliRoute: ChatRoute = 'normal';
+    if (options.forceRoute) {
         await requireDeps().switchChatRoute(options.forceRoute, 'force-route');
     }
 
     const hidden = options.hidden === true;
     const suppressResponse = options.suppressResponse === true;
-    if (suppressResponse) hiddenCliResponseTurnsByRoute[route] += 1;
+    if (suppressResponse) hiddenCliResponseTurnsByRoute[cliRoute] += 1;
 
     Logger.info(`用户发送内容(${route}, hidden=${hidden})：${requireDeps().formatLogPreview(outgoingText)}`);
 
@@ -493,29 +490,14 @@ export async function sendUserMessageToCli(text: string, options: { hidden?: boo
     }
     try {
         await ensureChatCliStarted();
-        if (route === 'plan') {
-            await ensurePlanCliStarted();
-        } else if (route === 'review') {
-            await ensureReviewCliStarted();
-        }
-        if (route === 'expert') {
-            // 按需专家方案：用户级 @llsExpert / /expert 不再走常驻 expert CLI，
-            // 改为直接调用 ExpertSubturnService 跑一次无历史 sub-turn。
-            await requireDeps().runUserTriggeredExpertSubturn(outgoingText, { hidden });
-            chatRouteState.active = 'normal';
-            await getChatViewHost()?.postMessage({ type: 'route/changed', route: 'normal' });
-            return;
-        }
-        const adapter = getStreamAdapterForRoute(route);
+        const adapter = getStreamAdapterForRoute(cliRoute);
         if (!adapter) {
-            throw new Error(`${route} Chat CLI adapter 未就绪`);
+            throw new Error(`${cliRoute} Chat CLI adapter 未就绪`);
         }
-        if (route !== 'normal') {
-            Logger.info(`发送消息到 ${route} Chat CLI：length=${outgoingText.length}, hidden=${hidden}, forceRoute=${options.forceRoute ?? ''}`);
-        }
+        Logger.info(`发送消息到 ${route} Chat CLI：length=${outgoingText.length}, hidden=${hidden}, forceRoute=${options.forceRoute ?? ''}`);
         await adapter.sendUserMessage(outgoingText);
     } catch (err) {
-        if (suppressResponse) hiddenCliResponseTurnsByRoute[route] = Math.max(0, hiddenCliResponseTurnsByRoute[route] - 1);
+        if (suppressResponse) hiddenCliResponseTurnsByRoute[cliRoute] = Math.max(0, hiddenCliResponseTurnsByRoute[cliRoute] - 1);
         const message = err instanceof Error ? err.message : String(err);
         if (!hidden) {
             await appendAssistantSegments([{ kind: 'error', text: `\n发送到 CLI 失败：${message}\n` }], true);
@@ -528,11 +510,15 @@ export async function sendUserMessageToCli(text: string, options: { hidden?: boo
  * 向内置 Chat 追加用户消息并立即发送到 CLI。
  *
  * @param text 用户消息文本。
+ * @param options 发送选项；`forceRoute` 用于任务流等需要显式指定路由的入口。
  */
-export async function appendUserMessageAndSend(text: string): Promise<void> {
+export async function appendUserMessageAndSend(
+    text: string,
+    options: { forceRoute?: ChatRoute } = {}
+): Promise<void> {
     await requireDeps().openBuiltInChat();
     await appendLocalChatMessage('user', text);
-    await sendUserMessageToCli(text);
+    await sendUserMessageToCli(text, { forceRoute: options.forceRoute });
 }
 /**
  * 向 CLI 发送内部消息，不在内置 Chat 中追加用户气泡。
@@ -633,14 +619,8 @@ export async function handleUserResend(id: string, editedText?: string): Promise
     if (isRouteBusy('normal')) {
         cancelRouteProcess('normal');
     }
-    if (isRouteBusy('expert')) {
-        cancelRouteProcess('expert');
-    }
-    if (isRouteBusy('plan')) {
-        cancelRouteProcess('plan');
-    }
-    if (isRouteBusy('review')) {
-        cancelRouteProcess('review');
+    if (isRouteBusy('taskFlow')) {
+        cancelRouteProcess('taskFlow');
     }
 
     // 截断：连同目标 user 消息一起删除。

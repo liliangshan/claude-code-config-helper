@@ -25,6 +25,7 @@ import { ChatCliConfigService } from './chat/cli/cliConfig';
 import { ChatViewHost } from './chat/chatViewHost';
 import { createCliLifecycleServices, registerChatCliStatusHandlers } from './chatRuntime/cliLifecycle';
 import { restorePersistedChatSession } from './chatRuntime/chatSession';
+import { hasPendingTaskFlowModelRestore, restoreMainModelAfterTaskFlow } from './chatRuntime/modelSelection';
 import { postChatTaskFlowStatus } from './chatRuntime/webviewMessages';
 import { routes } from './chatRuntime/routeState';
 import { ConfigManager } from './configManager';
@@ -102,6 +103,12 @@ function registerDisposables(
     if (routes.normal.process) context.subscriptions.push(routes.normal.process);
     context.subscriptions.push(llsTaskService.onDidChange(() => {
         void postChatTaskFlowStatus();
+        // 工作流被清空或全部任务完成时，把切到任务流模型的主 CLI 还原回原主模型。
+        // updateTaskStatuses 与 clear 都会触发 onDidChange，因此最后一个任务被标记
+        // completed 的那一刻就会还原。
+        if (!llsTaskService.hasActiveWorkflow() || llsTaskService.isWorkflowCompleted()) {
+            void restoreMainModelAfterTaskFlow('workflow-finished');
+        }
     }));
     context.subscriptions.push(runtime.getRelayServer()!);
     context.subscriptions.push(
@@ -135,6 +142,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const services = createCoreServices(context);
     configureRuntimeModules();
     await restoreTaskFlowSafely(services.llsTaskService);
+
+    // 上次窗口在任务流中途被强制关闭时，workspaceState 里可能残留原主模型。
+    // 此时若已没有活动 workflow，说明任务流模型不再需要，直接还原；
+    // 有活动 workflow 则保持在任务流模型上，等它跑完再还原。
+    if (hasPendingTaskFlowModelRestore() && !services.llsTaskService.hasActiveWorkflow()) {
+        void restoreMainModelAfterTaskFlow('activate-compensate');
+    }
 
     const autoContinueScheduler = new AutoContinueScheduler(services.llsTaskService);
     setAutoContinueScheduler(autoContinueScheduler);

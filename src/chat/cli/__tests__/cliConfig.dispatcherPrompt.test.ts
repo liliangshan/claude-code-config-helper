@@ -1,12 +1,11 @@
 /**
- * @file dispatcher prompt 按需专家化断言。
+ * @file dispatcher prompt 任务流方案断言。
  *
- * 按需专家方案下，dispatcher（normal CLI）默认 appendSystemPrompt 不再用
- * `@llsExpert` 文本路由，也不再含「MUST delegate」式强制委托诱导，而是改为
- * 「可选 ask_expert 工具，仅在显式请求或确实无法决策时调用」的软引导。
+ * 任务流方案下，dispatcher（normal CLI）默认 appendSystemPrompt 只保留「主助手直接处理 +
+ * Write 工具使用纪律」两部分，不再含任何 `@llsExpert` 文本路由、`ask_expert` 工具引导或
+ * 「MUST delegate」式强制委托诱导。
  *
- * 本测试通过 vscode stub 驱动 ChatCliConfigService，断言 normal CLI 在
- * expertMode 启用时的 appendSystemPrompt 文案满足上述约束。
+ * 本测试通过 vscode stub 驱动 ChatCliConfigService，断言 normal CLI 默认提示词满足上述约束。
  */
 
 import assert from 'node:assert/strict';
@@ -44,75 +43,42 @@ function setExtensionConfig(
  */
 function makeService(currentModel?: { providerId: string; modelId: string }): InstanceType<typeof ChatCliConfigService> {
     const configManager = {
-        getCurrentModel: () => currentModel
+        getCurrentModel: () => currentModel,
+        getProviderModel: (_providerId: string, modelId: string) => ({ modelId, contextLength: undefined })
     } as unknown as import('../../../configManager').ConfigManager;
     return new ChatCliConfigService(configManager);
 }
 
-test('dispatcher prompt: 专家启用时不再含 @llsExpert 文本路由标记', async () => {
-    setExtensionConfig(
-        { 'chat.enabled': true },
-        {
-            'chat.expertMode.project.enabled': { workspaceValue: true },
-            'chat.expertMode.project.model': { workspaceValue: 'pExpert/mExpert' }
-        }
-    );
-    const result = await makeService({ providerId: 'pNormal', modelId: 'mNormal' }).getDualConfigsWithRelayEnv(20001);
-    const prompt = result.normal.appendSystemPrompt ?? '';
+/** 读取默认（未覆盖时）dispatcher 提示词。 */
+async function readDefaultPrompt(): Promise<string> {
+    setExtensionConfig({ 'chat.enabled': true });
+    const result = await makeService({ providerId: 'pNormal', modelId: 'mNormal' }).getRoutedConfigsWithRelayEnv(20001);
+    return result.normal.appendSystemPrompt ?? '';
+}
+
+test('dispatcher prompt: 不含 @llsExpert 文本路由标记', async () => {
+    const prompt = await readDefaultPrompt();
     assert.equal(prompt.includes('@llsExpert'), false);
 });
 
 test('dispatcher prompt: 不含「MUST delegate」式强制委托诱导', async () => {
-    setExtensionConfig(
-        { 'chat.enabled': true },
-        {
-            'chat.expertMode.project.enabled': { workspaceValue: true },
-            'chat.expertMode.project.model': { workspaceValue: 'pExpert/mExpert' }
-        }
-    );
-    const result = await makeService({ providerId: 'pNormal', modelId: 'mNormal' }).getDualConfigsWithRelayEnv(20002);
-    const prompt = result.normal.appendSystemPrompt ?? '';
+    const prompt = await readDefaultPrompt();
     assert.equal(/MUST delegate/i.test(prompt), false);
 });
 
-test('dispatcher prompt: 改为软引导 ask_expert 工具（仅显式或无法决策时调用）', async () => {
-    setExtensionConfig(
-        { 'chat.enabled': true },
-        {
-            'chat.expertMode.project.enabled': { workspaceValue: true },
-            'chat.expertMode.project.model': { workspaceValue: 'pExpert/mExpert' }
-        }
-    );
-    const result = await makeService({ providerId: 'pNormal', modelId: 'mNormal' }).getDualConfigsWithRelayEnv(20003);
-    const prompt = result.normal.appendSystemPrompt ?? '';
-    assert.match(prompt, /ask_expert/);
-    assert.match(prompt, /no conversation history|NO conversation history/i);
+test('dispatcher prompt: 不再引导 ask_expert 工具', async () => {
+    const prompt = await readDefaultPrompt();
+    assert.equal(prompt.includes('ask_expert'), false);
 });
 
-test('dispatcher prompt: 专家关闭时仍不含 @llsExpert，且不诱导调用专家', async () => {
-    setExtensionConfig(
-        { 'chat.enabled': true },
-        {
-            'chat.expertMode.project.enabled': { workspaceValue: false },
-            'chat.expertMode.project.model': { workspaceValue: '' }
-        }
-    );
-    const result = await makeService({ providerId: 'pNormal', modelId: 'mNormal' }).getDualConfigsWithRelayEnv(20004);
-    const prompt = result.normal.appendSystemPrompt ?? '';
-    assert.equal(prompt.includes('@llsExpert'), false);
+test('dispatcher prompt: 以「主助手直接处理」开头', async () => {
+    const prompt = await readDefaultPrompt();
+    assert.match(prompt, /primary engineering assistant/i);
+    assert.match(prompt, /Handle requests directly by default/i);
 });
 
-test('dispatcher prompt: 要求先自己检查上下文，不把专家当常规步骤', async () => {
-    setExtensionConfig(
-        { 'chat.enabled': true },
-        {
-            'chat.expertMode.project.enabled': { workspaceValue: true },
-            'chat.expertMode.project.model': { workspaceValue: 'pExpert/mExpert' }
-        }
-    );
-    const result = await makeService({ providerId: 'pNormal', modelId: 'mNormal' }).getDualConfigsWithRelayEnv(20005);
-    const prompt = result.normal.appendSystemPrompt ?? '';
-    assert.match(prompt, /rare\s+escalation\s+path/i);
-    assert.match(prompt, /first inspect the relevant local context yourself/i);
-    assert.match(prompt, /normal debugging, test failures, compile errors, or refactors/i);
+test('dispatcher prompt: 含 Write 工具使用纪律', async () => {
+    const prompt = await readDefaultPrompt();
+    assert.match(prompt, /Write tool discipline/i);
+    assert.ok(prompt.includes('seed segment'));
 });
