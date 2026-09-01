@@ -198,7 +198,13 @@ export interface ChatModelOption {
 /** Chat 输入框快捷权限模式选项。 */
 export type ChatQuickPermissionMode = 'acceptEdits' | 'bypassPermissions';
 
-/** 模型选择弹窗里的缓存时长选项。`default` 表示不改写、沿用客户端原样（系统默认 5m）。 */
+/**
+ * 模型选择弹窗里的缓存时长选项。`default` 表示不改写、沿用客户端原样（系统默认 5m）。
+ *
+ * 该选项改写的是请求体里的 `cache_control.ttl`。对 OpenAI 兼容 / Responses 提供商，
+ * 需要先在模型设置中把缓存模式设为 `passthrough`（透传 cache_control）才会生效；
+ * `auto` / `off` 下缓存断点会在转换时被丢弃，TTL 设置等同空操作。
+ */
 export type ChatCacheTtlOption = 'default' | '5m' | '1h';
 
 /** Chat 底部专家下拉框的当前选择状态。 */

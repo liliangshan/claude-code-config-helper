@@ -5,6 +5,8 @@
  * 输入应当是已经完成 model 重写与 LLS 任务流注入的 Anthropic 请求体对象。
  */
 
+import type { ModelCacheMode } from '../../types';
+
 /** Anthropic 消息角色。 */
 type AnthropicRole = 'user' | 'assistant';
 
@@ -13,7 +15,7 @@ type OpenAIChatRole = 'system' | 'user' | 'assistant' | 'tool';
 
 /** OpenAI Chat content part。 */
 type OpenAIChatContentPart =
-    | { type: 'text'; text: string }
+    | { type: 'text'; text: string; cache_control?: unknown }
     | { type: 'image_url'; image_url: { url: string } };
 
 /** OpenAI Chat tool call。 */
@@ -56,6 +58,8 @@ interface OpenAIChatTool {
         /** JSON Schema 参数定义。 */
         parameters: unknown;
     };
+    /** passthrough 模式下透传的 Anthropic 缓存断点。 */
+    cache_control?: unknown;
 }
 
 /** OpenAI Chat 请求体。 */
@@ -111,23 +115,32 @@ export interface AnthropicToOpenAIChatResult {
     warnings: ConversionWarning[];
 }
 
+/** Anthropic → OpenAI Chat 转换的可选行为开关。 */
+export interface AnthropicConversionOptions {
+    /** 模型级缓存策略；缺省按 `'auto'` 处理，即丢弃 `cache_control` 断点。 */
+    cacheMode?: ModelCacheMode;
+}
+
 /**
  * 将 Anthropic Messages 请求体转换为 OpenAI Chat Completions 请求体。
  *
  * @param anthropicBody 已完成任务流注入的 Anthropic 请求体。
+ * @param options 可选行为开关；省略时全部走默认行为。
  * @returns OpenAI Chat 请求体与降级 warning 列表。
  */
-export function convertAnthropicToOpenAIChat(anthropicBody: unknown): AnthropicToOpenAIChatResult {
+export function convertAnthropicToOpenAIChat(
+    anthropicBody: unknown,
+    options?: AnthropicConversionOptions
+): AnthropicToOpenAIChatResult {
+    const cacheMode: ModelCacheMode = options?.cacheMode ?? 'auto';
     const source = isRecord(anthropicBody) ? anthropicBody : {};
     const warnings: ConversionWarning[] = [];
     const messages: OpenAIChatMessage[] = [];
-    const systemText = convertSystemToText(source.system, warnings);
-    if (systemText.trim()) {
-        messages.push({ role: 'system', content: systemText });
-    }
+    const systemMessage = convertSystemToMessage(source.system, warnings, cacheMode);
+    if (systemMessage) messages.push(systemMessage);
     if (Array.isArray(source.messages)) {
         source.messages.forEach((message, index) => {
-            messages.push(...convertAnthropicMessage(message, `messages[${index}]`, warnings));
+            messages.push(...convertAnthropicMessage(message, `messages[${index}]`, warnings, cacheMode));
         });
     }
 
@@ -149,7 +162,7 @@ export function convertAnthropicToOpenAIChat(anthropicBody: unknown): AnthropicT
     if (source.stop_sequences !== undefined) body.stop = source.stop_sequences;
     const userId = readMetadataUserId(source.metadata);
     if (userId) body.user = userId;
-    const tools = convertTools(source.tools, warnings);
+    const tools = convertTools(source.tools, warnings, cacheMode);
     if (tools.length > 0) body.tools = tools;
     const toolChoice = convertToolChoice(source.tool_choice, warnings);
     if (toolChoice !== undefined) body.tool_choice = toolChoice;
@@ -190,17 +203,63 @@ function convertSystemToText(system: unknown, warnings: ConversionWarning[]): st
 }
 
 /**
+ * 把 Anthropic system 字段转换为一条 OpenAI Chat system 消息。
+ *
+ * `passthrough` 模式下输出结构化 content 数组，使 `cache_control` 断点有容器可挂；
+ * 其余模式沿用拍平成纯文本的既有行为，输出与改动前完全一致。
+ *
+ * @param system Anthropic system 字段。
+ * @param warnings warning 收集器。
+ * @param cacheMode 模型级缓存策略。
+ * @returns system 消息；system 为空时返回 undefined。
+ */
+function convertSystemToMessage(
+    system: unknown,
+    warnings: ConversionWarning[],
+    cacheMode: ModelCacheMode
+): OpenAIChatMessage | undefined {
+    if (cacheMode !== 'passthrough') {
+        const systemText = convertSystemToText(system, warnings);
+        return systemText.trim() ? { role: 'system', content: systemText } : undefined;
+    }
+    if (typeof system === 'string') {
+        return system.trim() ? { role: 'system', content: system } : undefined;
+    }
+    if (!Array.isArray(system)) return undefined;
+    const parts: OpenAIChatContentPart[] = [];
+    system.forEach((block, index) => {
+        if (!isRecord(block)) return;
+        if (block.type === 'text' && typeof block.text === 'string') {
+            parts.push(
+                block.cache_control !== undefined
+                    ? { type: 'text', text: block.text, cache_control: block.cache_control }
+                    : { type: 'text', text: block.text }
+            );
+        } else {
+            warnings.push({
+                path: `system[${index}]`,
+                code: 'unsupported_system_block',
+                message: `OpenAI Chat 仅支持 system text，已忽略 type=${String(block.type)}。`
+            });
+        }
+    });
+    return parts.length > 0 ? { role: 'system', content: parts } : undefined;
+}
+
+/**
  * 转换单条 Anthropic message 为一条或多条 OpenAI Chat message。
  *
  * @param message Anthropic message。
  * @param path JSON 路径。
  * @param warnings warning 收集器。
+ * @param cacheMode 模型级缓存策略。
  * @returns OpenAI Chat message 列表。
  */
 function convertAnthropicMessage(
     message: unknown,
     path: string,
-    warnings: ConversionWarning[]
+    warnings: ConversionWarning[],
+    cacheMode: ModelCacheMode
 ): OpenAIChatMessage[] {
     if (!isRecord(message)) return [];
     const role = message.role === 'assistant' ? 'assistant' : message.role === 'user' ? 'user' : undefined;
@@ -214,8 +273,8 @@ function convertAnthropicMessage(
     }
     if (!Array.isArray(content)) return [];
     return role === 'assistant'
-        ? convertAssistantContent(content, path, warnings)
-        : convertUserContent(content, path, warnings);
+        ? convertAssistantContent(content, path, warnings, cacheMode)
+        : convertUserContent(content, path, warnings, cacheMode);
 }
 
 /**
@@ -224,12 +283,14 @@ function convertAnthropicMessage(
  * @param content content block 数组。
  * @param path JSON 路径。
  * @param warnings warning 收集器。
+ * @param cacheMode 模型级缓存策略。
  * @returns OpenAI Chat message 列表。
  */
 function convertUserContent(
     content: unknown[],
     path: string,
-    warnings: ConversionWarning[]
+    warnings: ConversionWarning[],
+    cacheMode: ModelCacheMode
 ): OpenAIChatMessage[] {
     const toolMessages: OpenAIChatMessage[] = [];
     const userParts: OpenAIChatContentPart[] = [];
@@ -238,7 +299,13 @@ function convertUserContent(
         if (!isRecord(block)) return;
         switch (block.type) {
             case 'text':
-                if (typeof block.text === 'string' && block.text) userParts.push({ type: 'text', text: block.text });
+                if (typeof block.text === 'string' && block.text) {
+                    userParts.push(
+                        cacheMode === 'passthrough' && block.cache_control !== undefined
+                            ? { type: 'text', text: block.text, cache_control: block.cache_control }
+                            : { type: 'text', text: block.text }
+                    );
+                }
                 break;
             case 'image':
                 appendImagePart(userParts, block, blockPath, warnings);
@@ -256,7 +323,8 @@ function convertUserContent(
         }
     });
     const out = [...toolMessages];
-    if (userParts.length === 1 && userParts[0].type === 'text') {
+    // passthrough 下不能压平成字符串，否则 cache_control 无处附着。
+    if (cacheMode !== 'passthrough' && userParts.length === 1 && userParts[0].type === 'text') {
         out.push({ role: 'user', content: userParts[0].text });
     } else if (userParts.length > 0) {
         out.push({ role: 'user', content: userParts });
@@ -270,21 +338,32 @@ function convertUserContent(
  * @param content content block 数组。
  * @param path JSON 路径。
  * @param warnings warning 收集器。
+ * @param cacheMode 模型级缓存策略。
  * @returns OpenAI Chat assistant message 列表。
  */
 function convertAssistantContent(
     content: unknown[],
     path: string,
-    warnings: ConversionWarning[]
+    warnings: ConversionWarning[],
+    cacheMode: ModelCacheMode
 ): OpenAIChatMessage[] {
     const textParts: string[] = [];
+    /** passthrough 下的结构化镜像，与 textParts 一一对应，额外携带 cache_control。 */
+    const cacheParts: OpenAIChatContentPart[] = [];
     const toolCalls: OpenAIChatToolCall[] = [];
+    /** 同时写入纯文本与结构化两份文本，保证默认路径输出不变。 */
+    const pushText = (text: string, cacheControl?: unknown): void => {
+        textParts.push(text);
+        cacheParts.push(
+            cacheControl !== undefined ? { type: 'text', text, cache_control: cacheControl } : { type: 'text', text }
+        );
+    };
     content.forEach((block, index) => {
         const blockPath = `${path}.content[${index}]`;
         if (!isRecord(block)) return;
         switch (block.type) {
             case 'text':
-                if (typeof block.text === 'string' && block.text) textParts.push(block.text);
+                if (typeof block.text === 'string' && block.text) pushText(block.text, block.cache_control);
                 break;
             case 'tool_use':
                 if (typeof block.id === 'string' && typeof block.name === 'string') {
@@ -305,18 +384,20 @@ function convertAssistantContent(
                 warnings.push({ path: blockPath, code: 'ignored_thinking', message: 'thinking 块不转发给 OpenAI Chat。' });
                 break;
             case 'image':
-                textParts.push('[assistant image omitted]');
+                pushText('[assistant image omitted]');
                 warnings.push({ path: blockPath, code: 'assistant_image_omitted', message: 'assistant image 已降级为文本占位。' });
                 break;
             default:
-                textParts.push(`[unsupported block: ${String(block.type)}]`);
+                pushText(`[unsupported block: ${String(block.type)}]`);
                 warnings.push({ path: blockPath, code: 'unsupported_block', message: `已降级未知 block：${String(block.type)}。` });
                 break;
         }
     });
     if (textParts.length === 0 && toolCalls.length === 0) return [];
     const message: OpenAIChatMessage = { role: 'assistant' };
-    if (textParts.length > 0) message.content = textParts.join('\n');
+    if (textParts.length > 0) {
+        message.content = cacheMode === 'passthrough' ? cacheParts : textParts.join('\n');
+    }
     if (toolCalls.length > 0) {
         message.tool_calls = toolCalls;
         if (message.content === undefined) message.content = null;
@@ -409,9 +490,14 @@ function appendUnsupportedBlockText(
  *
  * @param tools Anthropic tools 字段。
  * @param warnings warning 收集器。
+ * @param cacheMode 模型级缓存策略。
  * @returns OpenAI Chat tools。
  */
-function convertTools(tools: unknown, warnings: ConversionWarning[]): OpenAIChatTool[] {
+function convertTools(
+    tools: unknown,
+    warnings: ConversionWarning[],
+    cacheMode: ModelCacheMode
+): OpenAIChatTool[] {
     if (!Array.isArray(tools)) return [];
     return tools.flatMap((tool, index): OpenAIChatTool[] => {
         if (!isRecord(tool) || typeof tool.name !== 'string') return [];
@@ -430,6 +516,9 @@ function convertTools(tools: unknown, warnings: ConversionWarning[]): OpenAIChat
             }
         };
         if (typeof tool.description === 'string') converted.function.description = tool.description;
+        if (cacheMode === 'passthrough' && tool.cache_control !== undefined) {
+            converted.cache_control = tool.cache_control;
+        }
         return [converted];
     });
 }

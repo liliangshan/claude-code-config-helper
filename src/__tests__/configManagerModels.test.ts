@@ -116,3 +116,29 @@ test('replaceProviderModels: 返回的合并统计数值正确', async () => {
 
     assert.deepEqual(stats, { added: 1, kept: 1, removed: 1, total: 2 });
 });
+
+test('normalizeModel: 旧数据缺少 cacheMode 时补齐为 auto', async () => {
+    const legacy = makeModel('legacy');
+    delete (legacy as Partial<ModelConfig>).cacheMode;
+    const manager = makeManager([legacy]);
+
+    await manager.replaceProviderModels('p1', [makeModel('legacy')]);
+
+    assert.equal(manager.getProvider('p1')?.models[0].cacheMode, 'auto');
+});
+
+test('normalizeModel: 非法 cacheMode 归一为 auto', async () => {
+    const manager = makeManager([makeModel('weird', { cacheMode: 'nonsense' as ModelConfig['cacheMode'] })]);
+
+    await manager.replaceProviderModels('p1', [makeModel('weird')]);
+
+    assert.equal(manager.getProvider('p1')?.models[0].cacheMode, 'auto');
+});
+
+test('replaceProviderModels: 本地 passthrough 设置不会被上游默认值覆盖', async () => {
+    const manager = makeManager([makeModel('gpt-x', { cacheMode: 'passthrough' })]);
+
+    await manager.replaceProviderModels('p1', [makeModel('gpt-x')]);
+
+    assert.equal(manager.getProvider('p1')?.models[0].cacheMode, 'passthrough');
+});

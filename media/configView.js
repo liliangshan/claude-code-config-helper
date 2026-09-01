@@ -108,6 +108,10 @@
             contextLength: 'Context Length',
             maxOutputTokens: 'Max Output Tokens',
             samplingMode: 'Sampling Mode',
+            cacheMode: 'Prompt Cache Mode',
+            cacheModeAuto: 'Auto (drop cache breakpoints)',
+            cacheModePassthrough: 'Passthrough (upstream must support cache_control, otherwise 400)',
+            cacheModeOff: 'Off (no cache handling)',
             vision: 'Vision',
             toolCalling: 'Tool Calling',
             providerNotFound: 'Provider not found',
@@ -203,6 +207,10 @@
             contextLength: '上下文长度',
             maxOutputTokens: '最大输出 Tokens',
             samplingMode: '采样模式',
+            cacheMode: '提示缓存模式',
+            cacheModeAuto: '自动（丢弃缓存断点）',
+            cacheModePassthrough: '透传（上游需支持 cache_control，否则可能 400）',
+            cacheModeOff: '关闭（不做缓存处理）',
             vision: '视觉',
             toolCalling: '工具调用',
             providerNotFound: '提供商不存在',
@@ -300,6 +308,10 @@
         contextLength: '上下文長度',
         maxOutputTokens: '最大輸出 Tokens',
         samplingMode: '取樣模式',
+        cacheMode: '提示快取模式',
+        cacheModeAuto: '自動（丟棄快取斷點）',
+        cacheModePassthrough: '透傳（上游需支援 cache_control，否則可能 400）',
+        cacheModeOff: '關閉（不做快取處理）',
         vision: '視覺',
         toolCalling: '工具呼叫',
         providerNotFound: '提供商不存在',
@@ -377,6 +389,10 @@
         contextLength: '컨텍스트 길이',
         maxOutputTokens: '최대 출력 Tokens',
         samplingMode: '샘플링 모드',
+        cacheMode: '프롬프트 캐시 모드',
+        cacheModeAuto: '자동 (캐시 중단점 제거)',
+        cacheModePassthrough: '전달 (업스트림이 cache_control을 지원해야 하며, 아니면 400 발생 가능)',
+        cacheModeOff: '끄기 (캐시 처리 안 함)',
         vision: '비전',
         toolCalling: '도구 호출',
         providerNotFound: '공급자를 찾을 수 없습니다',
@@ -454,6 +470,10 @@
         contextLength: 'コンテキスト長',
         maxOutputTokens: '最大出力 Tokens',
         samplingMode: 'サンプリングモード',
+        cacheMode: 'プロンプトキャッシュモード',
+        cacheModeAuto: '自動（キャッシュ断点を破棄）',
+        cacheModePassthrough: 'パススルー（上流が cache_control 対応必須、非対応なら 400 の可能性）',
+        cacheModeOff: 'オフ（キャッシュ処理なし）',
         vision: 'ビジョン',
         toolCalling: 'ツール呼び出し',
         providerNotFound: 'プロバイダーが見つかりません',
@@ -1161,6 +1181,13 @@
                         <div class="checkbox-row"><input id="model-tool" type="checkbox" ${model.toolCalling !== false ? 'checked' : ''} /><label for="model-tool">${t('toolCalling')}</label></div>
                         <div class="checkbox-row"><input id="model-transform-think" type="checkbox" ${model.transformThink ? 'checked' : ''} /><label for="model-transform-think">Transform Think Tags (&lt;|im_start|&gt;/♩)</label></div>
                         <div class="checkbox-row"><input id="model-preserve-reasoning" type="checkbox" ${model.preserveReasoningContent ? 'checked' : ''} /><label for="model-preserve-reasoning">Preserve reasoning_content</label></div>
+                        <div class="field full"><label>${t('cacheMode')}</label><select id="model-cache-mode">
+                            ${[
+                                ['auto', t('cacheModeAuto')],
+                                ['passthrough', t('cacheModePassthrough')],
+                                ['off', t('cacheModeOff')]
+                            ].map(([value, label]) => `<option value="${value}" ${(model.cacheMode || 'auto') === value ? 'selected' : ''}>${text(label)}</option>`).join('')}
+                        </select></div>
                     </div>
                     <div class="modal-footer">
                         <button id="btn-cancel-modal" class="secondary">${t('cancel')}</button>
@@ -1354,6 +1381,7 @@
         model.toolCalling = document.getElementById('model-tool').checked;
         model.transformThink = document.getElementById('model-transform-think').checked;
         model.preserveReasoningContent = document.getElementById('model-preserve-reasoning').checked;
+        model.cacheMode = document.getElementById('model-cache-mode').value || 'auto';
         if (!existing) target.models.push(model);
         target.updatedAt = Date.now();
         modalState = null;
@@ -1453,7 +1481,8 @@
             isUserSelectable: true,
             enabled: true,
             transformThink: false,
-            preserveReasoningContent: false
+            preserveReasoningContent: false,
+            cacheMode: 'auto'
         };
     }
 

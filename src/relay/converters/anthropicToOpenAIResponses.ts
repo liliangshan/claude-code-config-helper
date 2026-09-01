@@ -5,16 +5,18 @@
  * 输入应当是已经完成 model 重写与 LLS 任务流注入的 Anthropic 请求体对象。
  */
 
+import type { ModelCacheMode } from '../../types';
+
 /** Anthropic 消息角色。 */
 type AnthropicRole = 'user' | 'assistant';
 
 /** Responses 对话消息角色。 */
-type OpenAIResponsesMessageRole = 'user' | 'assistant';
+type OpenAIResponsesMessageRole = 'user' | 'assistant' | 'system';
 
 /** Responses message content part。 */
 type OpenAIResponsesContentPart =
-    | { type: 'input_text'; text: string }
-    | { type: 'output_text'; text: string }
+    | { type: 'input_text'; text: string; cache_control?: unknown }
+    | { type: 'output_text'; text: string; cache_control?: unknown }
     | { type: 'input_image'; image_url: string };
 
 /** Responses input 顶层项。 */
@@ -33,6 +35,8 @@ export interface OpenAIResponsesTool {
     description?: string;
     /** JSON Schema 参数定义。 */
     parameters: unknown;
+    /** passthrough 模式下透传的 Anthropic 缓存断点。 */
+    cache_control?: unknown;
 }
 
 /** OpenAI Responses 请求体。 */
@@ -79,27 +83,43 @@ export interface AnthropicToOpenAIResponsesResult {
     warnings: ResponsesConversionWarning[];
 }
 
+/** Anthropic → OpenAI Responses 转换的可选行为开关。 */
+export interface AnthropicConversionOptions {
+    /** 模型级缓存策略；缺省按 `'auto'` 处理，即丢弃 `cache_control` 断点。 */
+    cacheMode?: ModelCacheMode;
+}
+
 /**
  * 将 Anthropic Messages 请求体转换为 OpenAI Responses 请求体。
  *
  * @param anthropicBody 已完成任务流注入的 Anthropic 请求体。
+ * @param options 可选行为开关；省略时全部走默认行为。
  * @returns OpenAI Responses 请求体与降级 warning 列表。
  */
-export function convertAnthropicToOpenAIResponses(anthropicBody: unknown): AnthropicToOpenAIResponsesResult {
+export function convertAnthropicToOpenAIResponses(
+    anthropicBody: unknown,
+    options?: AnthropicConversionOptions
+): AnthropicToOpenAIResponsesResult {
+    const cacheMode: ModelCacheMode = options?.cacheMode ?? 'auto';
     const source = isRecord(anthropicBody) ? anthropicBody : {};
     const warnings: ResponsesConversionWarning[] = [];
     const input: OpenAIResponsesInputItem[] = [];
     if (Array.isArray(source.messages)) {
         source.messages.forEach((message, index) => {
-            input.push(...convertAnthropicMessage(message, `messages[${index}]`, warnings));
+            input.push(...convertAnthropicMessage(message, `messages[${index}]`, warnings, cacheMode));
         });
     }
     const body: OpenAIResponsesRequestBody = {
         model: source.model,
         input
     };
-    const instructions = convertSystemToInstructions(source.system, warnings);
-    if (instructions.trim()) body.instructions = instructions;
+    if (cacheMode === 'passthrough') {
+        const systemItem = convertSystemToInputItem(source.system, warnings);
+        if (systemItem) input.unshift(systemItem);
+    } else {
+        const instructions = convertSystemToInstructions(source.system, warnings);
+        if (instructions.trim()) body.instructions = instructions;
+    }
     if (source.temperature !== undefined) body.temperature = source.temperature;
     if (source.top_p !== undefined) body.top_p = source.top_p;
     if (source.max_tokens !== undefined) body.max_output_tokens = source.max_tokens;
@@ -109,7 +129,7 @@ export function convertAnthropicToOpenAIResponses(anthropicBody: unknown): Anthr
         body.metadata = metadata;
         if (typeof metadata.user_id === 'string' && metadata.user_id) body.user = metadata.user_id;
     }
-    const tools = convertTools(source.tools, warnings);
+    const tools = convertTools(source.tools, warnings, cacheMode);
     if (tools.length > 0) body.tools = tools;
     const toolChoice = convertToolChoice(source.tool_choice, warnings);
     if (toolChoice !== undefined) body.tool_choice = toolChoice;
@@ -150,17 +170,57 @@ function convertSystemToInstructions(system: unknown, warnings: ResponsesConvers
 }
 
 /**
+ * 把 Anthropic system 字段转换为 input 数组首项。
+ *
+ * Responses 的 `instructions` 只接受字符串，无处挂 `cache_control`；`passthrough`
+ * 模式改用一条 system input item 承载 system 文本，使断点有容器可挂。
+ *
+ * @param system Anthropic system 字段。
+ * @param warnings warning 收集器。
+ * @returns system input item；system 为空时返回 undefined。
+ */
+function convertSystemToInputItem(
+    system: unknown,
+    warnings: ResponsesConversionWarning[]
+): OpenAIResponsesInputItem | undefined {
+    if (typeof system === 'string') {
+        return system.trim() ? { role: 'system', content: [{ type: 'input_text', text: system }] } : undefined;
+    }
+    if (!Array.isArray(system)) return undefined;
+    const parts: OpenAIResponsesContentPart[] = [];
+    system.forEach((block, index) => {
+        if (!isRecord(block)) return;
+        if (block.type === 'text' && typeof block.text === 'string') {
+            parts.push(
+                block.cache_control !== undefined
+                    ? { type: 'input_text', text: block.text, cache_control: block.cache_control }
+                    : { type: 'input_text', text: block.text }
+            );
+        } else {
+            warnings.push({
+                path: `system[${index}]`,
+                code: 'unsupported_system_block',
+                message: `OpenAI Responses instructions 仅支持 text，已忽略 type=${String(block.type)}。`
+            });
+        }
+    });
+    return parts.length > 0 ? { role: 'system', content: parts } : undefined;
+}
+
+/**
  * 转换单条 Anthropic message 为一条或多条 Responses input item。
  *
  * @param message Anthropic message。
  * @param path JSON 路径。
  * @param warnings warning 收集器。
+ * @param cacheMode 模型级缓存策略。
  * @returns Responses input item 列表。
  */
 function convertAnthropicMessage(
     message: unknown,
     path: string,
-    warnings: ResponsesConversionWarning[]
+    warnings: ResponsesConversionWarning[],
+    cacheMode: ModelCacheMode
 ): OpenAIResponsesInputItem[] {
     if (!isRecord(message)) return [];
     const role = readAnthropicRole(message.role);
@@ -175,8 +235,8 @@ function convertAnthropicMessage(
     }
     if (!Array.isArray(content)) return [];
     return role === 'assistant'
-        ? convertAssistantContent(content, path, warnings)
-        : convertUserContent(content, path, warnings);
+        ? convertAssistantContent(content, path, warnings, cacheMode)
+        : convertUserContent(content, path, warnings, cacheMode);
 }
 
 /**
@@ -195,12 +255,14 @@ function readAnthropicRole(role: unknown): AnthropicRole | undefined {
  * @param content content block 数组。
  * @param path JSON 路径。
  * @param warnings warning 收集器。
+ * @param cacheMode 模型级缓存策略。
  * @returns Responses input item 列表。
  */
 function convertUserContent(
     content: unknown[],
     path: string,
-    warnings: ResponsesConversionWarning[]
+    warnings: ResponsesConversionWarning[],
+    cacheMode: ModelCacheMode
 ): OpenAIResponsesInputItem[] {
     const out: OpenAIResponsesInputItem[] = [];
     const userParts: OpenAIResponsesContentPart[] = [];
@@ -215,7 +277,13 @@ function convertUserContent(
         if (!isRecord(block)) return;
         switch (block.type) {
             case 'text':
-                if (typeof block.text === 'string' && block.text) userParts.push({ type: 'input_text', text: block.text });
+                if (typeof block.text === 'string' && block.text) {
+                    userParts.push(
+                        cacheMode === 'passthrough' && block.cache_control !== undefined
+                            ? { type: 'input_text', text: block.text, cache_control: block.cache_control }
+                            : { type: 'input_text', text: block.text }
+                    );
+                }
                 break;
             case 'image':
                 appendImagePart(userParts, block, blockPath, warnings);
@@ -243,12 +311,14 @@ function convertUserContent(
  * @param content content block 数组。
  * @param path JSON 路径。
  * @param warnings warning 收集器。
+ * @param cacheMode 模型级缓存策略。
  * @returns Responses input item 列表。
  */
 function convertAssistantContent(
     content: unknown[],
     path: string,
-    warnings: ResponsesConversionWarning[]
+    warnings: ResponsesConversionWarning[],
+    cacheMode: ModelCacheMode
 ): OpenAIResponsesInputItem[] {
     const out: OpenAIResponsesInputItem[] = [];
     const assistantParts: OpenAIResponsesContentPart[] = [];
@@ -263,7 +333,13 @@ function convertAssistantContent(
         if (!isRecord(block)) return;
         switch (block.type) {
             case 'text':
-                if (typeof block.text === 'string' && block.text) assistantParts.push({ type: 'output_text', text: block.text });
+                if (typeof block.text === 'string' && block.text) {
+                    assistantParts.push(
+                        cacheMode === 'passthrough' && block.cache_control !== undefined
+                            ? { type: 'output_text', text: block.text, cache_control: block.cache_control }
+                            : { type: 'output_text', text: block.text }
+                    );
+                }
                 break;
             case 'tool_use':
                 flushAssistantParts();
@@ -397,9 +473,14 @@ function appendUnsupportedBlockText(
  *
  * @param tools Anthropic tools 字段。
  * @param warnings warning 收集器。
+ * @param cacheMode 模型级缓存策略。
  * @returns Responses tools。
  */
-function convertTools(tools: unknown, warnings: ResponsesConversionWarning[]): OpenAIResponsesTool[] {
+function convertTools(
+    tools: unknown,
+    warnings: ResponsesConversionWarning[],
+    cacheMode: ModelCacheMode
+): OpenAIResponsesTool[] {
     if (!Array.isArray(tools)) return [];
     return tools.flatMap((tool, index): OpenAIResponsesTool[] => {
         if (!isRecord(tool) || typeof tool.name !== 'string') return [];
@@ -416,6 +497,9 @@ function convertTools(tools: unknown, warnings: ResponsesConversionWarning[]): O
             parameters
         };
         if (typeof tool.description === 'string') converted.description = tool.description;
+        if (cacheMode === 'passthrough' && tool.cache_control !== undefined) {
+            converted.cache_control = tool.cache_control;
+        }
         return [converted];
     });
 }

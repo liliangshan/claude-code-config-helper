@@ -21,6 +21,7 @@ import { convertOpenAIChatJsonToAnthropic, OpenAIChatToAnthropicStreamConverter 
 import type { DebugRecorder } from './debugRecorder';
 import { buildOpenAIForwardHeaders, describeOpenAIAuthHeaders } from './openAIHeaders';
 import { buildForwardHeaders, redactHeaders } from './forwardHeadersCommon';
+import { resolveModelCacheMode } from './modelCacheMode';
 import type { UpstreamAdapter, UpstreamRequestContext } from './router';
 import { injectLlsTaskRequestBody, type LlsTaskRequestInjectionDeps } from './taskRequestInjection';
 import type { TokenBudgetService } from './tokenBudget/service';
@@ -133,7 +134,9 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
         }
         await this.safeRecordRequestBody(injectedBodyText);
         const anthropicBody = this.parseJson(injectedBodyText);
-        const converted = convertAnthropicToOpenAIChat(anthropicBody);
+        const converted = convertAnthropicToOpenAIChat(anthropicBody, {
+            cacheMode: resolveModelCacheMode(provider, modelId)
+        });
         const upstreamBodyText = JSON.stringify(converted.body);
         const headers = buildOpenAIForwardHeaders(provider, req.headers);
         headers['content-length'] = String(Buffer.byteLength(upstreamBodyText, 'utf-8'));

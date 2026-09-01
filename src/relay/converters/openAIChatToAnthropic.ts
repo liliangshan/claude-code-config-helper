@@ -33,6 +33,8 @@ export interface AnthropicMessageResponse {
         input_tokens: number;
         /** 输出 token 数。 */
         output_tokens: number;
+        /** 命中缓存的输入 token 数；上游未返回该字段时不下发。 */
+        cache_read_input_tokens?: number;
     };
 }
 
@@ -80,8 +82,10 @@ interface OpenAIChatToAnthropicState {
     toolCalls: Map<number, ToolCallStreamState>;
     /** 下一个可用 Anthropic content block index。 */
     nextBlockIndex: number;
-    /** 输入 token 数。 */
+    /** 输入 token 数（已扣除缓存命中部分）。 */
     promptTokens: number;
+    /** 命中缓存的输入 token 数；上游未返回时为 undefined。 */
+    cacheReadTokens?: number;
     /** 输出 token 数。 */
     completionTokens: number;
     /** OpenAI finish_reason。 */
@@ -211,7 +215,12 @@ export class OpenAIChatToAnthropicStreamConverter {
         }
         if (typeof choice.finish_reason === 'string' || choice.finish_reason === null) {
             this.state.finishReason = typeof choice.finish_reason === 'string' ? choice.finish_reason : undefined;
-            if (choice.finish_reason !== null) out += this.finishIfNeeded();
+            // 收尾只关闭 content block，不发 message_delta：多数上游把 usage 放在
+            // finish_reason 之后的独立 chunk 里，提前收尾会让那份 usage 永远发不出去。
+            if (choice.finish_reason !== null) {
+                out += this.closeTextBlockIfOpen();
+                out += this.closeAllToolBlocks();
+            }
         }
         return out;
     }
@@ -237,7 +246,13 @@ export class OpenAIChatToAnthropicStreamConverter {
                 content: [],
                 stop_reason: null,
                 stop_sequence: null,
-                usage: { input_tokens: this.state.promptTokens, output_tokens: 0 }
+                usage: {
+                    input_tokens: this.state.promptTokens,
+                    output_tokens: 0,
+                    ...(this.state.cacheReadTokens === undefined
+                        ? {}
+                        : { cache_read_input_tokens: this.state.cacheReadTokens })
+                }
             }
         });
     }
@@ -249,7 +264,10 @@ export class OpenAIChatToAnthropicStreamConverter {
      */
     private readUsage(chunk: Record<string, unknown>): void {
         if (!isRecord(chunk.usage)) return;
-        this.state.promptTokens = readNumber(chunk.usage.prompt_tokens);
+        const cachedTokens = readCachedTokens(chunk.usage, 'prompt_tokens_details');
+        // OpenAI 的 prompt_tokens 含缓存命中部分，Anthropic 的 input_tokens 不含，故做减法。
+        this.state.promptTokens = readNumber(chunk.usage.prompt_tokens) - (cachedTokens ?? 0);
+        this.state.cacheReadTokens = cachedTokens;
         this.state.completionTokens = readNumber(chunk.usage.completion_tokens);
     }
 
@@ -399,10 +417,17 @@ export class OpenAIChatToAnthropicStreamConverter {
             Array.from(this.state.toolCalls.values()),
             this.warnings
         );
+        // usage 只在最后一个 chunk 到达，message_start 那份可能是 0，这里补发真值。
         out += formatAnthropicSse('message_delta', {
             type: 'message_delta',
             delta: { stop_reason: stopReason, stop_sequence: null },
-            usage: { output_tokens: this.state.completionTokens }
+            usage: {
+                input_tokens: this.state.promptTokens,
+                output_tokens: this.state.completionTokens,
+                ...(this.state.cacheReadTokens === undefined
+                    ? {}
+                    : { cache_read_input_tokens: this.state.cacheReadTokens })
+            }
         });
         out += formatAnthropicSse('message_stop', { type: 'message_stop' });
         this.state.finished = true;
@@ -461,6 +486,8 @@ export function convertOpenAIChatJsonToAnthropic(json: unknown): OpenAIChatToAnt
     if (choice.finish_reason === 'content_filter' && content.length === 0) {
         content.push({ type: 'text', text: '[content filtered by upstream provider]' });
     }
+    const usage = isRecord(source.usage) ? source.usage : undefined;
+    const cachedTokens = readCachedTokens(usage, 'prompt_tokens_details');
     return {
         body: {
             id: `msg_${typeof source.id === 'string' ? source.id : 'openai_chat'}`,
@@ -471,8 +498,10 @@ export function convertOpenAIChatJsonToAnthropic(json: unknown): OpenAIChatToAnt
             stop_reason: stopReason,
             stop_sequence: null,
             usage: {
-                input_tokens: readNumber(isRecord(source.usage) ? source.usage.prompt_tokens : undefined),
-                output_tokens: readNumber(isRecord(source.usage) ? source.usage.completion_tokens : undefined)
+                // OpenAI 的 prompt_tokens 含缓存命中部分，Anthropic 的 input_tokens 不含。
+                input_tokens: readNumber(usage?.prompt_tokens) - (cachedTokens ?? 0),
+                output_tokens: readNumber(usage?.completion_tokens),
+                ...(cachedTokens === undefined ? {} : { cache_read_input_tokens: cachedTokens })
             }
         },
         warnings
@@ -638,6 +667,25 @@ function mapFinishReason(
  */
 function readNumber(value: unknown): number {
     return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * 读取 OpenAI usage 中的缓存命中 token 数。
+ *
+ * 只认 OpenAI 规范字段 `prompt_tokens_details.cached_tokens`，上游未返回
+ * 或非有效数字时返回 undefined，调用方据此决定是否下发
+ * `cache_read_input_tokens`。
+ *
+ * @param usage OpenAI usage 对象。
+ * @param detailsKey 存放明细的字段名（Chat 为 `prompt_tokens_details`）。
+ * @returns 缓存命中 token 数；不可用时为 undefined。
+ */
+export function readCachedTokens(usage: unknown, detailsKey: string): number | undefined {
+    if (!isRecord(usage)) return undefined;
+    const details = usage[detailsKey];
+    if (!isRecord(details)) return undefined;
+    const cached = details.cached_tokens;
+    return typeof cached === 'number' && Number.isFinite(cached) ? cached : undefined;
 }
 
 /**

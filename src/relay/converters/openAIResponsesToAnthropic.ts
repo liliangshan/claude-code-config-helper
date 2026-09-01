@@ -6,6 +6,7 @@
 
 import type { ResponsesConversionWarning } from './anthropicToOpenAIResponses';
 import { formatAnthropicSseError } from './openAIErrorToAnthropic';
+import { readCachedTokens } from './openAIChatToAnthropic';
 
 /** Anthropic content block。 */
 type AnthropicContentBlock =
@@ -34,6 +35,8 @@ export interface AnthropicResponsesMessageResponse {
         input_tokens: number;
         /** 输出 token 数。 */
         output_tokens: number;
+        /** 命中缓存的输入 token 数；上游未返回该字段时不下发。 */
+        cache_read_input_tokens?: number;
     };
 }
 
@@ -95,8 +98,10 @@ interface OpenAIResponsesToAnthropicState {
     textParts: Map<string, ResponsesTextPartState>;
     /** 下一个 Anthropic content block index。 */
     nextBlockIndex: number;
-    /** 输入 token 数。 */
+    /** 输入 token 数（已扣除缓存命中部分）。 */
     inputTokens: number;
+    /** 命中缓存的输入 token 数；上游未返回时为 undefined。 */
+    cacheReadTokens?: number;
     /** 输出 token 数。 */
     outputTokens: number;
     /** Responses status。 */
@@ -498,7 +503,10 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         if (response.incomplete_details !== undefined) this.state.incompleteDetails = response.incomplete_details;
         const usage = isRecord(response.usage) ? response.usage : undefined;
         if (usage) {
-            this.state.inputTokens = readNumber(usage.input_tokens);
+            const cachedTokens = readCachedTokens(usage, 'input_tokens_details');
+            // Responses 的 input_tokens 含缓存命中部分，Anthropic 的不含。
+            this.state.inputTokens = readNumber(usage.input_tokens) - (cachedTokens ?? 0);
+            this.state.cacheReadTokens = cachedTokens;
             this.state.outputTokens = readNumber(usage.output_tokens);
         }
     }
@@ -521,7 +529,13 @@ export class OpenAIResponsesToAnthropicStreamConverter {
                 content: [],
                 stop_reason: null,
                 stop_sequence: null,
-                usage: { input_tokens: this.state.inputTokens, output_tokens: 0 }
+                usage: {
+                    input_tokens: this.state.inputTokens,
+                    output_tokens: 0,
+                    ...(this.state.cacheReadTokens === undefined
+                        ? {}
+                        : { cache_read_input_tokens: this.state.cacheReadTokens })
+                }
             }
         });
     }
@@ -652,10 +666,17 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         if (this.state.finished) return '';
         let out = this.ensureMessageStart();
         out += this.closeAllOpenBlocks();
+        // usage 通常随 response.completed 才到达，message_start 那份可能为 0，这里补发真值。
         out += formatAnthropicSse('message_delta', {
             type: 'message_delta',
             delta: { stop_reason: this.mapStreamStopReason(), stop_sequence: null },
-            usage: { output_tokens: this.state.outputTokens }
+            usage: {
+                input_tokens: this.state.inputTokens,
+                output_tokens: this.state.outputTokens,
+                ...(this.state.cacheReadTokens === undefined
+                    ? {}
+                    : { cache_read_input_tokens: this.state.cacheReadTokens })
+            }
         });
         out += formatAnthropicSse('message_stop', { type: 'message_stop' });
         this.state.finished = true;
@@ -994,9 +1015,12 @@ function ensureFilteredPlaceholder(source: Record<string, unknown>, content: Ant
  */
 function convertUsage(usage: unknown): AnthropicResponsesMessageResponse['usage'] {
     const source = isRecord(usage) ? usage : {};
+    const cachedTokens = readCachedTokens(source, 'input_tokens_details');
     return {
-        input_tokens: readNumber(source.input_tokens),
-        output_tokens: readNumber(source.output_tokens)
+        // Responses 的 input_tokens 含缓存命中部分，Anthropic 的不含，故做减法。
+        input_tokens: readNumber(source.input_tokens) - (cachedTokens ?? 0),
+        output_tokens: readNumber(source.output_tokens),
+        ...(cachedTokens === undefined ? {} : { cache_read_input_tokens: cachedTokens })
     };
 }
 

@@ -38,6 +38,15 @@ export interface ExtraEnvVar {
     value: string;
 }
 
+/**
+ * 模型级缓存策略，决定 Anthropic → OpenAI 转换时如何处理 `cache_control` 断点。
+ *
+ * - `auto`：丢弃断点并记 warning，适用于严格按 OpenAI 规范校验请求体的上游。
+ * - `passthrough`：把断点原样写入转换后的请求体，供能识别 `cache_control` 的上游命中缓存。
+ * - `off`：不做任何缓存相关处理。
+ */
+export type ModelCacheMode = 'auto' | 'passthrough' | 'off';
+
 /** 提供商下的单个模型配置。 */
 export interface ModelConfig {
     /** 请求上游时使用的模型 ID。 */
@@ -75,6 +84,21 @@ export interface ModelConfig {
     transformThink?: boolean;
     /** 是否保留 reasoning_content 字段。 */
     preserveReasoningContent?: boolean;
+    /**
+     * Anthropic → OpenAI 转换时的缓存断点处理策略。
+     *
+     * Claude Code 用 `cache_control: { type: 'ephemeral' }` 在 tools / system / messages
+     * 上显式声明缓存断点，而 OpenAI Chat / Responses 协议没有对应字段。本开关决定
+     * 转换器如何处置这些断点：
+     *
+     * - `auto`（缺省）：丢弃断点并记 `unsupported_cache_control` warning。
+     * - `passthrough`：把断点原样写入转换后的请求体，供能识别该字段的上游继续命中缓存；
+     *   严格按 OpenAI 规范校验请求体的上游会因未知字段返回 400，故需用户显式开启。
+     * - `off`：不做任何缓存相关处理，且不下发 `prompt_cache_key`。
+     *
+     * 兼容旧数据：未显式设置时由 `ConfigManager.normalizeModel()` 补齐为 `'auto'`。
+     */
+    cacheMode?: ModelCacheMode;
 }
 
 /** 不含密钥的提供商持久化配置。 */

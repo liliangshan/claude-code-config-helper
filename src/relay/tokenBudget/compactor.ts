@@ -234,6 +234,7 @@ export class CompactionClient {
             system: this.composeSystem(originalSystem),
             messages: [this.buildSingleUserContextMessage(messages)]
         };
+        // 仅用于压缩摘要请求，走默认 cacheMode：无需透传缓存断点。
         const converted = convertAnthropicToOpenAIResponses(anthropicBody);
         const body = JSON.stringify(converted.body);
         const headers = buildOpenAIForwardHeaders(provider, {});
