@@ -109,6 +109,8 @@ export async function openLlsCcaiTaskMenu(): Promise<void> {
         cancelLabel
     );
     if (choice === continueLabel) {
+        // 用户已主动继续任务流，恢复弹窗使命结束。
+        pendingRestorePrompt = false;
         await fillBuiltInChatComposer(service.buildContinuePrompt(), true);
     } else if (choice === clearLabel) {
         autoContinueScheduler?.cancel('用户从任务流菜单清空运行中任务流');
@@ -142,6 +144,8 @@ export async function showLlsCcaiTaskProgress(): Promise<void> {
 export async function continueLlsCcaiTask(): Promise<void> {
     const service = getLlsTaskService();
     if (!service) return;
+    // 用户已主动继续任务流，恢复弹窗使命结束，之后 webview 首次 ready 不该再弹。
+    pendingRestorePrompt = false;
     autoContinueScheduler?.cancel('用户手动继续任务流');
     await fillBuiltInChatComposer(service.buildContinuePrompt(), true);
 }
@@ -151,12 +155,20 @@ export async function continueLlsCcaiTask(): Promise<void> {
  *
  * 仅当 {@link pendingRestorePrompt} 为真且当前确有未完成任务流时下发
  * taskFlow/restorePrompt；下发后立即清标志，保证整个会话只弹一次。
+ *
+ * 额外守卫：任务流已经在自动推进时不再下发。webview 是懒加载的，中途续推会
+ * 通过 openBuiltInChat 首次把它拉起来并触发 webview/ready，若不拦截，启动时
+ * 那个恢复对话框就会在任务流跑到一半时弹出、盖住整个 Chat 面板。
  */
 export async function maybePostTaskFlowRestorePrompt(): Promise<void> {
     if (!pendingRestorePrompt) return;
     pendingRestorePrompt = false;
     const service = getLlsTaskService();
     if (!service || !service.hasActiveWorkflow()) return;
+    if (AutoContinueScheduler.hasPendingWork()) {
+        Logger.info('[LlsTask] 任务流正在自动推进，跳过恢复弹窗');
+        return;
+    }
     const workflow = service.getSnapshot().workflow;
     if (!workflow) return;
     const completed = workflow.tasks.filter((task) => task.status === 'completed').length;

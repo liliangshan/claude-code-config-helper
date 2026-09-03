@@ -1562,11 +1562,35 @@
         if (!modelPickerDialogEl.open) modelPickerDialogEl.showModal();
     }
 
+    /** 恢复对话框自动「继续」的倒计时秒数。 */
+    var TASK_RESTORE_COUNTDOWN_SECONDS = 10;
+
+    /** 恢复对话框倒计时 setInterval 句柄；无倒计时进行中时为 null。 */
+    var taskRestoreCountdownTimer = null;
+
+    /**
+     * 停止恢复对话框倒计时并把「继续」按钮文案还原。
+     *
+     * 用户手动三选一、或倒计时自然结束后都必须调用，避免残留定时器再触发一次
+     * resolveTaskRestore。
+     */
+    function stopTaskRestoreCountdown() {
+        if (taskRestoreCountdownTimer !== null) {
+            clearInterval(taskRestoreCountdownTimer);
+            taskRestoreCountdownTimer = null;
+        }
+        if (taskRestoreContinueEl) taskRestoreContinueEl.textContent = t('restoreContinue');
+    }
+
     /**
      * 弹出任务流恢复对话框，展示恢复出的标题/摘要/进度。
      *
      * 由扩展端在 webview/ready 后下发 taskFlow/restorePrompt 触发；用户三选一
      * （继续 / 清除 / 稍后）后通过 taskFlow/restoreChoice 回传扩展。
+     *
+     * 弹出同时启动 {@link TASK_RESTORE_COUNTDOWN_SECONDS} 秒倒计时：无人处理时
+     * 自动按「继续」提交。这样即使弹窗在任务流推进途中被误弹，也不会把任务流
+     * 卡在模态框后面，用户无人值守时能自愈。
      *
      * @param {{title?: string, summary?: string, progress?: string}} payload 恢复出的任务流信息。
      */
@@ -1577,6 +1601,17 @@
         if (taskRestoreNameEl) taskRestoreNameEl.textContent = info.title || '';
         if (taskRestoreProgressEl) taskRestoreProgressEl.textContent = info.progress || '';
         if (!taskRestoreDialogEl.open) taskRestoreDialogEl.showModal();
+        stopTaskRestoreCountdown();
+        var remain = TASK_RESTORE_COUNTDOWN_SECONDS;
+        if (taskRestoreContinueEl) taskRestoreContinueEl.textContent = t('restoreContinue') + ' (' + remain + 's)';
+        taskRestoreCountdownTimer = setInterval(function () {
+            remain -= 1;
+            if (remain > 0) {
+                if (taskRestoreContinueEl) taskRestoreContinueEl.textContent = t('restoreContinue') + ' (' + remain + 's)';
+                return;
+            }
+            resolveTaskRestore('continue');
+        }, 1000);
     }
 
     /**
@@ -1585,6 +1620,7 @@
      * @param {'continue' | 'clear' | 'dismiss'} choice 用户选择。
      */
     function resolveTaskRestore(choice) {
+        stopTaskRestoreCountdown();
         if (taskRestoreDialogEl instanceof HTMLDialogElement && taskRestoreDialogEl.open) {
             taskRestoreDialogEl.close();
         }

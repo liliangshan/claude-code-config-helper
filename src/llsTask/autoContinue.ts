@@ -138,6 +138,26 @@ export class AutoContinueScheduler {
     public constructor(private readonly service: LlsTaskService) {}
 
     /**
+     * 判断调度器当前是否「手里有活」，即任务流正在被自动推进。
+     *
+     * 三个静态字段任一为真即成立：续推定时器在等、空闲看门狗定时器在跑、
+     * 或看门狗仍处于观察期。字段本就是进程级单例，因此做成静态方法，
+     * 调用方无需持有调度器实例。
+     *
+     * 主要用于任务流恢复弹窗的守卫：任务流已经在自动跑了，就不该再弹
+     * 「是否恢复未完成任务流」的模态框把它盖住。
+     *
+     * @returns 有续推定时器或看门狗在挂时返回 true。
+     */
+    public static hasPendingWork(): boolean {
+        return !!(
+            AutoContinueScheduler.timer
+            || AutoContinueScheduler.idleWatchdogTimer
+            || AutoContinueScheduler.idleWatchdogPending
+        );
+    }
+
+    /**
      * 注入续推提交回调。
      *
      * 设为 undefined 可恢复"剪贴板 + 模拟回车"旧路径。submitter 是静态字段，

@@ -2,6 +2,18 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.44] - 2026-09-03
+
+### Fixed
+
+- **The startup "resume task flow?" dialog no longer pops up in the middle of a running task flow.** The restore flag set at activation lingered until the Chat webview's *first* `webview/ready` — but the webview is lazy-loaded, so when the first thing to open it was a mid-flow auto-continue, the startup dialog appeared as a modal right on top of the running flow. `maybePostTaskFlowRestorePrompt` now checks `AutoContinueScheduler.hasPendingWork()` (continuation timer armed, idle watchdog running, or watchdog observation window open) and skips the dialog while the flow is being auto-driven. Manually continuing from the task flow menu or the continue command also clears the pending flag, so a later `webview/ready` cannot re-trigger it.
+- **Switching to the task flow model no longer inherits the missing-tool strike count.** Misses accumulated while the main model was answering were carried into the task flow model phase, so the circuit breaker (3 strikes) could trip right after a successful switch and silently stall auto-continue. A `switched` result from `applyTaskFlowModelForContinue()` now resets the counter.
+
+### Added
+
+- **10-second countdown on the restore dialog.** If the dialog does show and nobody clicks, the Continue button counts down (`Continue (10s)` … `1s`) and then auto-selects *continue* — so even a mis-timed dialog can no longer park a task flow indefinitely. Any manual click stops the countdown.
+- `AutoContinueScheduler.hasPendingWork()` static query plus 6 new unit tests covering scheduling states and breaker counter reset (280 tests).
+
 ## [3.2.43] - 2026-09-02
 
 ### Changed

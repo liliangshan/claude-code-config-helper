@@ -1,8 +1,14 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.43
+**Version:** 3.2.44
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
+
+## What's New in 3.2.44
+
+- **Fixed the startup "resume task flow?" dialog popping up mid-flow.** The dialog is meant for a fresh window with an unfinished workflow on disk — but the Chat webview is lazy-loaded, so when the first thing to open it was a mid-flow auto-continue, the leftover restore flag fired the modal right on top of the running flow. The dialog is now skipped whenever the auto-continue scheduler still has pending work, and any manual continue clears the flag for good.
+- **The restore dialog now has a 10-second countdown.** If nobody clicks, the Continue button counts down and auto-selects *continue*, so even a mis-timed dialog can no longer park a task flow indefinitely.
+- **Switching to the task flow model resets the missing-tool strike count.** Strikes accumulated on the main model no longer carry over, so the circuit breaker can't trip right after a successful switch and silently stall auto-continue.
 
 ## What's New in 3.2.43
 
@@ -168,7 +174,7 @@ Command titles may be localized according to your configured UI language.
 npm install
 npm run compile
 npx @vscode/vsce package
-code --install-extension claude-code-config-helper-3.2.43.vsix
+code --install-extension claude-code-config-helper-3.2.44.vsix
 ```
 
 ### Windows Claude CLI install hint

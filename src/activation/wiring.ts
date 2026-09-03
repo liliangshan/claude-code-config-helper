@@ -130,7 +130,11 @@ export function configureRuntimeModules(): void {
     // 创建阶段还没有活动 workflow，因此始终由主模型创建。
     AutoContinueScheduler.setBeforeSubmit(async () => {
         if (!getLlsTaskService()?.hasActiveWorkflow()) return;
-        await applyTaskFlowModelForContinue();
+        // 切到新模型后清零缺失工具计数：主模型阶段攒下的次数不该带进任务流模型
+        // 阶段，否则刚切过去就可能达到熔断阈值，让自动续推静默停摆。
+        if (await applyTaskFlowModelForContinue() === 'switched') {
+            getAutoContinueScheduler()?.resetMissingToolCounter('任务流模型已切换');
+        }
     });
     AutoContinueScheduler.setSubmitter(async (text) => {
         await appendUserMessageAndSend(text);

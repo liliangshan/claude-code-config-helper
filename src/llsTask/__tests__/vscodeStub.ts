@@ -44,6 +44,14 @@ const vscodeStub = {
             return workspaceFolders.length > 0 ? workspaceFolders : undefined;
         }
     },
+    window: {
+        /** 记录熔断等路径弹出的警告文案，供用例断言。 */
+        warningMessages: [] as string[],
+        showWarningMessage: async (message: string) => {
+            vscodeStub.window.warningMessages.push(message);
+            return undefined;
+        }
+    },
     EventEmitter
 };
 
