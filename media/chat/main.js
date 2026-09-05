@@ -36,6 +36,24 @@
     };
 
 
+    /** 子智能体开关名称和提示随聊天界面语言切换。 */
+    Object.assign(chatTranslations.en, { subagentsLabel: 'Subagents', subagentsTitle: 'Provide Agent, SendMessage and ListAgents tools to the model; takes effect on the next request' });
+    Object.assign(chatTranslations['zh-cn'], { subagentsLabel: '子智能体', subagentsTitle: '是否向模型提供 Agent、SendMessage、ListAgents 工具；下一次请求生效' });
+    Object.assign(chatTranslations['zh-tw'], { subagentsLabel: '子智慧體', subagentsTitle: '是否向模型提供 Agent、SendMessage、ListAgents 工具；下一次請求生效' });
+    Object.assign(chatTranslations.ko, { subagentsLabel: '하위 에이전트', subagentsTitle: '모델에 Agent, SendMessage, ListAgents 도구 제공 여부; 다음 요청부터 적용' });
+    Object.assign(chatTranslations.ja, { subagentsLabel: 'サブエージェント', subagentsTitle: 'モデルに Agent、SendMessage、ListAgents ツールを提供するかを設定します。次のリクエストから適用されます' });
+    Object.assign(chatTranslations.fr, { subagentsLabel: 'Sous-agents', subagentsTitle: 'Fournir les outils Agent, SendMessage et ListAgents au modèle ; prend effet à la prochaine requête' });
+    Object.assign(chatTranslations.de, { subagentsLabel: 'Unteragenten', subagentsTitle: 'Dem Modell die Werkzeuge Agent, SendMessage und ListAgents bereitstellen; gilt ab der nächsten Anfrage' });
+
+    /** 缓存低命中解决方案文案，动态弹窗打开时按当前语言读取。 */
+    Object.assign(chatTranslations.en, { cacheSolutionLink: 'Solution', cacheSolutionTitle: 'Improve prompt cache hits', cacheSolutionSteps: 'Cache hit rate is below 80%. In the provider list, choose View Models, find “{model}”, select Edit, enable Explicit Prompt Cache, and save.', cacheSolutionSettings: 'Open extension settings', cacheSolutionSessionHint: 'The current session_id is used automatically as the cache key; no manual value is needed.', cacheSolutionCaveat: 'The first request warms the cache. A 30-minute expiry, prefix changes, or a short static prefix can still reduce hits; enabling it does not guarantee 80%.', cacheSolutionUnknownModel: 'the model used for this response', cacheSolutionClose: 'Got it' });
+    Object.assign(chatTranslations['zh-cn'], { cacheSolutionLink: '解决方案', cacheSolutionTitle: '提高提示缓存命中率', cacheSolutionSteps: '缓存命中率低于 80%。请在提供商列表中点击“查看模型”，找到“{model}”，点击“编辑”，开启“显式缓存”并保存。', cacheSolutionSettings: '打开扩展设置', cacheSolutionSessionHint: '缓存键自动使用当前会话的 session_id，无需手填。', cacheSolutionCaveat: '首次请求需要预热；30 分钟过期、前缀变化或静态前缀较短仍可能低命中，开启后不保证达到 80%。', cacheSolutionUnknownModel: '本次响应使用的模型', cacheSolutionClose: '知道了' });
+    Object.assign(chatTranslations['zh-tw'], { cacheSolutionLink: '解決方案', cacheSolutionTitle: '提高提示快取命中率', cacheSolutionSteps: '快取命中率低於 80%。請在提供者清單點擊「查看模型」，找到「{model}」，點擊「編輯」，開啟「顯式快取」並儲存。', cacheSolutionSettings: '開啟擴充功能設定', cacheSolutionSessionHint: '快取鍵會自動使用目前會話的 session_id，無需手動填寫。', cacheSolutionCaveat: '首次請求需要預熱；30 分鐘過期、前綴變化或靜態前綴較短仍可能低命中，開啟後不保證達到 80%。', cacheSolutionUnknownModel: '本次回應使用的模型', cacheSolutionClose: '知道了' });
+    Object.assign(chatTranslations.ko, { cacheSolutionLink: '해결 방법', cacheSolutionTitle: '프롬프트 캐시 적중률 개선', cacheSolutionSteps: '캐시 적중률이 80% 미만입니다. 공급자 목록에서 모델 보기를 누르고 “{model}”을 찾아 편집을 선택한 뒤 명시적 프롬프트 캐시를 켜고 저장하세요.', cacheSolutionSettings: '확장 설정 열기', cacheSolutionSessionHint: '현재 session_id가 캐시 키로 자동 사용되므로 직접 입력할 필요가 없습니다.', cacheSolutionCaveat: '첫 요청은 캐시를 예열합니다. 30분 만료, 접두사 변경 또는 짧은 정적 접두사로 적중률이 낮을 수 있으며 80%를 보장하지 않습니다.', cacheSolutionUnknownModel: '이 응답에 사용된 모델', cacheSolutionClose: '확인' });
+    Object.assign(chatTranslations.ja, { cacheSolutionLink: '解決策', cacheSolutionTitle: 'プロンプトキャッシュのヒット率を改善', cacheSolutionSteps: 'キャッシュヒット率が 80% 未満です。プロバイダー一覧で「モデルを表示」を開き、“{model}” を編集して「明示的プロンプトキャッシュ」を有効にし、保存してください。', cacheSolutionSettings: '拡張機能の設定を開く', cacheSolutionSessionHint: '現在の session_id がキャッシュキーとして自動使用され、手入力は不要です。', cacheSolutionCaveat: '初回はキャッシュをウォームアップします。30 分の期限、プレフィックス変更、短い静的プレフィックスではヒット率が低くなり、80% は保証されません。', cacheSolutionUnknownModel: 'この応答で使用したモデル', cacheSolutionClose: '了解' });
+    Object.assign(chatTranslations.fr, { cacheSolutionLink: 'Solution', cacheSolutionTitle: 'Améliorer le taux de cache', cacheSolutionSteps: 'Le taux de cache est inférieur à 80 %. Dans la liste des fournisseurs, ouvrez les modèles, trouvez « {model} », modifiez-le, activez le cache de prompt explicite et enregistrez.', cacheSolutionSettings: 'Ouvrir les paramètres de l’extension', cacheSolutionSessionHint: 'Le session_id actuel est utilisé automatiquement comme clé ; aucune saisie manuelle.', cacheSolutionCaveat: 'La première requête préchauffe le cache. Une expiration de 30 minutes, un préfixe modifié ou court peut réduire le taux ; 80 % n’est pas garanti.', cacheSolutionUnknownModel: 'le modèle utilisé pour cette réponse', cacheSolutionClose: 'Compris' });
+    Object.assign(chatTranslations.de, { cacheSolutionLink: 'Lösung', cacheSolutionTitle: 'Prompt-Cache-Trefferquote verbessern', cacheSolutionSteps: 'Die Cache-Trefferquote liegt unter 80 %. Öffnen Sie in der Anbieterliste die Modelle, bearbeiten Sie „{model}“, aktivieren Sie den expliziten Prompt-Cache und speichern Sie.', cacheSolutionSettings: 'Erweiterungseinstellungen öffnen', cacheSolutionSessionHint: 'Die aktuelle session_id wird automatisch als Cache-Schlüssel verwendet; keine Eingabe nötig.', cacheSolutionCaveat: 'Die erste Anfrage wärmt den Cache auf. 30 Minuten Ablauf, Präfixänderungen oder kurze statische Präfixe können Treffer senken; 80 % sind nicht garantiert.', cacheSolutionUnknownModel: 'das für diese Antwort verwendete Modell', cacheSolutionClose: 'Verstanden' });
+
     // 复制成功后跟在对号图标后面的提示文案。
     Object.assign(chatTranslations.en, { copySuccess: 'Copied' });
     Object.assign(chatTranslations['zh-cn'], { copySuccess: '复制成功' });
@@ -458,6 +476,11 @@
     const modelPickerCancelEls = Array.prototype.slice.call(
         document.querySelectorAll('[data-role="model-picker-cancel"], [data-role="model-picker-cancel-btn"]')
     );
+    const cacheSolutionDialogEl = document.querySelector('[data-role="cache-solution-dialog"]');
+    const cacheSolutionStepsEl = document.querySelector('[data-role="cache-solution-steps"]');
+    const cacheSolutionCloseEl = document.querySelector('[data-role="cache-solution-close"]');
+    /** 打开解决方案弹窗的按钮，用于关闭后恢复键盘焦点。 */
+    let cacheSolutionTriggerEl = null;
     const taskRestoreDialogEl = document.querySelector('[data-role="task-restore"]');
     const taskRestoreSummaryEl = document.querySelector('[data-role="task-restore-summary"]');
     const taskRestoreNameEl = document.querySelector('[data-role="task-restore-name"]');
@@ -509,6 +532,7 @@
         compactionEnabled: false,
         permissionMode: 'acceptEdits',
         cacheTtl: 'default',
+        subagentsEnabled: false,
         defaultAttachmentPaths: new Set(),
         dragDepth: 0,
         chatRunning: false,
@@ -935,6 +959,25 @@
         if (tokenMeterWrapEl instanceof HTMLElement) {
             shortcutBar.appendChild(tokenMeterWrapEl);
         }
+
+        const subagentsLabel = document.createElement('label');
+        subagentsLabel.className = 'composer-subagents-toggle';
+        subagentsLabel.dataset.i18nTitle = 'subagentsTitle';
+        subagentsLabel.title = t('subagentsTitle');
+        const subagentsInput = document.createElement('input');
+        subagentsInput.type = 'checkbox';
+        subagentsInput.dataset.role = 'subagents-toggle';
+        subagentsInput.setAttribute('role', 'switch');
+        subagentsInput.checked = composerState.subagentsEnabled;
+        subagentsInput.addEventListener('change', () => {
+            subagentsInput.disabled = true;
+            post({ type: 'subagents/select', enabled: subagentsInput.checked });
+        });
+        const subagentsText = document.createElement('span');
+        subagentsText.dataset.i18n = 'subagentsLabel';
+        subagentsText.textContent = t('subagentsLabel');
+        subagentsLabel.append(subagentsInput, subagentsText);
+        shortcutBar.appendChild(subagentsLabel);
 
         composerBox.insertAdjacentElement('afterend', shortcutBar);
         renderBrowserAutoApproveHint();
@@ -1562,7 +1605,34 @@
         if (!modelPickerDialogEl.open) modelPickerDialogEl.showModal();
     }
 
-    /** 恢复对话框自动「继续」的倒计时秒数。 */
+    /**
+     * 打开低命中率解决方案弹窗。
+     *
+     * 模型名来自当前 usage 片段并通过 textContent 写入，不拼接 HTML。原生 dialog
+     * 负责 Escape 关闭；close 事件统一恢复触发按钮焦点。
+     *
+     * @param {string|undefined} modelName 响应使用的模型名。
+     * @param {HTMLElement} trigger 打开弹窗的按钮。
+     */
+    function showCacheSolutionDialog(modelName, trigger) {
+        if (!(cacheSolutionDialogEl instanceof HTMLDialogElement)) return;
+        const displayModel = modelName ? String(modelName) : t('cacheSolutionUnknownModel');
+        if (cacheSolutionStepsEl) cacheSolutionStepsEl.textContent = tf('cacheSolutionSteps', { model: displayModel });
+        cacheSolutionTriggerEl = trigger;
+        applyI18n();
+        // applyI18n 不处理动态模型占位符，静态翻译更新后再恢复步骤文本。
+        if (cacheSolutionStepsEl) cacheSolutionStepsEl.textContent = tf('cacheSolutionSteps', { model: displayModel });
+        if (!cacheSolutionDialogEl.open) cacheSolutionDialogEl.showModal();
+        if (cacheSolutionCloseEl instanceof HTMLElement) cacheSolutionCloseEl.focus();
+    }
+
+    /** 关闭解决方案弹窗；焦点由 close 事件统一恢复。 */
+    function closeCacheSolutionDialog() {
+        if (cacheSolutionDialogEl instanceof HTMLDialogElement && cacheSolutionDialogEl.open) {
+            cacheSolutionDialogEl.close();
+        }
+    }
+
     var TASK_RESTORE_COUNTDOWN_SECONDS = 10;
 
     /** 恢复对话框倒计时 setInterval 句柄；无倒计时进行中时为 null。 */
@@ -2962,7 +3032,16 @@
         parts.push(t('usageCacheRead') + formatUsageNumber(usage.cacheReadInputTokens));
         var hitRate = computeCacheHitRate(usage);
         if (hitRate !== null) parts.push(t('usageCacheHit') + hitRate + '%');
-        footer.textContent = parts.join(' · ');
+        footer.appendChild(document.createTextNode(parts.join(' · ')));
+        if (window.LlsCacheSolution?.shouldShowCacheSolution(usage)) {
+            footer.appendChild(document.createTextNode(' · '));
+            const solutionButton = document.createElement('button');
+            solutionButton.type = 'button';
+            solutionButton.className = 'assistantUsageFooter_07S1Yg__solution';
+            solutionButton.textContent = t('cacheSolutionLink');
+            solutionButton.addEventListener('click', () => showCacheSolutionDialog(usage.model, solutionButton));
+            footer.appendChild(solutionButton);
+        }
         container.appendChild(footer);
     }
 
@@ -5139,6 +5218,15 @@
                 // 提交答案前 CLI 保持阻塞（不会继续发上游请求）。
                 enqueueAskUserRequest(message);
                 break;
+            case 'subagents/current': {
+                composerState.subagentsEnabled = message.enabled === true;
+                const input = document.querySelector('[data-role="subagents-toggle"]');
+                if (input instanceof HTMLInputElement) {
+                    input.checked = composerState.subagentsEnabled;
+                    input.disabled = false;
+                }
+                break;
+            }
             case 'cacheTtl/current':
                 composerState.cacheTtl = message.ttl === '5m' || message.ttl === '1h' ? message.ttl : 'default';
                 renderCacheTtlSelect();
@@ -5513,6 +5601,20 @@
     composerTaskflowChipEl?.addEventListener('click', openModelPicker);
     modelPickerCancelEls.forEach((el) => {
         if (el instanceof HTMLElement) el.addEventListener('click', closeModelPicker);
+    });
+    /** 关闭说明弹窗并请求宿主打开扩展配置页，不修改模型配置。 */
+    function openCacheSolutionSettings() {
+        closeCacheSolutionDialog();
+        post({ type: 'config/open' });
+    }
+
+    cacheSolutionCloseEl?.addEventListener('click', closeCacheSolutionDialog);
+    document.querySelector('[data-role="cache-solution-settings"]')?.addEventListener('click', openCacheSolutionSettings);
+    cacheSolutionDialogEl?.addEventListener('close', () => {
+        if (cacheSolutionTriggerEl instanceof HTMLElement && cacheSolutionTriggerEl.isConnected) {
+            cacheSolutionTriggerEl.focus();
+        }
+        cacheSolutionTriggerEl = null;
     });
     taskRestoreContinueEl?.addEventListener('click', () => resolveTaskRestore('continue'));
     taskRestoreClearEl?.addEventListener('click', () => resolveTaskRestore('clear'));

@@ -255,6 +255,7 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
         const htmlUri = vscode.Uri.joinPath(mediaRoot, 'index.html');
         const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'style.css'));
         const bridgeUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'bridge.js'));
+        const cacheSolutionScriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'cacheSolution.js'));
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'main.js'));
         const nonce = this.createNonce();
         const html = await fs.readFile(htmlUri.fsPath, 'utf8');
@@ -263,6 +264,7 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
             .replace(/{{nonce}}/g, nonce)
             .replace(/{{styleUri}}/g, String(styleUri))
             .replace(/{{bridgeUri}}/g, String(bridgeUri))
+            .replace(/{{cacheSolutionScriptUri}}/g, String(cacheSolutionScriptUri))
             .replace(/{{scriptUri}}/g, String(scriptUri));
     }
 

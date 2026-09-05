@@ -109,6 +109,23 @@ export function installVscodeStub(config: VscodeStubConfig): VscodeStubConfig {
             },
             getWorkspaceFolder() {
                 return undefined;
+            },
+            /**
+             * 文件监听器桩：只返回可用的空实现，测试里不真正触发事件。
+             *
+             * ConfigManager 构造时会用它监听 Claude settings.json 的创建/删除，
+             * 缺少这个方法会让构造函数里的异步初始化抛未捕获异常。
+             *
+             * @returns 具备 onDidCreate/onDidChange/onDidDelete/dispose 的假 watcher。
+             */
+            createFileSystemWatcher() {
+                const noopDisposable = { dispose() { /* noop */ } };
+                return {
+                    onDidCreate: () => noopDisposable,
+                    onDidChange: () => noopDisposable,
+                    onDidDelete: () => noopDisposable,
+                    dispose() { /* noop */ }
+                };
             }
         },
         window: {

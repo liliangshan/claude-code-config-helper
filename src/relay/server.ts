@@ -193,6 +193,10 @@ export class RelayServer implements vscode.Disposable {
     /**
      * 停止本地 HTTP 中转服务。
      *
+     * `server.close()` 只停止接受新连接，已建立的连接会继续挂着；relay 的常态负载
+     * 就是长时间不结束的 SSE 流，只等 close 回调会一直卡到 240s 空闲超时，
+     * 表现为重启 relay「假死」。因此必须再调 `closeAllConnections()` 主动掐断。
+     *
      * 若服务未运行，此调用为 no-op。
      */
     public async stop(): Promise<void> {
@@ -206,6 +210,8 @@ export class RelayServer implements vscode.Disposable {
         this.listeningPort = undefined;
         await new Promise<void>((resolve) => {
             server.close(() => resolve());
+            // close() 之后立即断开存量连接，否则挂着的 SSE 会让上面的 Promise 等到空闲超时。
+            server.closeAllConnections();
         });
         this.setStatus({ kind: 'stopped', port });
         Logger.info('本地中转服务已停止');
@@ -232,8 +238,10 @@ export class RelayServer implements vscode.Disposable {
      */
     public dispose(): void {
         // 尽量同步关闭：触发 close 后再清理事件。
+        // 同 stop()：close() 不断存量连接，dispose 场景下扩展宿主即将退出，直接强断。
         try {
             this.server?.close();
+            this.server?.closeAllConnections();
         } catch {
             // ignore
         }

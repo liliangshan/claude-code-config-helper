@@ -71,6 +71,9 @@ export const CONFIG_NAMESPACE = 'claudeCodeConfigHelper';
 /** 本扩展任务流危险权限开关字段：claudeCodeConfigHelper.taskFlowBypassPermissions。 */
 export const TASK_FLOW_BYPASS_PERMISSIONS_KEY = 'taskFlowBypassPermissions';
 
+/** Relay 请求 messages 调试落盘开关的配置键。 */
+export const RELAY_DEBUG_RECORD_KEY = 'relay.debugRecord';
+
 /** 任务流发送目标配置字段：claudeCodeConfigHelper.taskFlow.target。 */
 export const TASK_FLOW_TARGET_KEY = 'taskFlow.target';
 
@@ -93,6 +96,9 @@ export const CHAT_CLI_PATH_KEY = 'chat.cliPath';
 
 /** Chat 缓存时长在 globalState 中的持久化 key（不再暴露为 VS Code 设置项）。 */
 export const CHAT_CACHE_TTL_STATE_KEY = 'claudeRouter.chatCacheTtl';
+
+/** 子智能体开关在扩展 workspaceState 中的持久化 key，未设置时默认关闭。 */
+export const CHAT_SUBAGENTS_ENABLED_STATE_KEY = 'claudeRouter.chatSubagentsEnabled';
 
 /** Chat 缓存时长允许的取值。`default` 表示不改写、沿用客户端原样（系统默认 5m）。 */
 export type ChatCacheTtl = 'default' | '1h' | '5m';

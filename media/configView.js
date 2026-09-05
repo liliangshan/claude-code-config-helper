@@ -73,7 +73,7 @@
             apply: 'Apply',
             writeClaudeCodeSettings: 'Write Claude Code Settings',
             providerManagement: 'Provider Management',
-            providerDescription: 'Configure upstream providers and models for Claude Code Relay.',
+            providerDescription: 'Configure upstream providers and models for Claude Code Relay. After fetching models or changing provider/model settings, changes take effect immediately in the current workspace. Other workspaces must reload their window or close and reopen it.',
             newProvider: '+ New Provider',
             noProviders: 'No providers yet. Click “New Provider” to start.',
             enableProvider: 'Enable provider',
@@ -112,6 +112,10 @@
             cacheModeAuto: 'Auto (drop cache breakpoints)',
             cacheModePassthrough: 'Passthrough (upstream must support cache_control, otherwise 400)',
             cacheModeOff: 'Off (no cache handling)',
+            explicitCacheLabel: 'Explicit Prompt Cache',
+            explicitCacheHelp: 'Use a stable session ID as the cache key. Supported for OpenAI Chat and Responses providers.',
+            explicitCacheUnsupported: 'Anthropic providers do not support this gateway-specific option. The saved value is preserved but inactive.',
+            explicitCacheOverridesMode: 'Explicit cache takes priority; Prompt Cache Mode is preserved but inactive while enabled.',
             reasoningMode: 'Thinking Mode',
             reasoningModeOff: 'Off (keep current behavior)',
             reasoningModePassthrough: 'Passthrough (read back upstream reasoning as thinking; changes content block order)',
@@ -175,7 +179,7 @@
             apply: '应用',
             writeClaudeCodeSettings: '一键写入 Claude Code 配置',
             providerManagement: 'Provider Management',
-            providerDescription: '配置可供 Claude Code Relay 使用的上游提供商与模型。',
+            providerDescription: '配置可供 Claude Code Relay 使用的上游提供商与模型。拉取模型、修改提供商或修改模型配置后，当前工作区立即生效；其它工作区需重载窗口，或关闭窗口后重新打开才生效。',
             newProvider: '+ 新建提供商',
             noProviders: '暂无提供商，点击“新建提供商”开始。',
             enableProvider: '启用厂商',
@@ -214,6 +218,10 @@
             cacheModeAuto: '自动（丢弃缓存断点）',
             cacheModePassthrough: '透传（上游需支持 cache_control，否则可能 400）',
             cacheModeOff: '关闭（不做缓存处理）',
+            explicitCacheLabel: '显式缓存',
+            explicitCacheHelp: '使用稳定的会话 ID 作为缓存键，支持 OpenAI Chat 与 Responses 提供商。',
+            explicitCacheUnsupported: 'Anthropic 提供商不支持此网关专用选项；已保存值会保留但不生效。',
+            explicitCacheOverridesMode: '显式缓存优先；开启时保留但不使用原提示缓存模式。',
             reasoningMode: '思考模式',
             reasoningModeOff: '关闭（保持现状）',
             reasoningModePassthrough: '透传（读回上游思考内容；会改变 content block 顺序）',
@@ -279,7 +287,7 @@
         apply: '套用',
         writeClaudeCodeSettings: '一鍵寫入 Claude Code 設定',
         providerManagement: '提供商管理',
-        providerDescription: '設定可供 Claude Code Relay 使用的上游提供商與模型。',
+        providerDescription: '設定可供 Claude Code Relay 使用的上游提供商與模型。擷取模型、修改提供商或模型設定後，目前工作區立即生效；其他工作區需重新載入視窗，或關閉視窗後重新開啟才生效。',
         newProvider: '+ 新增提供商',
         noProviders: '尚無提供商，點擊「新增提供商」開始。',
         enableProvider: '啟用提供商',
@@ -363,7 +371,7 @@
         apply: '적용',
         writeClaudeCodeSettings: 'Claude Code 설정 한 번에 쓰기',
         providerManagement: '공급자 관리',
-        providerDescription: 'Claude Code Relay에서 사용할 업스트림 공급자와 모델을 구성합니다.',
+        providerDescription: 'Claude Code Relay에서 사용할 업스트림 공급자와 모델을 구성합니다. 모델을 가져오거나 공급자 또는 모델 설정을 변경하면 현재 작업 영역에 즉시 적용됩니다. 다른 작업 영역은 창을 다시 로드하거나 닫았다가 다시 열어야 적용됩니다.',
         newProvider: '+ 새 공급자',
         noProviders: '아직 공급자가 없습니다. “새 공급자”를 클릭하여 시작하세요.',
         enableProvider: '공급자 활성화',
@@ -447,7 +455,7 @@
         apply: '適用',
         writeClaudeCodeSettings: 'Claude Code 設定を一括書き込み',
         providerManagement: 'プロバイダー管理',
-        providerDescription: 'Claude Code Relay で使用する上流プロバイダーとモデルを設定します。',
+        providerDescription: 'Claude Code Relay で使用する上流プロバイダーとモデルを設定します。モデルの取得、プロバイダーまたはモデル設定の変更は、現在のワークスペースにすぐ反映されます。他のワークスペースでは、ウィンドウを再読み込みするか、閉じてから開き直してください。',
         newProvider: '+ 新しいプロバイダー',
         noProviders: 'プロバイダーはまだありません。「新しいプロバイダー」をクリックして開始してください。',
         enableProvider: 'プロバイダーを有効化',
@@ -531,7 +539,7 @@
         apply: 'Appliquer',
         writeClaudeCodeSettings: 'Écrire les paramètres Claude Code en un clic',
         providerManagement: 'Gestion des fournisseurs',
-        providerDescription: 'Configurez les fournisseurs amont et les modèles utilisables par Claude Code Relay.',
+        providerDescription: 'Configurez les fournisseurs amont et les modèles utilisables par Claude Code Relay. Après la récupération des modèles ou la modification des paramètres du fournisseur ou du modèle, les changements prennent effet immédiatement dans cet espace de travail. Dans les autres espaces de travail, rechargez la fenêtre ou fermez-la puis rouvrez-la.',
         newProvider: '+ Nouveau fournisseur',
         noProviders: 'Aucun fournisseur pour le moment. Cliquez sur « Nouveau fournisseur » pour commencer.',
         enableProvider: 'Activer le fournisseur',
@@ -608,7 +616,7 @@
         apply: 'Anwenden',
         writeClaudeCodeSettings: 'Claude Code Einstellungen mit einem Klick schreiben',
         providerManagement: 'Anbieterverwaltung',
-        providerDescription: 'Konfigurieren Sie Upstream-Anbieter und Modelle für Claude Code Relay.',
+        providerDescription: 'Konfigurieren Sie Upstream-Anbieter und Modelle für Claude Code Relay. Nach dem Abrufen von Modellen oder dem Ändern von Anbieter- oder Modelleinstellungen werden Änderungen im aktuellen Arbeitsbereich sofort wirksam. In anderen Arbeitsbereichen müssen Sie das Fenster neu laden oder schließen und erneut öffnen.',
         newProvider: '+ Neuer Anbieter',
         noProviders: 'Noch keine Anbieter. Klicken Sie auf „Neuer Anbieter“, um zu beginnen.',
         enableProvider: 'Anbieter aktivieren',
@@ -650,6 +658,13 @@
         confirmDeleteProvider: 'Diesen Anbieter löschen?',
         adLabel: 'ANZEIGE'
     };
+
+    /** 为显式缓存模型选项补齐七种界面语言。 */
+    Object.assign(translations['zh-tw'], { explicitCacheLabel: '顯式快取', explicitCacheHelp: '使用穩定的會話 ID 作為快取鍵，支援 OpenAI Chat 與 Responses 提供者。', explicitCacheUnsupported: 'Anthropic 提供者不支援此閘道專用選項；已儲存值會保留但不生效。', explicitCacheOverridesMode: '顯式快取優先；開啟時保留但不使用原提示快取模式。' });
+    Object.assign(translations.ko, { explicitCacheLabel: '명시적 프롬프트 캐시', explicitCacheHelp: '안정적인 세션 ID를 캐시 키로 사용합니다. OpenAI Chat 및 Responses 공급자를 지원합니다.', explicitCacheUnsupported: 'Anthropic 공급자는 이 게이트웨이 전용 옵션을 지원하지 않습니다. 저장된 값은 유지되지만 적용되지 않습니다.', explicitCacheOverridesMode: '명시적 캐시가 우선합니다. 활성화 시 기존 프롬프트 캐시 모드는 유지되지만 사용되지 않습니다.' });
+    Object.assign(translations.ja, { explicitCacheLabel: '明示的プロンプトキャッシュ', explicitCacheHelp: '安定したセッション ID をキャッシュキーに使用します。OpenAI Chat と Responses プロバイダーに対応します。', explicitCacheUnsupported: 'Anthropic プロバイダーはこのゲートウェイ専用オプションに対応していません。保存値は保持されますが適用されません。', explicitCacheOverridesMode: '明示的キャッシュが優先されます。有効時も元のキャッシュモードは保持されますが使用されません。' });
+    Object.assign(translations.fr, { explicitCacheLabel: 'Cache de prompt explicite', explicitCacheHelp: 'Utilise un ID de session stable comme clé de cache. Compatible avec les fournisseurs OpenAI Chat et Responses.', explicitCacheUnsupported: 'Les fournisseurs Anthropic ne prennent pas en charge cette option propre à la passerelle. La valeur est conservée mais inactive.', explicitCacheOverridesMode: 'Le cache explicite est prioritaire ; le mode de cache existant est conservé mais inactif.' });
+    Object.assign(translations.de, { explicitCacheLabel: 'Expliziter Prompt-Cache', explicitCacheHelp: 'Verwendet eine stabile Sitzungs-ID als Cache-Schlüssel. Unterstützt OpenAI-Chat- und Responses-Anbieter.', explicitCacheUnsupported: 'Anthropic-Anbieter unterstützen diese Gateway-spezifische Option nicht. Der gespeicherte Wert bleibt erhalten, ist aber inaktiv.', explicitCacheOverridesMode: 'Der explizite Cache hat Vorrang; der vorhandene Cache-Modus bleibt gespeichert, ist aber inaktiv.' });
 
     /** Claude CLI 路径提示文案补丁：多语言统一维护，避免静态翻译对象长行继续膨胀。 */
     Object.assign(translations['zh-tw'], {
@@ -1168,6 +1183,31 @@
         `;
     }
 
+    /** 返回当前模型弹窗对应的提供商；状态无效时返回 null。 */
+    function getModalModelProvider() {
+        return modalState?.providerId ? findProvider(modalState.providerId) : null;
+    }
+
+    /**
+     * 同步显式缓存与原缓存模式控件状态。
+     *
+     * Anthropic 仅禁用复选框并保留值；其它协议开启显式缓存后禁用原 cacheMode，
+     * 防止两个策略同时声称生效，关闭时恢复。
+     */
+    function syncExplicitCacheControls() {
+        const provider = getModalModelProvider();
+        const explicitInput = document.getElementById('model-explicit-cache');
+        const cacheModeSelect = document.getElementById('model-cache-mode');
+        const hint = document.getElementById('model-explicit-cache-hint');
+        if (!provider || !explicitInput || !cacheModeSelect || !hint) return;
+        const unsupported = provider.apiType === 'anthropic';
+        explicitInput.disabled = unsupported;
+        cacheModeSelect.disabled = !unsupported && explicitInput.checked;
+        hint.textContent = t(unsupported
+            ? 'explicitCacheUnsupported'
+            : explicitInput.checked ? 'explicitCacheOverridesMode' : 'explicitCacheHelp');
+    }
+
     /** 渲染模型编辑模态框。 */
     function renderModelModal() {
         const model = modalState.model || createDefaultModel();
@@ -1201,6 +1241,11 @@
                                 ['off', t('cacheModeOff')]
                             ].map(([value, label]) => `<option value="${value}" ${(model.cacheMode || 'auto') === value ? 'selected' : ''}>${text(label)}</option>`).join('')}
                         </select></div>
+                        <div class="checkbox-row checkbox-row-full explicit-cache-row">
+                            <input id="model-explicit-cache" type="checkbox" ${model.explicitCache === true ? 'checked' : ''} />
+                            <label for="model-explicit-cache">${t('explicitCacheLabel')}</label>
+                            <span id="model-explicit-cache-hint" class="explicit-cache-hint" role="note"></span>
+                        </div>
                         <div class="field full"><label>${t('reasoningMode')}</label><select id="model-reasoning-mode">
                             ${[
                                 ['passthrough', t('reasoningModePassthrough')],
@@ -1242,6 +1287,10 @@
         byId('btn-cancel-modal', (el) => el.addEventListener('click', closeModal));
         byId('btn-save-provider', (el) => el.addEventListener('click', saveProviderFromModal));
         byId('btn-save-model', (el) => el.addEventListener('click', saveModelFromModal));
+        byId('model-explicit-cache', (el) => {
+            el.addEventListener('change', syncExplicitCacheControls);
+            syncExplicitCacheControls();
+        });
 
         document.querySelectorAll('.provider-card').forEach((card) => {
             const providerId = card.getAttribute('data-provider-id');
@@ -1399,6 +1448,11 @@
         model.vision = document.getElementById('model-vision').checked;
         model.toolCalling = document.getElementById('model-tool').checked;
         model.cacheMode = document.getElementById('model-cache-mode').value || 'auto';
+        const explicitCacheInput = document.getElementById('model-explicit-cache');
+        // Anthropic 中控件只读：保存时保留已存值，避免一次无关编辑把配置清掉。
+        model.explicitCache = provider.apiType === 'anthropic'
+            ? modalState.model?.explicitCache === true
+            : explicitCacheInput.checked;
         model.reasoningMode = document.getElementById('model-reasoning-mode').value || 'passthrough';
         if (!existing) target.models.push(model);
         target.updatedAt = Date.now();
@@ -1499,6 +1553,7 @@
             isUserSelectable: true,
             enabled: true,
             cacheMode: 'auto',
+            explicitCache: false,
             reasoningMode: 'passthrough'
         };
     }

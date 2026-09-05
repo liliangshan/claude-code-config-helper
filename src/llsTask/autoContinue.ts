@@ -321,6 +321,20 @@ export class AutoContinueScheduler {
     }
 
     /**
+     * 扩展停用时的一次性总清理：续推定时器、空闲看门狗、熔断计数全部归零。
+     *
+     * 三者都挂在静态字段上，而扩展宿主 reload 未必重建模块实例；只 cancel() 定时器
+     * 会把「看门狗待触发」和「连续缺失计数」这两份脏状态带进下一次 activate，
+     * 表现为刚启动就误熔断或凭空续推一次。
+     */
+    public disposeAll(): void {
+        this.cancel('扩展停用');
+        // 复用 notifyRequestStarted 的语义：撤销看门狗标志并清掉延时。
+        this.notifyRequestStarted();
+        AutoContinueScheduler.consecutiveMissingCount = 0;
+    }
+
+    /**
      * 在定时器触发后执行快照检查并提交续推提示。
      *
      * 提交策略：

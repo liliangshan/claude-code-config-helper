@@ -16,10 +16,12 @@ import {
     CURRENT_MODEL_STATE_KEY,
     PROVIDER_API_KEY_SECRET_PREFIX,
     PROVIDERS_STATE_KEY,
+    RELAY_DEBUG_RECORD_KEY,
     TASK_FLOW_BYPASS_PERMISSIONS_KEY,
     TASK_FLOW_TARGET_KEY,
     CHAT_CLI_PATH_KEY,
     CHAT_CACHE_TTL_STATE_KEY,
+    CHAT_SUBAGENTS_ENABLED_STATE_KEY,
     CHAT_CACHE_TTL_DEFAULT,
     type ChatCacheTtl
 } from './constants';
@@ -101,11 +103,48 @@ export class ConfigManager implements vscode.Disposable {
     public readonly onDidChange = this.changeEmitter.event;
 
     /**
+     * Claude settings.json 是否存在的缓存值。
+     *
+     * getState() 会被 Webview 频繁调用（每次配置刷新一次），而它原先用
+     * fs.existsSync 同步命中磁盘，在网络盘/慢盘上会卡住扩展宿主主线程。
+     * 改为构造时异步探测一次，之后靠 FileSystemWatcher 维护。
+     */
+    private claudeSettingsExists = false;
+
+    /**
      * 创建配置管理器。
      *
      * @param context VS Code 扩展上下文。
      */
-    public constructor(private readonly context: vscode.ExtensionContext) {}
+    public constructor(private readonly context: vscode.ExtensionContext) {
+        void this.initClaudeSettingsExistence();
+    }
+
+    /**
+     * 异步初始化 settings.json 存在性缓存，并注册文件监听保持同步。
+     *
+     * 监听器随 context.subscriptions 释放，无需手动管理生命周期。
+     */
+    private async initClaudeSettingsExistence(): Promise<void> {
+        const settingsPath = getClaudeSettingsPath();
+        this.claudeSettingsExists = await fs.promises
+            .access(settingsPath)
+            .then(() => true)
+            .catch(() => false);
+
+        const watcher = vscode.workspace.createFileSystemWatcher(settingsPath);
+        watcher.onDidCreate(() => {
+            this.claudeSettingsExists = true;
+            this.changeEmitter.fire();
+        });
+        watcher.onDidDelete(() => {
+            this.claudeSettingsExists = false;
+            this.changeEmitter.fire();
+        });
+        this.context.subscriptions.push(watcher);
+        // 首次探测结果可能与初始值不同，通知一次让 Webview 拿到正确状态。
+        this.changeEmitter.fire();
+    }
 
     /** 读取完整配置页面状态。 */
     public getState(): ConfigViewState {
@@ -116,7 +155,7 @@ export class ConfigManager implements vscode.Disposable {
             hostPlatform: process.platform,
             windowsAppDataPath: process.platform === 'win32' ? (process.env.APPDATA ?? '') : '',
             claudeSettingsPath: getClaudeSettingsPath(),
-            claudeSettingsExists: fs.existsSync(getClaudeSettingsPath()),
+            claudeSettingsExists: this.claudeSettingsExists,
             configuredLanguage: this.getConfiguredUiLanguage(),
             resolvedLanguage: this.getResolvedUiLanguage(),
             taskFlowBypassPermissions: this.getTaskFlowBypassPermissions(),
@@ -163,6 +202,19 @@ export class ConfigManager implements vscode.Disposable {
             .getConfiguration(CCAI_NAMESPACE)
             .update(CCAI_LANGUAGE_KEY, normalized, vscode.ConfigurationTarget.Global);
         this.changeEmitter.fire();
+    }
+
+    /**
+     * 读取是否开启 Relay 请求 messages 调试落盘。
+     *
+     * 默认关闭：开启后每次转发都要做一次内容去重与追加写盘，属于纯排障开销。
+     *
+     * @returns true 表示允许 DebugRecorder 写 .LLSOAI/yyyy-MM-dd.jsonl。
+     */
+    public getRelayDebugRecordEnabled(): boolean {
+        return vscode.workspace
+            .getConfiguration(CCAI_NAMESPACE)
+            .get<boolean>(RELAY_DEBUG_RECORD_KEY, false);
     }
 
     /** 读取任务流是否启用 Claude Code bypass permissions 危险权限模式。 */
@@ -218,6 +270,17 @@ export class ConfigManager implements vscode.Disposable {
     public async setChatCacheTtl(ttl: ChatCacheTtl): Promise<void> {
         const normalized: ChatCacheTtl = ttl === '5m' || ttl === '1h' || ttl === 'default' ? ttl : CHAT_CACHE_TTL_DEFAULT;
         await this.context.globalState.update(CHAT_CACHE_TTL_STATE_KEY, normalized);
+    }
+
+    /** 读取当前工作区的子智能体开关，默认关闭，不继承旧的全局选择。 */
+    public getChatSubagentsEnabled(): boolean {
+        return this.context.workspaceState.get<unknown>(CHAT_SUBAGENTS_ENABLED_STATE_KEY) === true;
+    }
+
+    /** 将子智能体开关保存到当前工作区，不影响其他工作区或重启 CLI。 */
+    public async setChatSubagentsEnabled(enabled: boolean): Promise<void> {
+        if (typeof enabled !== 'boolean') throw new Error('子智能体开关必须是布尔值');
+        await this.context.workspaceState.update(CHAT_SUBAGENTS_ENABLED_STATE_KEY, enabled);
     }
 
     /** 读取全部提供商配置。 */
@@ -573,6 +636,8 @@ export class ConfigManager implements vscode.Disposable {
             isUserSelectable: model.isUserSelectable !== false,
             enabled: model.enabled !== false,
             cacheMode: model.cacheMode === 'passthrough' || model.cacheMode === 'off' ? model.cacheMode : 'auto',
+            // 显式缓存只有布尔 true 才开启；旧数据和导入的非法值一律安全回退为关闭。
+            explicitCache: model.explicitCache === true,
             // 缺省即开启：思考内容默认透传，只有显式选择 off 才关闭。
             reasoningMode: model.reasoningMode === 'off' ? 'off' : 'passthrough'
         };
@@ -592,7 +657,8 @@ export class ConfigManager implements vscode.Disposable {
      */
     private mergeFetchedModel(previous: ModelConfig | undefined, fetched: ModelConfig): ModelConfig {
         if (!previous) {
-            return this.normalizeModel(fetched);
+            // 拉取端没有该扩展私有字段的控制权；新模型始终采用安全默认值关闭。
+            return this.normalizeModel({ ...fetched, explicitCache: false });
         }
         const keepsDefaultName = !previous.displayName || previous.displayName === previous.modelId;
         return this.normalizeModel({

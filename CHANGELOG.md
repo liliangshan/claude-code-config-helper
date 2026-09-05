@@ -2,6 +2,88 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.51] - 2026-09-05
+
+### Added
+
+- Added a per-model Explicit Prompt Cache option to the Add/Edit Model dialog with seven-language labels and help. Local choices survive model refreshes and configuration import/export; new models default to off.
+- Added Chat and Responses explicit cache request handling using a stable session ID and 30-minute options. Chat places a breakpoint on its static system message; Responses uses instructions without breakpoints. Unsupported Anthropic providers cannot enable the option.
+- Added an underlined Solution link when the raw cache-hit ratio is below 80%, with a localized explanation dialog and a direct link to this extension's settings page.
+
+### Changed
+
+- Explicit caching takes priority over the existing cache mode without overwriting that saved mode. Missing session IDs or static prefixes skip explicit cache injection.
+- Removed model-specific gateway warnings from the solution dialog.
+- Added seven-language provider-management guidance about immediate changes in the current workspace and window reload/reopen requirements in other workspaces.
+
+### Fixed
+
+- Unified Responses JSON and SSE cache-read usage normalization, preventing negative input counts when upstream cache details exceed total input. Cache-write mapping remains unimplemented pending verified accounting semantics.
+
+## [3.2.50] - 2026-09-05
+
+### Added
+
+- Added a keyboard-accessible Subagents switch after the footer token meter, with localized labels and tooltips in all seven interface languages.
+- Added regression coverage for workspace isolation, persistence across reloads, invalid input rejection, Webview save-failure recovery and tool filtering across request types.
+
+### Changed
+
+- Subagent tool availability is now controlled by a workspace-local switch that defaults to off. The choice is stored in `workspaceState`; legacy `globalState` values are not inherited.
+- When off, `Agent`, `SendMessage` and `ListAgents` are removed from all subsequent Relay request tool lists, including ordinary chat, task-flow creation/execution and title-generation side requests. When on, these tools remain available during task flows too. The existing `AskUserQuestion` filtering rule is unchanged.
+- The switch does not terminate running subagents or disable other orchestration entry points such as `Workflow`.
+
+## [3.2.49] - 2026-09-04
+
+### Fixed
+
+- **Sending a new message no longer changes the footer token meter before the new response arrives.** Once a session has authoritative API usage, the previous completed snapshot remains visible while the next request is pending; the new input, output, cache-write and cache-read values replace it together when the response usage is received.
+- **Cache-read tokens are now included in context usage, and stale cache-write values no longer leak across responses.** For `input=276`, `output=69` and `cache-read=462592`, the meter now reports `462.9k/1m · 46.3%` instead of carrying an old cache-write value into a false `776.1k` total.
+- **Long-running Bash and Agent heartbeat events no longer create empty waiting tool cards.** Nested Agent results without a matching main-conversation tool call are also ignored, preventing rows of orphaned `tool_result` success cards.
+
+## [3.2.48] - 2026-09-04
+
+### Fixed
+
+- **Session switching no longer races with an immediately-following send.** VS Code dispatches Webview messages without waiting for the previous async listener. After selecting a historical session, `user/send` could therefore run while `session/resume` was still parsing JSONL, writing the target session id and restarting the CLI; the message then hit the old process or the temporary no-child window. State-changing Webview messages now pass through an ordered Promise queue, while cancel, logger and AskUserQuestion answer messages remain immediate.
+- **Concurrent CLI starts/restarts no longer replace one another.** Session restore, model switching, auto-continue and self-healing can request startup at nearly the same time. `startChatCliPair()` now serializes the complete configuration/session-id read, process start and adapter rebuild sequence, and recovers its queue after individual failures.
+
+## [3.2.47] - 2026-09-04
+
+### Fixed
+
+- **No more false "Chat CLI 进程未运行，无法写入 stdin" when the CLI is actually running.** After a CLI restart (model switch, auto-continue model swap, manual restart), the old child's late `exit` event would unconditionally flip the shared `childExited` flag to `true` even though `child` already pointed at the freshly spawned process — so the next send was rejected with "process not running" while the new process was alive. Exit events now only touch shared state when they come from the current child; expected-exit events for an already-replaced child are logged and dropped.
+- **`send()` no longer rejects instantly when stdin is momentarily not writable.** The CLI can be alive while its stdin pipe briefly reports non-writable right after startup. `send()` now waits up to 1s for `writable` before failing, and the rejection message distinguishes the three cases (no process handle / process exited / stdin never became writable) instead of one blanket string.
+
+## [3.2.46] - 2026-09-04
+
+### Fixed
+
+- **Stopped the `[claude-code:unrecognized_model]` line from being rendered as a red error on every request.** The Claude CLI prints internal debug/telemetry lines like `[claude-code:unrecognized_model] {"model":"...","query_source":"sdk"}` to stderr whenever a custom-gateway model is not in its official model table. The adapter treated every stderr line as a user-visible error segment, so the notice showed up before every single request. Lines starting with `[claude-code:` are now dropped (including ones still buffered at shutdown), while genuine stderr errors still render as before.
+
+## [3.2.45] - 2026-09-04
+
+### Fixed
+
+- **A hanging Chat CLI is now actually killed.** Process liveness used to be judged by `child.killed`, which only means "a signal was sent" — so after `cancel()` on a wedged process, `send()` still wrote to the stdin of a dead-but-not-exited child and every later input silently disappeared. A new `childExited` flag maintained by the `exit` handler drives `send()` / `cancel()`, and the shutdown sequence now escalates `SIGTERM → SIGKILL` after 1.5s (verified by a new lifecycle test that spawns a child ignoring SIGTERM).
+- **stdin write errors no longer crash the extension.** The Chat CLI child's stdin had no `error` handler, so writing to a just-exited process threw an unhandled `EPIPE`. `CliProcess.send()` now returns a Promise (rejecting when the child is gone), and `send` / `respondToToolPermission` swallow the rejection with a warning.
+- **`code --install-extension` / reload no longer leaves the relay port in use.** `RelayServer.stop()` called `server.close()` and waited for it, but `close()` only stops accepting new connections — a long-lived SSE stream kept the stop Promise pending for up to 240s and `dispose()` never closed the sockets at all. `closeAllConnections()` is now called right after `close()`.
+- **Stopping a request in Chat now aborts the upstream call.** When the browser closed the connection mid-stream, the upstream HTTP request kept running to completion and billed tokens for a response nobody would read. A shared `bindClientAbortToUpstream()` helper destroys the upstream request on `res.close` (wired into the Anthropic, OpenAI-Chat and OpenAI-Responses proxies). The old `req.on('aborted')` listener was deprecated since Node 17 and never fired under keep-alive, so it is gone.
+- **Stopping the extension no longer leaks timers and pending user questions.** `deactivate()` now awaits a real `shutdownExtension()` which flushes the persisted chat session to disk, cancels the auto-continue scheduler and clears its pending question waiters.
+- **Task-flow CLI exit notice is localized (7 languages) and no longer modal mid-flow.** Unexpected CLI exits during an active task flow show a toast and restart silently instead of blocking the whole flow with a modal dialog.
+- **Relay debug recording no longer rewrites the whole day on every request.** `.LLSOAI/yyyy-MM-dd.jsonl` is now append-only (previous O(n²) read-parse-write per request) and the daily message-id set is held in memory.
+- **Token-count session map is bounded.** Sessions idle for more than 30 days are dropped and the map is capped at 200 entries on load, merge and flush, so a long-lived relay can no longer grow it without limit.
+
+### Added
+
+- **`claudeCodeConfigHelper.relay.debugRecord` setting (off by default).** The relay request recorder used to write every prompt — including base64 images — to disk unconditionally. Recording now requires the switch, images are stripped to an `{omitted, bytes}` placeholder, and the dedup set lives in memory.
+- **`error-*.json` upstream-error snapshots are capped at 20 files** (oldest pruned) and the embedded request body is slimmed to model / message counts instead of the full payload.
+
+### Changed
+
+- **`npm test` uses a glob** (`out/**/*.test.js`) instead of an explicit file list, so three test files that had been silently skipped for a while now run — and their stale assertions were repaired, taking the suite from 283 to 308 tests.
+- Activation path no longer performs synchronous fs checks: `ConfigManager` caches `claudeSettingsExists` (initialized with `fs.promises.access`, kept fresh by a `FileSystemWatcher`) instead of calling `fs.existsSync` on every snapshot.
+
 ## [3.2.44] - 2026-09-03
 
 ### Fixed

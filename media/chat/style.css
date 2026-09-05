@@ -439,7 +439,11 @@ select:focus-visible {
 
 /* 任务流 Todo 状态卡片（位于输入框上方的 footer 内） */
 .taskFlowTodoPanel_07S1Yg {
+    display: flex;
+    flex-direction: column;
     width: 100%;
+    max-height: 40vh;
+    min-height: 0;
     margin-bottom: var(--lls-space-2);
     border: 1px solid var(--lls-border);
     border-radius: var(--lls-radius-md);
@@ -499,9 +503,14 @@ select:focus-visible {
 
 .taskFlowTodoList_07S1Yg {
     display: flex;
+    flex: 1 1 auto;
     flex-direction: column;
+    min-height: 0;
     gap: 2px;
     padding: 0 10px 8px 32px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .taskFlowTodoItem_07S1Yg {
@@ -843,6 +852,28 @@ select:focus-visible {
     font-variant-numeric: tabular-nums;
     user-select: text;
     word-break: break-all;
+}
+
+.assistantUsageFooter_07S1Yg__solution {
+    display: inline;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--vscode-textLink-foreground, #3794ff);
+    font: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+}
+
+.assistantUsageFooter_07S1Yg__solution:hover {
+    color: var(--vscode-textLink-activeForeground, #4daafc);
+}
+
+.assistantUsageFooter_07S1Yg__solution:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder, #3794ff);
+    outline-offset: 2px;
+    border-radius: 2px;
 }
 
 /* Assistant 消息内容（无气泡，类似文档段落） */
@@ -2134,6 +2165,54 @@ select:focus-visible {
 .composer-shortcut-bar > * {
     min-width: 0;
     max-width: 100%;
+}
+
+/* Token 统计后的子智能体开关，沿用编辑器主题颜色与键盘焦点。 */
+.composer-subagents-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 26px;
+    color: var(--lls-fg-muted);
+    font-size: var(--lls-font-xs);
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.composer-subagents-toggle input {
+    appearance: none;
+    width: 26px;
+    height: 14px;
+    margin: 0;
+    border: 1px solid var(--lls-border-strong);
+    border-radius: 999px;
+    background: var(--vscode-input-background);
+    cursor: pointer;
+}
+
+.composer-subagents-toggle input::before {
+    content: '';
+    display: block;
+    width: 10px;
+    height: 10px;
+    margin: 1px;
+    border-radius: 50%;
+    background: var(--vscode-foreground);
+}
+
+.composer-subagents-toggle input:checked {
+    background: var(--vscode-button-background);
+    border-color: var(--vscode-button-background);
+}
+
+.composer-subagents-toggle input:checked::before {
+    transform: translateX(12px);
+    background: var(--vscode-button-foreground);
+}
+
+.composer-subagents-toggle input:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: 3px;
 }
 
 .composer-shortcut-button {
@@ -3455,9 +3534,24 @@ code.inlineCode_-a7MRw:hover .inlineCopyIcon_-a7MRw {
     color: var(--lls-fg);
     box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
 }
-.task-restore::backdrop {
+.task-restore::backdrop,
+.cache-solution-dialog::backdrop {
     background: rgba(0, 0, 0, 0.5);
     backdrop-filter: blur(2px);
+}
+
+.cache-solution-dialog__content {
+    padding: var(--lls-space-3) var(--lls-space-4);
+    color: var(--lls-fg-muted);
+    line-height: 1.55;
+}
+
+.cache-solution-dialog__content p {
+    margin: 0 0 var(--lls-space-3);
+}
+
+.cache-solution-dialog__content p:last-child {
+    margin-bottom: 0;
 }
 .task-restore__body {
     display: flex;

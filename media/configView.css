@@ -417,6 +417,19 @@ textarea {
     opacity: 0.88;
 }
 
+.explicit-cache-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+
+.explicit-cache-hint {
+    flex-basis: 100%;
+    margin-left: 24px;
+    color: var(--muted);
+    opacity: 0.88;
+    line-height: 1.45;
+}
+
 .checkbox-row input {
     width: auto;
     min-height: auto;

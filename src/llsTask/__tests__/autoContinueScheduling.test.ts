@@ -106,3 +106,25 @@ test('未重置时超过阈值触发熔断，取消定时器且不再续推', ()
     for (let i = 0; i < 4; i += 1) scheduler.schedule();
     assert.equal(AutoContinueScheduler.hasPendingWork(), false);
 });
+
+test('disposeAll 清空看门狗、定时器与熔断计数，下一轮从零开始计数', () => {
+    const scheduler = makeScheduler(new FakeTaskService());
+    scheduler.armIdleWatchdog();
+    // 连续 3 次缺失工具：已经逼近熔断阈值（第 4 次熔断）。
+    scheduler.schedule();
+    scheduler.schedule();
+    scheduler.schedule();
+    assert.equal(AutoContinueScheduler.hasPendingWork(), true);
+
+    scheduler.disposeAll();
+    // 定时器与看门狗都被清掉。
+    assert.equal(AutoContinueScheduler.hasPendingWork(), false);
+
+    // 熔断计数已归零：再来 3 次仍能登记定时器，第 4 次才熔断。
+    scheduler.schedule();
+    scheduler.schedule();
+    scheduler.schedule();
+    assert.equal(AutoContinueScheduler.hasPendingWork(), true);
+    scheduler.schedule();
+    assert.equal(AutoContinueScheduler.hasPendingWork(), false);
+});

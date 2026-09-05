@@ -168,6 +168,50 @@ test('afterRecv 用 usage 覆盖 current（不累加）', () => {
     assert.equal(snapshot.current.outputTokens, 100);
 });
 
+test('afterRecv 原子覆盖缓存字段，并把缓存读取计入上下文占用', () => {
+    const { service, store } = buildService();
+    service.beforeSend({
+        sessionId: 's1', providerId: 'p1', modelId: 'm',
+        anthropicBody: JSON.stringify({ messages: [{ role: 'user', content: 'first' }] })
+    });
+    service.afterRecv({
+        sessionId: 's1', providerId: 'p1', modelId: 'm',
+        usage: { inputTokens: 200, outputTokens: 80, cacheCreationInputTokens: 775755 },
+        requestBodyAtSend: ''
+    });
+    service.afterRecv({
+        sessionId: 's1', providerId: 'p1', modelId: 'm',
+        usage: { inputTokens: 276, outputTokens: 69, cacheReadInputTokens: 462592 },
+        requestBodyAtSend: ''
+    });
+
+    const snapshot = store.getSession('s1');
+    assert.equal(snapshot.current.cacheCreationInputTokens, 0, '不得沿用上一轮缓存写入量');
+    assert.equal(snapshot.current.cacheReadInputTokens, 462592);
+    assert.equal(snapshot.current.totalInputForBudget, 462868);
+    assert.equal(snapshot.current.totalInputForBudget + snapshot.current.outputTokens, 462937);
+});
+
+test('beforeSend 新请求期间保留上一轮统计，等待新 usage 原子覆盖', () => {
+    const { service, store } = buildService();
+    service.afterRecv({
+        sessionId: 's1', providerId: 'p1', modelId: 'm',
+        usage: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 300, cacheReadInputTokens: 400 },
+        requestBodyAtSend: ''
+    });
+    service.beforeSend({
+        sessionId: 's1', providerId: 'p1', modelId: 'm',
+        anthropicBody: JSON.stringify({ messages: [{ role: 'user', content: 'next request' }] })
+    });
+
+    const snapshot = store.getSession('s1');
+    assert.equal(snapshot.current.inputTokens, 100);
+    assert.equal(snapshot.current.outputTokens, 50);
+    assert.equal(snapshot.current.cacheCreationInputTokens, 300);
+    assert.equal(snapshot.current.cacheReadInputTokens, 400);
+    assert.equal(snapshot.current.totalInputForBudget, 800);
+});
+
 test('未达阈值时不触发压缩', () => {
     let compactCalled = 0;
     const { service } = buildService({

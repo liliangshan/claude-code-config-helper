@@ -176,7 +176,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
  * VS Code 扩展停用函数。
  *
  * 实际释放顺序由 activation/shutdown 统一维护。
+ *
+ * @returns 释放完成的 Promise，供 VS Code 等待会话落盘。
  */
-export function deactivate(): void {
-    shutdownExtension();
+export function deactivate(): Promise<void> {
+    // 返回 Promise，VS Code 会（在其超时上限内）等待落盘与释放完成后再结束宿主。
+    return shutdownExtension();
 }

@@ -59,6 +59,12 @@ export interface LlsCcaiTaskTexts {
      * 停止；用户需要手动判断后续操作（继续追问、修改提示词或清空任务流）。
      */
     missingToolCircuitBreaker: string;
+    /**
+     * Chat CLI 异常退出提示标题，含 `{source}`（路由名）与 `{detail}`（退出详情）占位符。
+     */
+    cliExitedTitle: string;
+    /** Chat CLI 异常退出提示上的「重启」按钮文案。 */
+    cliRestartAction: string;
 }
 
 /** 任务流多语言文案字典，覆盖当前支持的所有 UI 语言。 */
@@ -82,7 +88,9 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         clearAndNew: 'Clear and Start New',
         cancel: 'Cancel',
         outputLanguageName: 'English',
-        missingToolCircuitBreaker: 'The llsccai-task workflow has been auto-continued multiple times but the model keeps responding with plain text without calling any tool. Auto-continue has been paused. Please review the workflow and send a new prompt manually if needed.'
+        missingToolCircuitBreaker: 'The llsccai-task workflow has been auto-continued multiple times but the model keeps responding with plain text without calling any tool. Auto-continue has been paused. Please review the workflow and send a new prompt manually if needed.',
+        cliExitedTitle: '{source} Chat CLI exited unexpectedly: {detail}',
+        cliRestartAction: 'Restart CLI'
     },
     'zh-cn': {
         statusLabel: '任务流',
@@ -103,7 +111,9 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         clearAndNew: '清空并新建',
         cancel: '取消',
         outputLanguageName: '简体中文',
-        missingToolCircuitBreaker: '当前 llsccai-task 任务流连续多轮只输出文字、未调用任何工具，自动续推已暂停。请检查任务流状态，如需继续请手动发送新的提示词。'
+        missingToolCircuitBreaker: '当前 llsccai-task 任务流连续多轮只输出文字、未调用任何工具，自动续推已暂停。请检查任务流状态，如需继续请手动发送新的提示词。',
+        cliExitedTitle: '{source} Chat CLI 异常退出：{detail}',
+        cliRestartAction: '重启 CLI'
     },
     'zh-tw': {
         statusLabel: '任務流',
@@ -124,7 +134,9 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         clearAndNew: '清空並新建',
         cancel: '取消',
         outputLanguageName: '繁體中文',
-        missingToolCircuitBreaker: '目前 llsccai-task 任務流連續多輪只輸出文字、未呼叫任何工具，自動續推已暫停。請檢查任務流狀態，如需繼續請手動發送新的提示詞。'
+        missingToolCircuitBreaker: '目前 llsccai-task 任務流連續多輪只輸出文字、未呼叫任何工具，自動續推已暫停。請檢查任務流狀態，如需繼續請手動發送新的提示詞。',
+        cliExitedTitle: '{source} Chat CLI 異常退出：{detail}',
+        cliRestartAction: '重新啟動 CLI'
     },
     ko: {
         statusLabel: '작업 흐름',
@@ -145,7 +157,9 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         clearAndNew: '지우고 새로 시작',
         cancel: '취소',
         outputLanguageName: 'Korean',
-        missingToolCircuitBreaker: 'llsccai-task 작업 흐름이 여러 차례 텍스트만 응답하고 어떤 도구도 호출하지 않았습니다. 자동 진행이 일시 중지되었습니다. 작업 흐름을 확인하고 필요 시 새 프롬프트를 수동으로 보내세요.'
+        missingToolCircuitBreaker: 'llsccai-task 작업 흐름이 여러 차례 텍스트만 응답하고 어떤 도구도 호출하지 않았습니다. 자동 진행이 일시 중지되었습니다. 작업 흐름을 확인하고 필요 시 새 프롬프트를 수동으로 보내세요.',
+        cliExitedTitle: '{source} Chat CLI가 비정상 종료되었습니다: {detail}',
+        cliRestartAction: 'CLI 다시 시작'
     },
     ja: {
         statusLabel: 'タスクフロー',
@@ -166,7 +180,9 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         clearAndNew: 'クリアして新規作成',
         cancel: 'キャンセル',
         outputLanguageName: 'Japanese',
-        missingToolCircuitBreaker: 'llsccai-task タスクフローが連続して複数回テキストのみを返し、ツールを呼び出していません。自動続行を一時停止しました。タスクフローを確認し、必要に応じて新しいプロンプトを手動で送信してください。'
+        missingToolCircuitBreaker: 'llsccai-task タスクフローが連続して複数回テキストのみを返し、ツールを呼び出していません。自動続行を一時停止しました。タスクフローを確認し、必要に応じて新しいプロンプトを手動で送信してください。',
+        cliExitedTitle: '{source} Chat CLI が異常終了しました：{detail}',
+        cliRestartAction: 'CLI を再起動'
     },
     fr: {
         statusLabel: 'Flux de tâches',
@@ -187,7 +203,9 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         clearAndNew: 'Effacer et recommencer',
         cancel: 'Annuler',
         outputLanguageName: 'French',
-        missingToolCircuitBreaker: 'Le flux de tâches llsccai-task a répondu plusieurs fois en texte uniquement sans appeler aucun outil. La continuation automatique est suspendue. Vérifiez le flux et envoyez manuellement un nouveau prompt si besoin.'
+        missingToolCircuitBreaker: 'Le flux de tâches llsccai-task a répondu plusieurs fois en texte uniquement sans appeler aucun outil. La continuation automatique est suspendue. Vérifiez le flux et envoyez manuellement un nouveau prompt si besoin.',
+        cliExitedTitle: "Le CLI Chat {source} s'est arrêté de façon inattendue : {detail}",
+        cliRestartAction: 'Redémarrer le CLI'
     },
     de: {
         statusLabel: 'Task-Flow',
@@ -208,7 +226,9 @@ const LLS_CCAI_TASK_TEXTS: Record<ResolvedAppLanguage, LlsCcaiTaskTexts> = {
         clearAndNew: 'Löschen und neu starten',
         cancel: 'Abbrechen',
         outputLanguageName: 'German',
-        missingToolCircuitBreaker: 'Der llsccai-task Task-Flow hat mehrfach nur Text geantwortet, ohne ein Tool aufzurufen. Die automatische Fortsetzung wurde pausiert. Prüfen Sie den Task-Flow und senden Sie bei Bedarf manuell einen neuen Prompt.'
+        missingToolCircuitBreaker: 'Der llsccai-task Task-Flow hat mehrfach nur Text geantwortet, ohne ein Tool aufzurufen. Die automatische Fortsetzung wurde pausiert. Prüfen Sie den Task-Flow und senden Sie bei Bedarf manuell einen neuen Prompt.',
+        cliExitedTitle: '{source} Chat-CLI wurde unerwartet beendet: {detail}',
+        cliRestartAction: 'CLI neu starten'
     }
 };
 

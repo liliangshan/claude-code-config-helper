@@ -8,6 +8,7 @@
  * 依赖方向：本模块位于所有功能模块之上，不被它们反向引用。
  */
 import { flushPersistedChatSession } from '../chatRuntime/chatSession';
+import { Logger } from '../logger';
 import { disposeCliLifecycleServices } from '../chatRuntime/cliLifecycle';
 import type { ChatRoute } from '../chat/protocol';
 import { routes } from '../chatRuntime/routeState';
@@ -43,12 +44,20 @@ function disposeRouteProcesses(): void {
  * 执行扩展停用的全部释放动作。
  *
  * 停用时会刷盘 Chat 会话，并释放 Chat、任务流服务、Webview Provider 与 ConfigManager。
+ *
+ * 会话落盘改为 await：原先 fire-and-forget，VS Code 可能在 workspaceState.update
+ * 完成前就结束宿主，导致最后一轮对话丢失。落盘是单次 update，耗时可忽略。
+ *
+ * @returns 全部释放动作完成后 resolve。
  */
-export function shutdownExtension(): void {
-    void flushPersistedChatSession();
+export async function shutdownExtension(): Promise<void> {
+    await flushPersistedChatSession().catch((err: unknown) => {
+        Logger.warn(`停用时会话落盘失败：${err instanceof Error ? err.message : String(err)}`);
+    });
     clearHttpExpectation('deactivate');
     cancelPendingResend('deactivate');
-    getAutoContinueScheduler()?.cancel('扩展停用');
+    // 用 disposeAll 而非 cancel：还要清掉空闲看门狗与熔断计数，避免脏状态跨 reload。
+    getAutoContinueScheduler()?.disposeAll();
     setAutoContinueScheduler(undefined);
     getWakeupScheduler()?.dispose();
     setWakeupScheduler(undefined);

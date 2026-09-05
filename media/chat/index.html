@@ -171,6 +171,23 @@
             </div>
         </div>
     </div>
+    <dialog class="task-restore cache-solution-dialog" data-role="cache-solution-dialog">
+        <div class="task-restore__body">
+            <header class="task-restore__header">
+                <h2 data-i18n="cacheSolutionTitle">Improve prompt cache hits</h2>
+            </header>
+            <div class="cache-solution-dialog__content">
+                <p data-role="cache-solution-steps"></p>
+                <p><button type="button" class="assistantUsageFooter_07S1Yg__solution" data-role="cache-solution-settings" data-i18n="cacheSolutionSettings">Open extension settings</button></p>
+                <p data-i18n="cacheSolutionSessionHint"></p>
+                <p data-i18n="cacheSolutionCaveat"></p>
+            </div>
+            <footer class="task-restore__footer">
+                <button type="button" class="task-restore__btn task-restore__btn--primary" data-role="cache-solution-close" data-i18n="cacheSolutionClose">Got it</button>
+            </footer>
+        </div>
+    </dialog>
+    <script nonce="{{nonce}}" src="{{cacheSolutionScriptUri}}"></script>
     <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
 </body>
 </html>

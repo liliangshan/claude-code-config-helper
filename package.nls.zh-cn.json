@@ -32,6 +32,7 @@
     "configuration.title": "LLS CCAI",
     "configuration.autoReloadWindow.description": "切换 Claude Code 当前模型后自动重新加载窗口。",
     "configuration.language.description": "LLS CCAI 设置界面的显示语言。Auto 会跟随 VS Code 显示语言。",
+    "configuration.relay.debugRecord.description": "把 Relay 请求的 messages 落盘到 .LLSOAI/yyyy-MM-dd.jsonl 用于排查问题。默认关闭，开启后每次请求都有额外磁盘开销。",
     "configuration.taskFlowBypassPermissions.description": "启用后，一键写入 Claude Code 配置时会设置 initialPermissionMode=bypassPermissions 和 allowDangerouslySkipPermissions=true。仅建议在可信沙箱环境使用。",
     "configuration.taskFlow.target.description": "任务流提示词发送目标。externalClaudeCode 保留旧剪贴板/聚焦链路；builtinChat 会在 CLI 可用时直接发送到内置 Chat。",
     "configuration.chat.enabled.description": "启用由本机 Claude CLI 支撑的内置 Chat Webview。Chat 迁移期间默认关闭。",

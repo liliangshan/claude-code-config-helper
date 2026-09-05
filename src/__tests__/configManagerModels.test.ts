@@ -59,10 +59,47 @@ function makeManager(models: ModelConfig[]): ConfigManagerType {
         globalState: {
             get: (key: string, fallback?: unknown) => state.get(key) ?? fallback,
             update: (key: string, value: unknown) => { state.set(key, value); return Promise.resolve(); }
-        }
+        },
+        // ConfigManager 构造时会把 settings.json 的文件监听器推进来。
+        subscriptions: [] as Array<{ dispose(): void }>
     } as unknown as import('vscode').ExtensionContext;
     return new ConfigManager(context);
 }
+
+/** 验证默认关闭、工作区隔离、重载保留及旧全局值不继承。 */
+test('子智能体开关默认关闭且仅在当前工作区保持选择', async () => {
+    /** 创建独立工作区存储，模拟已有全局开启值。 */
+    function makeContext(): import('vscode').ExtensionContext {
+        const state = new Map<string, unknown>();
+        return {
+            globalState: {
+                /** 旧全局开启值不得影响工作区默认值。 */
+                get: () => true,
+                /** 禁止开关写入全局存储。 */
+                update: async () => { assert.fail('不得写入 globalState'); }
+            },
+            workspaceState: {
+                /** 同工作区重载共享存储。 */
+                get: (key: string) => state.get(key),
+                /** 模拟工作区持久化。 */
+                update: async (key: string, value: unknown) => { state.set(key, value); }
+            },
+            subscriptions: []
+        } as unknown as import('vscode').ExtensionContext;
+    }
+    const context = makeContext();
+    const first = new ConfigManager(context);
+    const other = new ConfigManager(makeContext());
+    assert.equal(first.getChatSubagentsEnabled(), false);
+    await first.setChatSubagentsEnabled(true);
+    const restored = new ConfigManager(context);
+    assert.equal(restored.getChatSubagentsEnabled(), true);
+    assert.equal(other.getChatSubagentsEnabled(), false);
+    await assert.rejects(restored.setChatSubagentsEnabled('false' as unknown as boolean));
+    assert.equal(restored.getChatSubagentsEnabled(), true);
+    await restored.setChatSubagentsEnabled(false);
+    assert.equal(first.getChatSubagentsEnabled(), false);
+});
 
 test('replaceProviderModels: 手工调过的参数在重新拉取后保持不变', async () => {
     const manager = makeManager([
@@ -163,4 +200,55 @@ test('replaceProviderModels: 本地 reasoningMode=off 不会被默认值覆盖',
     await manager.replaceProviderModels('p1', [makeModel('gpt-r')]);
 
     assert.equal(manager.getProvider('p1')?.models[0].reasoningMode, 'off');
+});
+
+test('normalizeModel: 显式缓存旧数据和非法值默认关闭', async () => {
+    const legacy = makeModel('legacy');
+    delete (legacy as Partial<ModelConfig>).explicitCache;
+    const invalid = makeModel('invalid', { explicitCache: 'true' as unknown as boolean });
+    const manager = makeManager([legacy, invalid]);
+
+    await manager.replaceProviderModels('p1', [makeModel('legacy'), makeModel('invalid')]);
+
+    const models = manager.getProvider('p1')?.models ?? [];
+    assert.equal(models.find((model) => model.modelId === 'legacy')?.explicitCache, false);
+    assert.equal(models.find((model) => model.modelId === 'invalid')?.explicitCache, false);
+});
+
+test('replaceProviderModels: 显式缓存 true 和 false 均保留且新模型默认关闭', async () => {
+    const manager = makeManager([
+        makeModel('enabled-cache', { explicitCache: true }),
+        makeModel('disabled-cache', { explicitCache: false })
+    ]);
+
+    await manager.replaceProviderModels('p1', [
+        makeModel('enabled-cache', { explicitCache: false }),
+        makeModel('disabled-cache', { explicitCache: true }),
+        makeModel('new-model', { explicitCache: true })
+    ]);
+
+    const models = manager.getProvider('p1')?.models ?? [];
+    assert.equal(models.find((model) => model.modelId === 'enabled-cache')?.explicitCache, true);
+    assert.equal(models.find((model) => model.modelId === 'disabled-cache')?.explicitCache, false);
+    assert.equal(models.find((model) => model.modelId === 'new-model')?.explicitCache, false);
+});
+
+test('replaceProviders 与导入导出按提供商隔离显式缓存配置', async () => {
+    const manager = makeManager([makeModel('same-id', { explicitCache: true })]);
+    const first = manager.getProvider('p1')!;
+    const second: ProviderConfigWithoutSecrets = {
+        ...first,
+        id: 'p2',
+        name: '第二提供商',
+        models: [makeModel('same-id', { explicitCache: false })]
+    };
+
+    await manager.replaceProviders([first, second]);
+    const exported = manager.exportConfig();
+    assert.equal(exported.providers.find((provider) => provider.id === 'p1')?.models[0].explicitCache, true);
+    assert.equal(exported.providers.find((provider) => provider.id === 'p2')?.models[0].explicitCache, false);
+
+    await manager.importConfig(exported);
+    assert.equal(manager.getProvider('p1')?.models[0].explicitCache, true);
+    assert.equal(manager.getProvider('p2')?.models[0].explicitCache, false);
 });

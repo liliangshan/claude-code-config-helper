@@ -135,6 +135,41 @@ test('Responses 非流式：无明细字段时不出现缓存字段且 input_tok
     assert.equal('cache_read_input_tokens' in body.usage, false);
 });
 
+test('Responses JSON 与 response.completed 对同一缓存读 usage 映射一致且不输出负数', () => {
+    const usage = {
+        input_tokens: 1000,
+        output_tokens: 20,
+        input_tokens_details: { cached_tokens: 800, cache_write_tokens: 0 }
+    };
+    const json = convertResponsesJsonToAnthropic({
+        id: 'resp_same',
+        model: 'gpt-x',
+        status: 'completed',
+        output: [],
+        usage
+    }).body.usage;
+    const converter = new OpenAIResponsesToAnthropicStreamConverter();
+    const completed = {
+        type: 'response.completed',
+        response: { id: 'resp_same', model: 'gpt-x', status: 'completed', output: [], usage }
+    };
+    const out = converter.feed(`event: response.completed\ndata: ${JSON.stringify(completed)}\n\n`) + converter.end();
+    const events = out.split('\n').filter((line) => line.startsWith('data: ')).map((line) => JSON.parse(line.slice(6)));
+    const deltaUsage = events.find((event) => event.type === 'message_delta').usage;
+
+    assert.equal(deltaUsage.input_tokens, json.input_tokens);
+    assert.equal(deltaUsage.output_tokens, json.output_tokens);
+    assert.equal(deltaUsage.cache_read_input_tokens, json.cache_read_input_tokens);
+    assert.equal('cache_creation_input_tokens' in json, false);
+    assert.equal('cache_creation_input_tokens' in deltaUsage, false);
+
+    const invalid = convertResponsesJsonToAnthropic({
+        id: 'resp_invalid', model: 'gpt-x', status: 'completed', output: [],
+        usage: { input_tokens: 10, output_tokens: 1, input_tokens_details: { cached_tokens: 20 } }
+    }).body.usage;
+    assert.ok(invalid.input_tokens >= 0, '缓存明细不一致时不得输出负 input_tokens');
+});
+
 test('Responses 流式：response.completed 的 usage 出现在 message_delta 上', () => {
     const converter = new OpenAIResponsesToAnthropicStreamConverter();
     const completed = {

@@ -84,12 +84,36 @@ export type ToolPermissionResponseResult =
           interrupt?: boolean;
       };
 
+/** CLI 后台任务快照中的一项；快照本身不要求携带 status。 */
+export interface CliBackgroundTask {
+    /** 上游稳定任务 ID。 */
+    taskId: string;
+    /** 上游任务类型。 */
+    taskType: string;
+    /** 非空任务描述。 */
+    description: string;
+}
+
+/** CLI 原始增量补丁；只保留实际提供的字段，不填默认值或推断终态。 */
+export interface CliBackgroundTaskPatch extends Record<string, unknown> {
+    /** 上游状态，未知状态也保留供宿主判断。 */
+    status?: string;
+    /** 更新后的描述。 */
+    description?: string;
+    /** 上游结束时间；null 不代表任务结束。 */
+    end_time?: number | null;
+}
+
 /** 适配器解析出的 CLI 事件类型。 */
 export type ParsedCliEvent =
     | { type: 'segments'; segments: ChatSegment[]; done?: boolean }
     | { type: 'error'; message: string; detail?: string }
     | { type: 'session/init'; sessionId: string; cwd: string }
     | { type: 'compact/status'; status: 'compacting' | null; compactResult?: string; sessionId?: string; uuid?: string }
+    /** 当前后台任务的全量快照；空数组表示列表已清空。 */
+    | { type: 'backgroundTasks/snapshot'; tasks: CliBackgroundTask[]; sessionId?: string }
+    /** 指定后台任务的增量补丁；缺失字段保持缺失。 */
+    | { type: 'backgroundTasks/update'; taskId: string; patch: CliBackgroundTaskPatch; sessionId?: string }
     | ToolPermissionRequestEvent
     | ExpertSubturnStartedEvent
     | ExpertSubturnFinishedEvent
@@ -314,7 +338,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         this.recentAssistantText = '';
         this.streamedMessageIds.clear();
         const jsonLine = JSON.stringify(this.buildUserMessageLine(text));
-        this.process.send(jsonLine);
+        await this.process.send(jsonLine);
     }
 
     /**
@@ -338,7 +362,11 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
             }
         });
         Logger.info(`stream-json 适配器写回工具授权响应：requestId=${requestId}, behavior=${result.behavior}`);
-        this.process.send(jsonLine);
+        // 该方法对外保持同步签名（调用方是 UI 事件回调），写入失败只记日志，
+        // 但必须挂 catch，否则 send() 的 rejection 会变成未处理的 Promise 拒绝。
+        void this.process.send(jsonLine).catch((err: unknown) => {
+            Logger.warn(`写回工具授权响应失败：${err instanceof Error ? err.message : String(err)}`);
+        });
     }
 
     /**
@@ -367,6 +395,21 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     }
 
     /**
+     * 判断一行 stderr 是否属于 CLI 自身的调试/遥测日志，不应渲染到聊天区。
+     *
+     * Claude CLI 在每次请求前会往 stderr 打形如
+     * `[claude-code:unrecognized_model] {"model":"...","query_source":"sdk"}`
+     * 的日志行（自定义网关模型不在官方模型表里时触发）。这是无害的
+     * 内部信号，以前会被当成红色错误段显示出来，因此在这里静默过滤。
+     *
+     * @param line 单行 stderr 文本。
+     * @returns true 表示是调试日志，应当丢弃。
+     */
+    private static isDebugStderrLine(line: string): boolean {
+        return /^\[claude-code:/.test(line);
+    }
+
+    /**
      * 解析一个原始 CLI chunk（保留对外暴露的同步解析能力，便于单测）。
      *
      * @param chunk CLI 原始输出。
@@ -374,6 +417,11 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      */
     public parseOutput(chunk: CliChunk): ParsedCliEvent[] {
         if (chunk.source === 'stderr') {
+            // CLI 自带的调试日志行（如 [claude-code:unrecognized_model]）
+            // 不属于用户可见错误，直接丢弃避免污染聊天区。
+            if (StreamJsonCliAdapter.isDebugStderrLine(chunk.text.trim())) {
+                return [];
+            }
             const parsed = parseChunk(this.parserState, { source: 'stderr', text: chunk.text });
             this.parserState = parsed.state;
             return [{ type: 'segments', segments: parsed.segments }];
@@ -582,6 +630,10 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      */
     private parseLine(source: 'stdout' | 'stderr', line: string): ParsedCliEvent {
         if (source === 'stderr') {
+            // CLI 调试日志行不渲染，返回空段事件（下游已忽略空段）。
+            if (StreamJsonCliAdapter.isDebugStderrLine(line.trim())) {
+                return { type: 'segments', segments: [] };
+            }
             return { type: 'segments', segments: [{ kind: 'error', text: line }] };
         }
         try {
@@ -626,7 +678,11 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         const taskEvent = this.parseSystemTaskEvent(record);
         if (taskEvent) return taskEvent;
 
-        // 1.3. 其余 system 事件（api_retry / task_updated 等）→ 折叠卡片而非原文降级
+        // 后台列表事件必须先于通用 System 卡片解析。
+        const backgroundTaskEvent = this.parseSystemBackgroundTaskEvent(record);
+        if (backgroundTaskEvent) return backgroundTaskEvent;
+
+        // 1.3. 其余 system 事件（api_retry 等）→ 折叠卡片而非原文降级
         const genericSystemEvent = this.parseSystemGenericEvent(record);
         if (genericSystemEvent) return genericSystemEvent;
 
@@ -645,6 +701,12 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         // 4. 流结束；result 事件可能同时携带聚合后的正文，需要先兜底输出再结束。
         if (record.type === 'result') return this.parseResultEvent(record);
         if (record.type === 'done' || record.type === 'message_stop') return { type: 'done' };
+
+        // CLI 会为长时间运行的工具周期性发送独立 heartbeat ID；它只是保活通知，
+        // 不能交给宽松工具解析，否则每次心跳都会新增一张空白“等待”卡片。
+        if (record.type === 'tool_progress' && record.heartbeat === true) {
+            return { type: 'segments', segments: [], done: false };
+        }
 
         // 5. 未知工具事件兜底
         const toolSegment = this.parseLooseToolEvent(record);
@@ -758,6 +820,10 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      * 上游 SDK 在不同小版本里同时出现过紧凑写法（`taskstarted` / `tasknotification`）
      * 与带下划线写法（`task_started` / `task_notification`），此处一并接收，避免
      * 上游切换写法后任务事件原文漏到聊天区造成视觉噪声。
+     *
+     * `thinking_tokens` 是新版 CLI 在流式思考期间高频推送的 token 估算计数
+     * （estimated_tokens / estimated_tokens_delta），每轮能刷出几十张
+     * `System · thinking_tokens` 卡片，对用户没有可读价值，同样静默丢弃。
      */
     private static readonly SYSTEM_TASK_EVENT_SUBTYPES: ReadonlySet<string> = new Set([
         'taskstarted',
@@ -767,6 +833,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         'taskprogress',
         'task_progress',
         'compact_boundary',
+        'thinking_tokens',
     ]);
 
     private static readonly HIDDEN_CHAT_TOOL_NAMES: ReadonlySet<string> = new Set([
@@ -833,7 +900,49 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     }
 
     /**
-     * 兜底处理其余 system 事件（api_retry / task_updated 等未知 subtype）。
+     * 将后台任务全量快照或增量补丁转成内部事件，畸形事件只消费不展示。
+     *
+     * CLI 2.1.260 的 el(state) 从 Object.values(state.tasks) 过滤并构造完整列表；
+     * C2e / Kkt 发送该列表，nMo 则仅将变化字段写入 task_updated.patch。
+     * 非法快照整体忽略，避免将损坏的数据误当空快照清除仍运行的任务。
+     *
+     * @param record 已解析的 CLI 事件。
+     * @returns 内部事件、空展示事件，或未匹配时的 undefined。
+     */
+    private parseSystemBackgroundTaskEvent(record: Record<string, unknown>): ParsedCliEvent | undefined {
+        if (record.type !== 'system' ||
+            (record.subtype !== 'background_tasks_changed' && record.subtype !== 'task_updated')) return undefined;
+        const ignored: ParsedCliEvent = { type: 'segments', segments: [], done: false };
+        const sessionId = this.readFirstString(record, record, ['session_id']);
+        if (record.subtype === 'background_tasks_changed') {
+            if (!Array.isArray(record.tasks)) return ignored;
+            const tasks: CliBackgroundTask[] = [];
+            for (const item of record.tasks) {
+                const task = this.asRecord(item);
+                if (!task) return ignored;
+                const taskId = this.readFirstString(task, task, ['task_id']);
+                const taskType = this.readFirstString(task, task, ['task_type']);
+                const description = this.readFirstString(task, task, ['description']);
+                if (!taskId || !taskType || !description) return ignored;
+                tasks.push({ taskId, taskType, description });
+            }
+            return { type: 'backgroundTasks/snapshot', tasks, ...(sessionId ? { sessionId } : {}) };
+        }
+        const taskId = this.readFirstString(record, record, ['task_id']);
+        const patch = this.asRecord(record.patch);
+        if (!taskId || !patch) return ignored;
+        if (('status' in patch && typeof patch.status !== 'string') ||
+            ('description' in patch && typeof patch.description !== 'string') ||
+            ('end_time' in patch && patch.end_time !== null &&
+                (typeof patch.end_time !== 'number' || !Number.isFinite(patch.end_time)))) return ignored;
+        return {
+            type: 'backgroundTasks/update', taskId, patch: { ...patch },
+            ...(sessionId ? { sessionId } : {})
+        };
+    }
+
+    /**
+     * 兜底处理其余 system 事件（api_retry 等未知 subtype）。
      *
      * 这些事件此前会命中「完全无法识别 → 原文降级」路径，把原始 JSON 直接打进
      * 聊天区。现在改为渲染成一个默认折叠的工具风格卡片：摘要行显示
@@ -907,6 +1016,11 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
             case 'content_block_stop':
                 return this.handleContentBlockStop(event);
             case 'message_delta':
+                return { type: 'segments', segments: [], done: false };
+            case 'ping':
+                // Anthropic SSE 心跳，新版 CLI 会以 stream_event 形态原样透传；
+                // 不含任何正文，若放行到 default 会穿到「原文降级」把整段 JSON
+                // 打进聊天区，这里直接静默吞掉。
                 return { type: 'segments', segments: [], done: false };
             case 'message_stop': {
                 // 部分上游会省略 content_block_stop 直接发 message_stop，
@@ -1524,6 +1638,29 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     // -------------------------------------------------------------------------
 
     /**
+     * 判断工具结果是否来自嵌套 Agent，且主会话中没有对应的工具调用卡片。
+     *
+     * Claude CLI 会把子代理内部的 `tool_result` 透传给主进程，并通过顶层
+     * `parent_tool_use_id` 标记所属 Agent。若主适配器从未见过对应 `tool_use`，
+     * 该结果只能形成无上下文的 `tool_result` 成功卡片，应静默忽略。
+     *
+     * @param envelope 包装该结果的顶层 CLI 事件。
+     * @param block tool_result 内容块。
+     * @returns 嵌套且无法与主会话工具卡片配对时返回 true。
+     */
+    private isNestedOrphanToolResult(
+        envelope: Record<string, unknown>,
+        block: Record<string, unknown>
+    ): boolean {
+        const parentToolUseId = typeof envelope.parent_tool_use_id === 'string'
+            ? envelope.parent_tool_use_id.trim()
+            : '';
+        if (!parentToolUseId) return false;
+        const toolUseId = typeof block.tool_use_id === 'string' ? block.tool_use_id : '';
+        return !toolUseId || !this.toolSegmentById.has(toolUseId);
+    }
+
+    /**
      * 解析 SDK 包装事件：`{ type: "assistant", message: {...} }`、`tool_use`、`tool_result`。
      *
      * Claude Code SDK 在 stream-json 之上提供了顶层包装，最典型的两类：
@@ -1614,6 +1751,9 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
                     });
                     continue;
                 }
+                // Agent 子进程的内部工具结果也会包装成 user 消息向外透传；主会话没有
+                // 对应 tool_use 时不应为其创建孤立的 tool_result 成功卡片。
+                if (this.isNestedOrphanToolResult(record, block)) continue;
                 const segment = this.applyToolResult(block);
                 if (segment) segments.push(segment);
                 continue;
@@ -1804,6 +1944,10 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
                 content,
                 isError
             };
+        }
+        // 兼容 CLI 直接透传嵌套 Agent 的顶层 tool_result 变体。
+        if (this.isNestedOrphanToolResult(record, record)) {
+            return { type: 'segments', segments: [], done: false };
         }
         const segment = this.applyToolResult(record);
         return { type: 'segments', segments: segment ? [segment] : [], done: false };
@@ -2206,7 +2350,8 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      * 形态，因此在 markdown 解析前再做一层过滤：
      *
      * - 任务调度类 subtype（taskstarted / tasknotification 等）→ 静默丢弃；
-     * - 其余 subtype（api_retry / task_updated 等）→ 转成折叠 System 卡片
+     * - background_tasks_changed / task_updated → 旁路发送后台快照或补丁；
+     * - 其余 subtype（api_retry 等）→ 转成折叠 System 卡片
      *   segment 返回，避免原始 JSON 刷进聊天区。
      *
      * 实现细节：通过正则定位 `{"type":"system"` 起始位置，再用括号配对扫描到
@@ -2247,6 +2392,11 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
             cursor = end + 1;
             if (text[cursor] === '\n') cursor += 1;
             marker.lastIndex = cursor;
+            const backgroundEvent = this.parseSystemBackgroundTaskEvent(record);
+            if (backgroundEvent) {
+                if (backgroundEvent.type !== 'segments') this.emitAdHoc(backgroundEvent);
+                continue;
+            }
             const subtype = typeof record.subtype === 'string' ? record.subtype : '';
             if (!StreamJsonCliAdapter.SYSTEM_TASK_EVENT_SUBTYPES.has(subtype)) {
                 systemSegments.push(this.buildSystemEventSegment(record));

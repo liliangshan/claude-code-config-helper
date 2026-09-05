@@ -1,8 +1,54 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.44
+**Version:** 3.2.51
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
+
+## What's New in 3.2.51
+
+- **Model-level Explicit Prompt Cache** is available in the Add/Edit Model dialog for compatible OpenAI Chat and Responses gateways. It defaults to off, survives model refreshes and config import/export, and takes priority over the saved cache mode while enabled. Anthropic providers retain the saved value but cannot activate it.
+- **Protocol-specific caching:** Chat uses the session ID as `prompt_cache_key`, explicit 30-minute options and a system-message breakpoint; Responses uses `instructions` plus the key/options, without `cache_control` breakpoints. Upstream support is required, and missing session IDs or static prefixes skip cache injection.
+- **Low cache-hit guidance:** usage footers below 80% show an underlined Solution link. The localized dialog explains how to enable caching and includes an Open extension settings link directly to provider/model configuration. No model-specific gateway warning is shown.
+- **Provider settings guidance** now explains that fetching models or changing provider/model settings takes effect immediately in the current workspace; other workspaces need a window reload or close/reopen. All new guidance supports seven languages.
+- **Responses usage normalization** now shares one non-negative calculation for JSON and SSE responses. Cache-write mapping remains deferred until its accounting semantics can be verified; cache-read tokens are counted only once.
+
+## What's New in 3.2.50
+
+- **A localized Subagents switch now appears after the footer token meter.** Its label and tooltip support all seven interface languages, including “子智能体” in Simplified Chinese.
+- **The switch defaults to off and is saved per workspace** using extension `workspaceState`, not global settings. Each workspace keeps its own choice across reloads; legacy global values are not inherited.
+- **Off removes `Agent`, `SendMessage` and `ListAgents` from every subsequent Relay request's `tools` list; on preserves them.** This applies to ordinary chat, task-flow creation/execution and title-generation side requests across all three protocol adapters. The existing task-flow `AskUserQuestion` rule is unchanged. Changing the switch does not stop agents already running or disable other orchestration entry points such as `Workflow`.
+
+## What's New in 3.2.49
+
+- **The footer token meter now reflects the latest completed response without changing when a new message is sent.** The previous confirmed snapshot stays visible while the response is pending, then input, output, cache-write and cache-read values are replaced atomically when new usage arrives. Cache-read tokens are included in context usage, and stale cache-write values can no longer leak across responses.
+- **Long-running tool heartbeats no longer create empty waiting cards.** `tool_progress` events marked as heartbeats are ignored for both Bash and Agent tools.
+- **Nested Agent results no longer create rows of orphaned `tool_result` success cards.** Results that have no matching tool call in the main conversation are hidden, while paired and top-level results still render normally.
+
+## What's New in 3.2.48
+
+- **Switching sessions can no longer race the next message send.** VS Code does not await one Webview message handler before dispatching the next, so `session/resume` could still be loading history and restarting the CLI when `user/send` wrote to the old or temporarily-cleared process. Session-changing Webview operations now run in arrival order; cancel and question-answer messages remain immediate.
+- **Concurrent CLI start/restart requests are serialized.** Session switching, model switching, auto-continue and self-healing can all request a restart. A shared startup queue now prevents two start flows from terminating or replacing each other's newly-created process.
+
+## What's New in 3.2.47
+
+- **Fixed the false "Chat CLI 进程未运行，无法写入 stdin" error while the CLI is actually running.** After a CLI restart (model switch, auto-continue model swap, manual restart), the old child's late `exit` event could flip the shared `childExited` flag to `true` even though the new process was already running — so the next message was rejected with "process not running". Exit events now only affect shared state when they come from the current process.
+- **`send()` now waits up to 1s for a briefly-unwritable stdin instead of failing instantly** right after startup, and the rejection message now distinguishes *no process handle*, *process exited*, and *stdin never became writable*.
+
+## What's New in 3.2.46
+
+- **The `[claude-code:unrecognized_model]` notice no longer shows up as a red error before every request.** When you run the built-in Chat on a custom gateway (a model id the CLI does not officially know), the Claude CLI writes an internal debug line like `[claude-code:unrecognized_model] {"model":"...","query_source":"sdk"}` to stderr — and the adapter used to surface every stderr line as an error segment. Lines starting with `[claude-code:` are now treated as internal CLI diagnostics and dropped; real stderr errors still show up as before.
+
+## What's New in 3.2.45
+
+This release is a hardening pass over the Chat CLI, the relay server, and shutdown — no behavior changes unless something was leaking or hanging.
+
+- **A hung Chat CLI is really killed now.** Liveness used to be judged by `child.killed`, which only reports "a signal was sent" — so after cancelling a wedged process, later input was silently written to a dead child's stdin. An explicit exit flag now gates `send()` / `cancel()`, and shutdown escalates `SIGTERM → SIGKILL` after 1.5s.
+- **Reloading or closing VS Code frees the relay port immediately.** Stopping the relay waited on `server.close()`, which never returns while an SSE stream is open; existing connections are now disconnected right away.
+- **Cancelling a request stops the upstream call too.** Closing the connection mid-stream used to leave the upstream request running to completion (and billing); the client disconnect is now propagated and destroy the upstream request. The deprecated `req.on('aborted')` listener, which never fired under keep-alive, was removed.
+- **`deactivate()` flushes the chat session to disk** and clears auto-continue timers / pending question waiters instead of leaking them.
+- **The task-flow CLI exit notice is localized in 7 languages** and degrades to a toast with a silent restart while a task flow is running, so it can no longer block the flow with a modal.
+- **New `claudeCodeConfigHelper.relay.debugRecord` setting (off by default).** Relay request recording used to run unconditionally, rewriting the whole daily log per request and storing base64 images; it is now opt-in, append-only, image-stripped, and upstream error snapshots are capped at 20 files.
+- **The test suite is wired to a glob instead of a hardcoded file list**, which brought three previously-skipped test files back and grew the suite from 283 to 308 tests.
 
 ## What's New in 3.2.44
 
@@ -174,7 +220,7 @@ Command titles may be localized according to your configured UI language.
 npm install
 npm run compile
 npx @vscode/vsce package
-code --install-extension claude-code-config-helper-3.2.44.vsix
+code --install-extension claude-code-config-helper-3.2.48.vsix
 ```
 
 ### Windows Claude CLI install hint

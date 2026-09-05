@@ -51,7 +51,9 @@ function createFakeCliProcess() {
         getCwd: () => process.cwd(),
         send: () => undefined,
         cancel: () => undefined,
-        isRunning: () => true
+        isRunning: () => true,
+        // 测试需要从外部往内部事件总线注入 chunk/exit，暴露 emit 透传。
+        emit: (name: string, ...args: unknown[]) => emitter.emit(name, ...args)
     } as unknown as ConstructorParameters<typeof StreamJsonCliAdapter>[0];
 }
 
@@ -117,6 +119,118 @@ test('parseSystemTaskEvent 丢弃 compact_boundary', () => {
     if (events[0].type === 'segments') assert.equal(events[0].segments.length, 0);
 });
 
+test('parseSystemTaskEvent 丢弃 thinking_tokens 计数事件', () => {
+    const events = parseSingleStdoutLine(JSON.stringify({
+        type: 'system', subtype: 'thinking_tokens', estimated_tokens: 424, estimated_tokens_delta: 2,
+        session_id: '5d158354-84f7-47a8-8836-36519adeba98', uuid: '52186497-c0bb-4283-a30e-f9825365c197'
+    }));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'segments');
+    if (events[0].type === 'segments') assert.equal(events[0].segments.length, 0);
+});
+
+test('parseSystemTaskEvent 丢弃 thinking_tokens 计数事件', () => {
+    const events = parseSingleStdoutLine(JSON.stringify({
+        type: 'system', subtype: 'thinking_tokens', estimated_tokens: 424, estimated_tokens_delta: 2,
+        session_id: 's1', uuid: 'u1'
+    }));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'segments');
+    if (events[0].type === 'segments') assert.equal(events[0].segments.length, 0);
+});
+
+test('stream_event 包装的 ping 心跳静默丢弃，不再原文降级', () => {
+    const events = parseSingleStdoutLine(JSON.stringify({
+        type: 'stream_event', event: { type: 'ping' }, session_id: 's1', parent_tool_use_id: null, uuid: 'u2'
+    }));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'segments');
+    if (events[0].type === 'segments') assert.equal(events[0].segments.length, 0);
+});
+
+test('Bash 与 Agent 的 tool_progress 心跳均静默丢弃', () => {
+    for (const toolName of ['Bash', 'Agent']) {
+        const events = parseSingleStdoutLine(JSON.stringify({
+            type: 'tool_progress',
+            tool_use_id: `call-1-heartbeat-${toolName}`,
+            tool_name: toolName,
+            parent_tool_use_id: 'call-1',
+            elapsed_time_seconds: 60,
+            heartbeat: true,
+            session_id: 'session-1',
+            uuid: 'heartbeat-1'
+        }));
+        assert.equal(events.length, 1);
+        assert.equal(events[0].type, 'segments');
+        if (events[0].type === 'segments') assert.equal(events[0].segments.length, 0);
+    }
+});
+
+test('嵌套 Agent 的孤立 tool_result 静默丢弃，不新增成功卡片', () => {
+    const events = parseSingleStdoutLine(JSON.stringify({
+        type: 'user',
+        parent_tool_use_id: 'call-outer-agent',
+        message: {
+            role: 'user',
+            content: [{
+                type: 'tool_result',
+                tool_use_id: 'call-inner-bash',
+                content: '内部命令完成',
+                is_error: false
+            }]
+        }
+    }));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'segments');
+    if (events[0].type === 'segments') assert.equal(events[0].segments.length, 0);
+});
+
+test('嵌套 Agent 中已配对的 tool_result 仍更新原工具卡片', () => {
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    adapter.parseOutput({
+        source: 'stdout',
+        text: JSON.stringify({ type: 'tool_use', id: 'call-inner-bash', name: 'Bash', input: { command: 'pwd' } }) + '\n',
+        receivedAt: Date.now()
+    });
+    const events = adapter.parseOutput({
+        source: 'stdout',
+        text: JSON.stringify({
+            type: 'user',
+            parent_tool_use_id: 'call-outer-agent',
+            message: {
+                role: 'user',
+                content: [{ type: 'tool_result', tool_use_id: 'call-inner-bash', content: '', is_error: false }]
+            }
+        }) + '\n',
+        receivedAt: Date.now()
+    });
+    adapter.dispose();
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'segments');
+    if (events[0].type === 'segments') {
+        assert.equal(events[0].segments.length, 1);
+        assert.equal(events[0].segments[0].tool?.name, 'Bash');
+        assert.equal(events[0].segments[0].tool?.status, 'success');
+    }
+});
+
+test('主会话顶层孤立 tool_result 保留兼容卡片', () => {
+    const events = parseSingleStdoutLine(JSON.stringify({
+        type: 'tool_result',
+        tool_use_id: 'call-top-level',
+        content: '顶层结果',
+        is_error: false
+    }));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'segments');
+    if (events[0].type === 'segments') {
+        assert.equal(events[0].segments.length, 1);
+        assert.equal(events[0].segments[0].tool?.name, 'tool_result');
+        assert.equal(events[0].segments[0].tool?.status, 'success');
+    }
+});
+
 test('parseSystemTaskEvent 对未知 subtype 转折叠 System 卡片而非静默吞', () => {
     const events = parseSingleStdoutLine(JSON.stringify({ type: 'system', subtype: 'someUnknownSubtype', payload: {} }));
     assert.equal(events.length, 1);
@@ -132,7 +246,8 @@ test('parseSystemTaskEvent 对未知 subtype 转折叠 System 卡片而非静默
     }
 });
 
-test('api_retry / task_updated 等 system 事件渲染为 System 卡片', () => {
+/** 不相关系统事件继续展示卡片，后台补丁只返回内部事件。 */
+test('api_retry 保留 System 卡片，task_updated 转为内部补丁', () => {
     const retry = parseSingleStdoutLine(JSON.stringify({
         type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, error_status: 401, error: 'authentication_failed'
     }));
@@ -144,10 +259,87 @@ test('api_retry / task_updated 等 system 事件渲染为 System 卡片', () => 
     const updated = parseSingleStdoutLine(JSON.stringify({
         type: 'system', subtype: 'task_updated', task_id: 'bkvhac6wt', patch: { status: 'killed' }
     }));
-    assert.equal(updated[0].type, 'segments');
-    if (updated[0].type === 'segments') {
-        assert.equal(updated[0].segments[0].tool?.summary, 'task_updated');
+    assert.deepEqual(updated, [{
+        type: 'backgroundTasks/update', taskId: 'bkvhac6wt', patch: { status: 'killed' }
+    }]);
+});
+
+/** 快照允许没有状态，空列表仍是有效的全量快照。 */
+test('后台任务快照解析多个无 status 条目及空快照', () => {
+    const tasks = [
+        { task_id: 'a', task_type: 'local_agent', description: '分析方案' },
+        { task_id: 'b', task_type: 'local_bash', description: '执行检查' }
+    ];
+    assert.deepEqual(parseSingleStdoutLine(JSON.stringify({
+        type: 'system', subtype: 'background_tasks_changed', tasks, session_id: 's1'
+    })), [{ type: 'backgroundTasks/snapshot', sessionId: 's1', tasks: [
+        { taskId: 'a', taskType: 'local_agent', description: '分析方案' },
+        { taskId: 'b', taskType: 'local_bash', description: '执行检查' }
+    ] }]);
+    assert.deepEqual(parseSingleStdoutLine(JSON.stringify({
+        type: 'system', subtype: 'background_tasks_changed', tasks: []
+    })), [{ type: 'backgroundTasks/snapshot', tasks: [] }]);
+});
+
+/** 部分补丁不填默认值，保留终态、空结束时间及未知扩展字段。 */
+test('后台任务补丁保留实际字段与来源会话', () => {
+    for (const patch of [
+        {}, { description: '更新说明' }, { end_time: null }, { end_time: 123 },
+        { status: 'completed' }, { status: 'failed' }, { status: 'cancelled' },
+        { status: 'canceled' }, { status: 'killed' }, { status: 'future_status', extra: true }
+    ]) {
+        assert.deepEqual(parseSingleStdoutLine(JSON.stringify({
+            type: 'system', subtype: 'task_updated', task_id: 'a', patch, session_id: 's1'
+        })), [{ type: 'backgroundTasks/update', taskId: 'a', patch, sessionId: 's1' }]);
     }
+});
+
+/** 畸形事件不生成空白任务，也不能误清空有效快照。 */
+test('后台任务畸形快照和补丁只消费不展示', () => {
+    const invalid = [
+        { subtype: 'background_tasks_changed' },
+        { subtype: 'background_tasks_changed', tasks: null },
+        { subtype: 'background_tasks_changed', tasks: [null] },
+        { subtype: 'background_tasks_changed', tasks: [{ task_id: 'a', task_type: 'local_agent', description: ' ' }] },
+        { subtype: 'task_updated', patch: {} },
+        { subtype: 'task_updated', task_id: ' ', patch: {} },
+        { subtype: 'task_updated', task_id: 'a', patch: [] },
+        { subtype: 'task_updated', task_id: 'a', patch: { status: null } },
+        { subtype: 'task_updated', task_id: 'a', patch: { description: 1 } },
+        { subtype: 'task_updated', task_id: 'a', patch: { end_time: '123' } }
+    ];
+    for (const record of invalid) {
+        assert.deepEqual(parseSingleStdoutLine(JSON.stringify({ type: 'system', ...record })), [
+            { type: 'segments', segments: [], done: false }
+        ]);
+    }
+});
+
+/** 实际进程事件入口中，嵌入后台事件只广播一次且正文不含卡片或 JSON。 */
+test('嵌入正文的后台快照和补丁通过事件总线发送一次', () => {
+    const fake = createFakeCliProcess();
+    const adapter = new StreamJsonCliAdapter(fake);
+    const seen: Array<import('../cli/cliAdapter').ParsedCliEvent> = [];
+    adapter.onParsedEvent((event) => seen.push(event));
+    const snapshot = JSON.stringify({ type: 'system', subtype: 'background_tasks_changed', tasks: [
+        { task_id: 'a', task_type: 'local_agent', description: '检查 {转义} "文本"' }
+    ], session_id: 's1' });
+    const update = JSON.stringify({ type: 'system', subtype: 'task_updated', task_id: 'a', patch: { status: 'completed' }, session_id: 's1' });
+    const bus = fake as unknown as { emit(name: string, ...args: unknown[]): boolean };
+    bus.emit('chunk', { source: 'stdout', text: JSON.stringify({
+        type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: `前文\n${snapshot}${update}\n后文` }] }
+    }) + '\n', receivedAt: Date.now() });
+    adapter.dispose();
+    assert.deepEqual(seen.filter(event => event.type.startsWith('backgroundTasks/')), [
+        { type: 'backgroundTasks/snapshot', tasks: [{ taskId: 'a', taskType: 'local_agent', description: '检查 {转义} "文本"' }], sessionId: 's1' },
+        { type: 'backgroundTasks/update', taskId: 'a', patch: { status: 'completed' }, sessionId: 's1' }
+    ]);
+    const segments = seen.flatMap(event => event.type === 'segments' ? event.segments : []);
+    assert.equal(segments.some(segment => segment.tool), false);
+    const text = segments.map(segment => segment.text ?? '').join('');
+    assert.match(text, /前文/);
+    assert.match(text, /后文/);
+    assert.doesNotMatch(text, /background_tasks_changed|task_updated|task_id/);
 });
 
 /** stripEmbeddedSystemTaskEvents 的新返回结构。 */
@@ -214,4 +406,55 @@ test('stripEmbeddedSystemTaskEvents 同时剥离两种写法的嵌入 JSON', () 
     assert.equal(broken.text, '见 {"type":"system","subtype":"x" 未闭合');
     assert.equal(broken.systemSegments.length, 0);
     adapter.dispose();
+});
+
+
+// -------------------------------------------------------------------------
+// stderr 调试日志过滤（[claude-code:xxx] 行不再渲染为红色错误段）
+// -------------------------------------------------------------------------
+
+/**
+ * 往 adapter 注入一段 stderr 并返回解析事件列表。
+ *
+ * @param text 原始 stderr 文本。
+ */
+function parseStderrChunk(text: string) {
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    const events = adapter.parseOutput({ source: 'stderr', text, receivedAt: Date.now() });
+    adapter.dispose();
+    return events;
+}
+
+test('stderr 上 [claude-code:unrecognized_model] 日志行被静默丢弃', () => {
+    const events = parseStderrChunk('[claude-code:unrecognized_model] {"model":"1778317248226-fowcqqv4k/qwen3.8-max","query_source":"sdk"}');
+    assert.equal(events.length, 0, '调试日志行不应产出任何渲染事件');
+});
+
+test('stderr 上普通错误仍然渲染为 error 段', () => {
+    const events = parseStderrChunk('ECONNREFUSED 127.0.0.1:1042');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'segments');
+    if (events[0].type === 'segments') {
+        assert.equal(events[0].segments[0].kind, 'error');
+        assert.match(events[0].segments[0].text ?? '', /ECONNREFUSED/);
+    }
+});
+
+test('退出时残留的 [claude-code: 日志行不会在 flush 阶段漏出', () => {
+    const fake = createFakeCliProcess();
+    const adapter = new StreamJsonCliAdapter(fake);
+    // 通过进程事件总线触发：先发一段不带换行的调试日志（停留在缓冲），再触发 exit 走 flush。
+    const seen: Array<import('../cli/cliAdapter').ParsedCliEvent> = [];
+    adapter.onParsedEvent((event) => seen.push(event));
+    const bus = fake as unknown as { emit(name: string, ...args: unknown[]): boolean };
+    bus.emit('chunk', { source: 'stderr', text: '[claude-code:telemetry] {"event":"probe"}', receivedAt: Date.now() });
+    bus.emit('exit', { code: 0, signal: undefined });
+    adapter.dispose();
+    for (const event of seen) {
+        if (event.type === 'segments') {
+            for (const segment of event.segments) {
+                assert.doesNotMatch(String(segment.text ?? ''), /^\[claude-code:/);
+            }
+        }
+    }
 });

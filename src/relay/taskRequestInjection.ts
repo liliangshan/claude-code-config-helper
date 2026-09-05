@@ -149,7 +149,12 @@ export function injectLlsTaskRequestBody(
     const shouldInjectWorkflowCreation = !hasActiveWorkflow && (createTriggered || hasPendingWorkflowCreation);
     try {
         const parsed = JSON.parse(bodyText) as Record<string, unknown>;
-        parsed.tools = filterAnthropicToolsByName(parsed.tools, ALWAYS_BLOCKED_CHAT_TOOL_NAMES);
+        const requestBlockedToolNames = new Set(ALWAYS_BLOCKED_CHAT_TOOL_NAMES);
+        // 所有协议共用此入口，必须在普通对话与侧轨提前返回前应用开关。
+        if (deps?.configManager.getChatSubagentsEnabled?.() !== true) {
+            for (const name of ['Agent', 'SendMessage', 'ListAgents']) requestBlockedToolNames.add(name);
+        }
+        parsed.tools = filterAnthropicToolsByName(parsed.tools, requestBlockedToolNames);
 
         // 缓存 ttl 统一改写必须在侧轨提前 return 之前执行：Anthropic 要求整条请求里
         // ttl 不能从 1h 退回 5m（按 tools->system->messages 顺序），而侧轨/标题生成等
@@ -205,6 +210,7 @@ export function injectLlsTaskRequestBody(
             // 请求体前缀保持稳定、缓存可命中。
             builtIns.push(buildUpdateLlsCcaiTaskWorkflowTool());
             blockedToolNames.add(ASK_USER_QUESTION_TOOL_NAME);
+            // 子智能体工具已在入口统一按用户开关过滤，不受任务流阶段影响。
         } else if (shouldInjectWorkflowCreation && deps && language) {
             builtIns.push(buildCreateLlsCcaiTaskWorkflowTool());
             blockedToolNames.add(EXIT_PLAN_MODE_TOOL_NAME);

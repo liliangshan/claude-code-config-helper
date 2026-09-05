@@ -6,12 +6,19 @@
 
 import * as assert from 'assert';
 
-import {
+import { installVscodeStub } from '../../chat/__tests__/testUtils/vscodeStub';
+
+// 被测模块在加载期就会解析 vscode 配置，桩必须先于 require 装好，
+// 因此这里用 require 延迟加载而非静态 import。
+installVscodeStub({ values: {} });
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const {
     applyCacheTtlToRequest,
     buildSharedSystemPrompt,
     injectLlsTaskRequestBody,
     stripLegacyInjectedPromptArtifacts
-} from '../taskRequestInjection';
+} = require('../taskRequestInjection') as typeof import('../taskRequestInjection');
 
 /** 单个测试用例。 */
 interface TestCase {
@@ -23,6 +30,61 @@ interface TestCase {
 
 /** 请求注入测试集合。 */
 const tests: TestCase[] = [
+    {
+        name: '子智能体开关统一控制所有请求，Ask 保持原任务流规则',
+        /** 覆盖默认、开启、关闭及再次开启，检查普通、执行、创建和标题侧轨。 */
+        run: () => {
+            for (const enabled of [undefined, true, false, true]) {
+            for (const stage of ['execution', 'ordinary', 'creation', 'sideTrack']) {
+                const fakeDeps = {
+                    configManager: {
+                        /** 模拟每轮读取当前开关，缺省保持关闭。 */
+                        getChatSubagentsEnabled: () => enabled,
+                        /** 返回测试语言。 */
+                        getResolvedUiLanguage: () => 'en' as const,
+                        /** 保留默认缓存策略。 */
+                        getChatCacheTtl: () => 'default' as const,
+                        /** 不追加全局提示词。 */
+                        getGlobalSystemPrompt: () => '',
+                        /** 不追加工作区提示词。 */
+                        getWorkspaceSystemPrompt: () => ''
+                    },
+                    llsTaskService: {
+                        /** 仅执行和侧轨场景存在活跃任务流。 */
+                        hasActiveWorkflow: () => stage === 'execution' || stage === 'sideTrack',
+                        /** 创建场景模拟待创建任务流。 */
+                        hasPendingWorkflowCreation: () => stage === 'creation'
+                    },
+                    autoContinueScheduler: {
+                        /** 测试不启动真实定时器。 */
+                        cancel: () => undefined
+                    }
+                };
+                const names = ['AskUserQuestion', 'Agent', 'SendMessage', 'ListAgents', 'Read'];
+                const result = injectLlsTaskRequestBody(JSON.stringify({
+                    model: 'm',
+                    system: stage === 'sideTrack'
+                        ? 'Generate a concise, sentence-case title for this conversation.'
+                        : 'base-system',
+                    messages: [{ role: 'user', content: '继续' }],
+                    tools: names.map((name) => ({ name, input_schema: { type: 'object', properties: {} } }))
+                }), fakeDeps as never);
+                assert.strictEqual(result.injected, true, stage);
+                const body = JSON.parse(result.bodyText) as { tools: Array<{ name: string }> };
+                const actual = body.tools.map((tool) => tool.name);
+                const retained = names.filter((name) =>
+                    !(enabled !== true && ['Agent', 'SendMessage', 'ListAgents'].includes(name))
+                    && !(stage === 'execution' && name === 'AskUserQuestion'));
+                const expected = stage === 'execution'
+                    ? [...retained, 'update_llsccai_task_workflow']
+                    : stage === 'creation'
+                        ? [...retained, 'create_llsccai_task_workflow']
+                        : retained;
+                assert.deepStrictEqual(actual, expected, `${stage}, enabled=${enabled}`);
+            }
+            }
+        }
+    },
     {
         name: '无任务流时仍应注入内置身份 system 提示词',
         run: () => {
@@ -48,6 +110,8 @@ const tests: TestCase[] = [
             const fakeDeps = {
                 configManager: {
                     getResolvedUiLanguage: () => 'en' as const,
+                    // 注入链路会读取缓存 TTL 决定 cache_control，桩里必须提供，否则整段注入被 catch 吞掉。
+                    getChatCacheTtl: () => 'default' as const,
                     getGlobalSystemPrompt: () => 'global-rule',
                     getWorkspaceSystemPrompt: () => 'workspace-rule'
                 },
@@ -78,6 +142,8 @@ const tests: TestCase[] = [
             const fakeDeps = {
                 configManager: {
                     getResolvedUiLanguage: () => 'en' as const,
+                    // 注入链路会读取缓存 TTL 决定 cache_control，桩里必须提供，否则整段注入被 catch 吞掉。
+                    getChatCacheTtl: () => 'default' as const,
                     getGlobalSystemPrompt: () => '',
                     getWorkspaceSystemPrompt: () => ''
                 },
@@ -126,6 +192,8 @@ const tests: TestCase[] = [
             const fakeDeps = {
                 configManager: {
                     getResolvedUiLanguage: () => 'en' as const,
+                    // 注入链路会读取缓存 TTL 决定 cache_control，桩里必须提供，否则整段注入被 catch 吞掉。
+                    getChatCacheTtl: () => 'default' as const,
                     getGlobalSystemPrompt: () => 'global-rule',
                     getWorkspaceSystemPrompt: () => 'workspace-rule'
                 },
@@ -157,6 +225,8 @@ const tests: TestCase[] = [
             const fakeDeps = {
                 configManager: {
                     getResolvedUiLanguage: () => 'en' as const,
+                    // 注入链路会读取缓存 TTL 决定 cache_control，桩里必须提供，否则整段注入被 catch 吞掉。
+                    getChatCacheTtl: () => 'default' as const,
                     getGlobalSystemPrompt: () => '',
                     getWorkspaceSystemPrompt: () => ''
                 },
@@ -196,6 +266,8 @@ const tests: TestCase[] = [
             const fakeDeps = {
                 configManager: {
                     getResolvedUiLanguage: () => 'en' as const,
+                    // 注入链路会读取缓存 TTL 决定 cache_control，桩里必须提供，否则整段注入被 catch 吞掉。
+                    getChatCacheTtl: () => 'default' as const,
                     getGlobalSystemPrompt: () => '',
                     getWorkspaceSystemPrompt: () => ''
                 },
@@ -253,6 +325,8 @@ const tests: TestCase[] = [
             const fakeDeps = {
                 configManager: {
                     getResolvedUiLanguage: () => 'en' as const,
+                    // 注入链路会读取缓存 TTL 决定 cache_control，桩里必须提供，否则整段注入被 catch 吞掉。
+                    getChatCacheTtl: () => 'default' as const,
                     getGlobalSystemPrompt: () => '',
                     getWorkspaceSystemPrompt: () => ''
                 },
@@ -272,8 +346,17 @@ const tests: TestCase[] = [
                 output_config: { format: { type: 'json_schema' } }
             });
             const result = injectLlsTaskRequestBody(input, fakeDeps as never);
-            assert.strictEqual(result.injected, false);
-            assert.strictEqual(result.bodyText, input);
+            // 侧轨请求仍会走 always-blocked 工具过滤与缓存 ttl 统一（见 taskRequestInjection.ts:154-164），
+            // 因此 injected 为 true；这里断言的是「没有任何提示词/任务流工具被塞进去」。
+            const body = JSON.parse(result.bodyText) as {
+                system?: unknown;
+                messages?: Array<{ role: string; content?: unknown }>;
+                tools?: unknown[];
+            };
+            assert.strictEqual(body.system, 'Generate a concise, sentence-case title for this conversation.');
+            assert.strictEqual(body.messages?.length, 1);
+            assert.strictEqual(body.messages?.[0].content, '请给这个会话生成标题');
+            assert.ok(!JSON.stringify(body.tools ?? []).includes('update_llsccai_task_workflow'));
         }
     },
     {

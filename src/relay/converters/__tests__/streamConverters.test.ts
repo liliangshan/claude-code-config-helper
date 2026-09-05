@@ -4,9 +4,21 @@
 
 import * as assert from 'assert';
 
-import { LlsTaskStreamingInterceptor } from '../../../llsTask/streamingInterceptor';
-import { OpenAIChatToAnthropicStreamConverter } from '../openAIChatToAnthropic';
-import { OpenAIResponsesToAnthropicStreamConverter } from '../openAIResponsesToAnthropic';
+import { installVscodeStub } from '../../../chat/__tests__/testUtils/vscodeStub';
+
+// 拦截器链路在加载期就会读取 vscode 配置，桩必须先于 require 装好，
+// 因此这里用 require 延迟加载而非静态 import。
+installVscodeStub({ values: {} });
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { LlsTaskStreamingInterceptor } =
+    require('../../../llsTask/streamingInterceptor') as typeof import('../../../llsTask/streamingInterceptor');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { OpenAIChatToAnthropicStreamConverter } =
+    require('../openAIChatToAnthropic') as typeof import('../openAIChatToAnthropic');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { OpenAIResponsesToAnthropicStreamConverter } =
+    require('../openAIResponsesToAnthropic') as typeof import('../openAIResponsesToAnthropic');
 
 /** 单个测试用例。 */
 interface TestCase {

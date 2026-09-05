@@ -19,13 +19,15 @@ import { convertAnthropicToOpenAIResponses } from './converters/anthropicToOpenA
 import { buildAnthropicErrorFromUpstream, formatAnthropicSseError, sanitizeErrorMessage } from './converters/openAIErrorToAnthropic';
 import { convertResponsesJsonToAnthropic, OpenAIResponsesToAnthropicStreamConverter } from './converters/openAIResponsesToAnthropic';
 import type { DebugRecorder } from './debugRecorder';
+import { extractExplicitCacheSessionId } from './explicitPromptCache';
 import { buildForwardHeaders, redactHeaders } from './forwardHeadersCommon';
 import { buildOpenAIForwardHeaders, describeOpenAIAuthHeaders } from './openAIHeaders';
-import { resolveModelCacheMode, resolveReasoningMode } from './modelCacheMode';
+import { resolveModelCacheMode, resolveModelExplicitCache, resolveReasoningMode } from './modelCacheMode';
 import type { UpstreamAdapter, UpstreamRequestContext } from './router';
 import { injectLlsTaskRequestBody, type LlsTaskRequestInjectionDeps } from './taskRequestInjection';
 import type { TokenBudgetService } from './tokenBudget/service';
 import { joinUpstreamUrl } from './upstreamUrl';
+import { bindClientAbortToUpstream } from './upstreamAbort';
 import { UPSTREAM_FIRST_BYTE_TIMEOUT_MS, UPSTREAM_STREAM_IDLE_TIMEOUT_MS } from './upstreamTimeouts';
 import { UsageReporter, type UsageSink } from './usageReporter';
 
@@ -134,9 +136,12 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
         }
         await this.safeRecordRequestBody(injectedBodyText);
         const anthropicBody = this.parseJson(injectedBodyText);
+        const explicitCache = resolveModelExplicitCache(provider, modelId);
         const converted = convertAnthropicToOpenAIResponses(anthropicBody, {
             cacheMode: resolveModelCacheMode(provider, modelId),
-            reasoningMode: resolveReasoningMode(provider, modelId)
+            reasoningMode: resolveReasoningMode(provider, modelId),
+            explicitCache,
+            cacheSessionId: explicitCache ? extractExplicitCacheSessionId(anthropicBody) : undefined
         });
         const upstreamBodyText = JSON.stringify(converted.body);
         const headers = buildOpenAIForwardHeaders(provider, req.headers);
@@ -182,10 +187,14 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
         await new Promise<void>((resolve) => {
             let settled = false;
             let gotHeaders = false;
+            /** 客户端断开监听的解绑函数，上游请求发出后才有值。 */
+            let unbindClientAbort: (() => void) | undefined;
             const finish = () => {
                 if (settled) return;
                 settled = true;
                 clearTimeout(firstByteTimer);
+                // 本轮已结算，解除断开监听，避免正常收尾阶段再去 destroy 上游。
+                unbindClientAbort?.();
                 resolve();
             };
             const firstByteTimer = setTimeout(() => {
@@ -246,6 +255,9 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
                 finish();
             });
             upstreamReq.write(upstreamBodyText);
+            // 客户端中途断开时销毁上游请求（替代已废弃的 req 'aborted'）。
+            unbindClientAbort = bindClientAbortToUpstream(ctx.res, upstreamReq, 'OpenAI Responses');
+
             upstreamReq.end();
         });
 

@@ -300,6 +300,7 @@ export type ExtensionToWebview =
     | { type: 'composer/replaceAttachment'; clientId: string; attachment: ChatComposerAttachment; focus?: boolean }
     | { type: 'permissionMode/current'; mode: ChatQuickPermissionMode }
     | { type: 'cacheTtl/current'; ttl: ChatCacheTtlOption }
+    | { type: 'subagents/current'; enabled: boolean }
     | {
           /**
            * AskUserQuestion 授权通道提问：CLI 发出 `can_use_tool` 后由扩展宿主
@@ -533,6 +534,7 @@ export type WebviewToExtension =
     | { type: 'model/select'; providerId: string; modelId: string }
     | { type: 'permissionMode/select'; mode: ChatQuickPermissionMode }
     | { type: 'cacheTtl/select'; ttl: ChatCacheTtlOption }
+    | { type: 'subagents/select'; enabled: boolean }
     | {
           /**
            * 用户在 AskUserQuestion 弹窗中提交答案，与 `askUser/request` 配对。
@@ -559,6 +561,10 @@ export type WebviewToExtension =
           type: 'taskFlow/model/select';
           /** 选择的任务流模型 ID；空字符串表示清除配置。 */
           modelId: string;
+      }
+    | {
+          /** 打开本扩展的提供商与模型配置页。 */
+          type: 'config/open';
       }
     | {
           /** 打开 LLS CCAI / CC 任务流菜单，用于替代原状态栏中的 CC 任务流按钮。 */

@@ -35,6 +35,12 @@ const HISTORY_MAX = 50;
 /** `compact.archivedSessionIds` 最大保留数。 */
 const ARCHIVED_SESSION_MAX = 10;
 
+/** 会话桶保留上限；超出后按 lastUpdated 淘汰最旧的。 */
+const MAX_SESSIONS = 200;
+
+/** 会话桶最长保留天数，超期直接丢弃。 */
+const MAX_SESSION_AGE_DAYS = 30;
+
 /** 单会话桶里的"current"快照。 */
 export interface CurrentUsage {
     /** 输入 token 数（来自上游 usage 或 estimator）。 */
@@ -45,7 +51,7 @@ export interface CurrentUsage {
     cacheCreationInputTokens: number;
     /** 缓存读取 token。 */
     cacheReadInputTokens: number;
-    /** 用于阈值判定：inputTokens + cacheCreationInputTokens。 */
+    /** 用于阈值判定：普通输入 + 缓存写入 + 缓存读取。 */
     totalInputForBudget: number;
 }
 
@@ -304,6 +310,8 @@ export class TokenCountStore {
                         ? (parsed.sessions as Record<string, SessionUsage>)
                         : {}
                 };
+                // 加载即裁剪：历史文件里可能已经堆了成千上万个过期桶。
+                this.pruneSessions();
             }
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -351,6 +359,8 @@ export class TokenCountStore {
             } catch {
                 // 文件可能不存在，忽略。
             }
+            // 序列化前裁剪，保证落盘文件本身不会无限增长。
+            this.pruneSessions();
             const tmpPath = `${filePath}.tmp`;
             const body = `${JSON.stringify(this.file, null, 2)}\n`;
             const handle = await fs.open(tmpPath, 'w');
@@ -367,6 +377,26 @@ export class TokenCountStore {
             const message = err instanceof Error ? err.message : String(err);
             Logger.warn(`[tokenBudget.store] 写入 token-count.json 失败：${message}`);
         }
+    }
+
+    /**
+     * 淘汰过期与超量的会话桶。
+     *
+     * token-count.json 过去只增不减：每个新会话一个桶，长期使用后文件会涨到几 MB，
+     * 而每次刷盘都要整文件序列化。这里按 lastUpdated 做两级裁剪，只改内存，
+     * 随下一次 flushNow 落盘。
+     */
+    private pruneSessions(): void {
+        const cutoff = Date.now() - MAX_SESSION_AGE_DAYS * 86_400_000;
+        const entries = Object.entries(this.file.sessions)
+            .filter(([, session]) => {
+                const time = Date.parse(session?.lastUpdated ?? '');
+                // lastUpdated 缺失或不可解析的桶按「无法判断新鲜度」保留，交给数量上限处理。
+                return Number.isNaN(time) || time >= cutoff;
+            })
+            .sort((a, b) => (Date.parse(b[1]?.lastUpdated ?? '') || 0) - (Date.parse(a[1]?.lastUpdated ?? '') || 0))
+            .slice(0, MAX_SESSIONS);
+        this.file.sessions = Object.fromEntries(entries);
     }
 
     /**
@@ -389,6 +419,8 @@ export class TokenCountStore {
                     this.file.sessions[id] = session;
                 }
             }
+            // 合并可能重新引入过期桶，合并后再裁一次。
+            this.pruneSessions();
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             Logger.warn(`[tokenBudget.store] 合并磁盘 token-count.json 失败：${message}`);

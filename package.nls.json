@@ -32,6 +32,7 @@
     "configuration.title": "LLS CCAI",
     "configuration.autoReloadWindow.description": "Automatically reload the window after switching the current Claude Code model.",
     "configuration.language.description": "Display language for the LLS CCAI settings UI. Auto follows the VS Code display language.",
+    "configuration.relay.debugRecord.description": "Write relay request messages to .LLSOAI/yyyy-MM-dd.jsonl for debugging. Off by default; it adds a per-request disk cost.",
     "configuration.taskFlowBypassPermissions.description": "When enabled, one-click Claude Code configuration writes initialPermissionMode=bypassPermissions and allowDangerouslySkipPermissions=true. Recommended only in trusted sandbox environments.",
     "configuration.taskFlow.target.description": "Target for sending task-flow prompts. externalClaudeCode keeps the legacy clipboard/focus path; builtinChat sends directly to the built-in Chat when the CLI is available.",
     "configuration.chat.enabled.description": "Enable the built-in Chat Webview backed by the local Claude CLI. Disabled by default during Chat migration.",

@@ -39,6 +39,15 @@ export class CliProcess implements vscode.Disposable {
     private readonly expectedExitPids = new Set<number>();
 
     /**
+     * 当前子进程是否已真正退出（由 exit 事件置位）。
+     *
+     * 不能用 `child.killed` 代替：`killed` 只表示 kill() 已成功「发送」过信号，
+     * 发完 SIGTERM 立刻为 true，与进程是否真的退出无关。用它做判断会让
+     * SIGKILL 兜底永远不触发，也会把还活着的进程误判成已死。
+     */
+    private childExited = false;
+
+    /**
      * 使用给定配置启动 CLI 子进程。
      *
      * @param config 已规范化的 Chat CLI 配置。
@@ -77,6 +86,8 @@ export class CliProcess implements vscode.Disposable {
             CLAUDE_CODE_SKIP_AUTH_LOGIN: config.cliEnv.CLAUDE_CODE_SKIP_AUTH_LOGIN || '',
             CLAUDE_CODE_SKIP_MODEL_VALIDATION: config.cliEnv.CLAUDE_CODE_SKIP_MODEL_VALIDATION || ''
         }));
+        // 新进程一律从「未退出」开始，避免上一个进程的退出状态串味。
+        this.childExited = false;
         this.child = spawn(config.cliPath, args, {
             cwd: config.cwd,
             env: { ...process.env, ...config.cliEnv },
@@ -90,15 +101,63 @@ export class CliProcess implements vscode.Disposable {
     /**
      * 向 CLI stdin 写入一行 JSON Lines 文本。
      *
+     * 用回调形式写入，把异步写失败（EPIPE 等）经 Promise 交回上层处理，
+     * 避免错误只落在 stdin 的 error 事件里、调用方却以为写成功。
+     *
      * @param jsonLine 已由上层适配器包装好的单行 JSON 字符串。
-     * @throws 当前进程未运行或 stdin 不可写时抛出错误。
+     * @returns 写入完成后 resolve；进程未运行或写入失败时 reject。
      */
-    public send(jsonLine: string): void {
-        if (!this.child || this.child.killed || !this.child.stdin.writable) {
-            throw new Error('Chat CLI 进程未运行，无法写入 stdin');
+    public send(jsonLine: string): Promise<void> {
+        const child = this.child;
+        if (!child) {
+            return Promise.reject(new Error('Chat CLI 进程未运行，无法写入 stdin（进程句柄为空）'));
+        }
+        if (this.childExited) {
+            return Promise.reject(new Error('Chat CLI 进程未运行，无法写入 stdin（进程已退出）'));
         }
         const line = jsonLine.endsWith('\n') ? jsonLine : `${jsonLine}\n`;
-        this.child.stdin.write(line);
+        // stdin 可能在进程刚启动或管道短暂抖动时不可写；直接拒绝会误报
+        // 「进程未运行」。这里等待流就绪或超时后再决定，超时错误带上诊断信息。
+        return this.writeLineWithRetry(child, line);
+    }
+
+    /**
+     * 在 stdin 上写一行，若当前不可写则等待最多 1 秒后重试一次。
+     *
+     * @param child 子进程句柄。
+     * @param line 要写入的带换行文本。
+     * @returns 写入成功后 resolve；超时仍不可写或写入出错时 reject。
+     */
+    private writeLineWithRetry(child: ChildProcessWithoutNullStreams, line: string): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            let settled = false;
+            const onWriteDone = (err?: Error | null) => {
+                if (settled) return;
+                settled = true;
+                if (err) reject(err);
+                else resolve();
+            };
+            const attemptWrite = () => {
+                child.stdin.write(line, (err) => onWriteDone(err));
+            };
+            if (child.stdin.writable) {
+                attemptWrite();
+                return;
+            }
+            const timeout = setTimeout(() => {
+                if (settled) return;
+                if (!child.stdin.writable) {
+                    settled = true;
+                    return reject(new Error('Chat CLI stdin 未就绪（等待超时），无法写入'));
+                }
+                attemptWrite();
+            }, 1000);
+            child.stdin.once('writable', () => {
+                clearTimeout(timeout);
+                if (settled) return;
+                attemptWrite();
+            });
+        });
     }
 
     /**
@@ -146,7 +205,7 @@ export class CliProcess implements vscode.Disposable {
      * 后续接入 `CliAdapter` 后，可在适配器中优先发送协议级取消消息。
      */
     public cancel(): void {
-        if (!this.child || this.child.killed) return;
+        if (!this.child || this.childExited) return;
         const pid = typeof this.child.pid === 'number' ? this.child.pid : undefined;
         if (pid !== undefined) {
             this.expectedExitPids.add(pid);
@@ -593,16 +652,33 @@ export class CliProcess implements vscode.Disposable {
         child.stderr.on('data', (text: string) => {
             this.emitter.emit(CHUNK_EVENT, { source: 'stderr', text, receivedAt: Date.now() } satisfies CliChunk);
         });
+        // stdin 是独立的 Writable，进程先退出时写入会走它自己的 error 事件（EPIPE）；
+        // 不挂监听会升级为未捕获异常，直接打崩扩展宿主。
+        child.stdin.on('error', (err) => {
+            Logger.warn(`Chat CLI stdin 写入错误（进程可能已退出）：${err instanceof Error ? err.message : String(err)}`);
+        });
         child.on('error', (err) => {
             Logger.error('Chat CLI 进程错误', err);
             this.setStatus('error');
         });
         child.on('exit', (code, signal) => {
+            // 重启场景下旧进程的退出事件可能晚于新进程 spawn 才到达（SIGKILL
+            // 后退出事件偶有延迟）。此时 child 已指向新进程，绝不能把旧的退出
+            // 当成新进程的状态，否则新进程明明在跑，send() 却被误报「进程未运行」。
+            const isCurrent = this.child === child;
             if (typeof child.pid === 'number' && this.expectedExitPids.delete(child.pid)) {
                 Logger.info(`Chat CLI 已按预期退出：pid=${child.pid}, code=${code ?? 'null'}, signal=${signal ?? 'null'}`);
-                this.setStatus(this.child ? this.status : 'idle');
+                if (isCurrent) {
+                    this.childExited = true;
+                    this.setStatus('idle');
+                }
                 return;
             }
+            if (!isCurrent) {
+                Logger.info(`Chat CLI 旧进程退出事件迟到，已忽略：code=${code ?? 'null'}, signal=${signal ?? 'null'}`);
+                return;
+            }
+            this.childExited = true;
             Logger.info(`Chat CLI 已退出：code=${code ?? 'null'}, signal=${signal ?? 'null'}`);
             this.setStatus(code === 0 ? 'exited' : 'error');
             this.emitter.emit(EXIT_EVENT, { code, signal, exitedAt: Date.now() } satisfies CliExitEvent);
@@ -635,6 +711,9 @@ export class CliProcess implements vscode.Disposable {
         this.child = undefined;
         await new Promise<void>((resolve) => {
             let settled = false;
+            // 该子进程是否已退出。这里用局部标记而非实例字段：this.child 上面已被置空，
+            // 且实例字段可能被下一次 start() 复位，只有闭包能准确反映「这一个」进程。
+            let exited = false;
             const finish = () => {
                 if (settled) return;
                 settled = true;
@@ -642,7 +721,7 @@ export class CliProcess implements vscode.Disposable {
                 resolve();
             };
             const timer = setTimeout(() => {
-                if (!child.killed) {
+                if (!exited) {
                     Logger.warn(`Chat CLI SIGTERM 1500ms 未退出，追加 SIGKILL：pid=${pid ?? 'unknown'}`);
                     try {
                         child.kill('SIGKILL');
@@ -652,8 +731,11 @@ export class CliProcess implements vscode.Disposable {
                 }
                 finish();
             }, 1500);
-            child.once('exit', finish);
-            if (!child.killed) child.kill('SIGTERM');
+            child.once('exit', () => {
+                exited = true;
+                finish();
+            });
+            child.kill('SIGTERM');
         });
     }
 
@@ -666,16 +748,5 @@ export class CliProcess implements vscode.Disposable {
         if (this.status === status) return;
         this.status = status;
         this.emitter.emit(STATUS_EVENT, status);
-    }
-
-    /**
-     * 截断 CLI 原始输出用于日志预览，避免过长内容刷屏。
-     *
-     * @param text 原始 stdout/stderr 文本。
-     * @returns 最多 2000 字符的预览文本。
-     */
-    private previewLogText(text: string): string {
-        const limit = 2000;
-        return text.length > limit ? `${text.slice(0, limit)}\n...<truncated ${text.length - limit} chars>` : text;
     }
 }

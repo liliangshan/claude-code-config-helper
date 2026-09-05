@@ -45,7 +45,9 @@ function createFakeCliProcess() {
             return { dispose: () => emitter.off('status', listener) };
         },
         getCwd: () => process.cwd(),
-        send: (line: string) => { sentLines.push(line); },
+        // send() 现在是 Promise 形态（见 cliProcess.ts send），桩必须同样返回 Promise，
+        // 否则适配器里的 .catch() 会在 undefined 上取属性报错。
+        send: (line: string) => { sentLines.push(line); return Promise.resolve(); },
         cancel: () => undefined,
         isRunning: () => true
     } as unknown as ConstructorParameters<typeof StreamJsonCliAdapter>[0];

@@ -54,7 +54,7 @@ test('createEmptySession 生成符合 schema 的桶', () => {
     assert.equal(session.providerId, 'p1');
     assert.equal(session.modelKey, 'p1/m');
     assert.equal(session.contextLimit, 200000);
-    assert.equal(session.threshold, 140000);
+    assert.equal(session.threshold, 150000);
     assert.equal(session.current.totalInputForBudget, 0);
     assert.equal(session.compact.inProgress, false);
     assert.deepEqual(session.compact.archivedSessionIds, []);
@@ -103,4 +103,38 @@ test('pushArchivedSessionId 维持最多 10 条记录', () => {
     assert.equal(got?.compact.archivedSessionIds.length, 10);
     // 最新 push 的应在首位（unshift 语义）。
     assert.equal(got?.compact.archivedSessionIds[0], 'old-14');
+});
+
+test('pruneSessions: 超过 200 个桶时只保留最新的 200 个', () => {
+    const store = new TokenCountStore();
+    const internal = store as unknown as { pruneSessions: () => void };
+    const now = Date.now();
+    for (let i = 0; i < 201; i += 1) {
+        const session = createEmptySession(`s${i}`, 'p1', 'm', 200000);
+        store.saveSession(session);
+        // saveSession 会把 lastUpdated 覆盖为当前时间，因此保存后再改；
+        // 序号越大越新，裁剪后应保留 s1..s200。
+        session.lastUpdated = new Date(now - (201 - i) * 1000).toISOString();
+    }
+    internal.pruneSessions();
+    const kept = store.getAllSessions();
+    assert.equal(Object.keys(kept).length, 200);
+    assert.equal(kept.s0, undefined);
+    assert.ok(kept.s200);
+});
+
+test('pruneSessions: lastUpdated 超过 30 天的桶被淘汰', () => {
+    const store = new TokenCountStore();
+    const internal = store as unknown as { pruneSessions: () => void };
+    const stale = createEmptySession('stale', 'p1', 'm', 200000);
+    store.saveSession(stale);
+    // 同上：saveSession 内部会重置 lastUpdated，必须在保存后回写测试时间。
+    stale.lastUpdated = new Date(Date.now() - 31 * 86_400_000).toISOString();
+    const fresh = createEmptySession('fresh', 'p1', 'm', 200000);
+    store.saveSession(fresh);
+
+    internal.pruneSessions();
+    const kept = store.getAllSessions();
+    assert.equal(kept.stale, undefined);
+    assert.ok(kept.fresh);
 });

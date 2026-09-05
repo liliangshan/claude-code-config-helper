@@ -104,13 +104,15 @@ export function loadMcpJsonFile(
     source: 'workspace' | 'user',
     workspaceFolder: string | undefined
 ): McpJsonLoadResult {
-    if (!fs.existsSync(filePath)) {
-        return { filePath, source, servers: {}, loaded: false };
-    }
     let raw = '';
     try {
+        // 不再先 existsSync 再读：文件不存在直接走 ENOENT 分支，少一次同步 syscall，
+        // 也消除了「判断存在与实际读取之间被删除」的竞态。
         raw = fs.readFileSync(filePath, 'utf8');
     } catch (error) {
+        if ((error as { code?: unknown }).code === 'ENOENT') {
+            return { filePath, source, servers: {}, loaded: false };
+        }
         const message = error instanceof Error ? error.message : String(error);
         Logger.warn(`读取 mcp.json 失败：${filePath} -> ${message}`);
         return { filePath, source, servers: {}, loaded: false, error: message };

@@ -19,6 +19,17 @@ export function resolveModelCacheMode(provider: ProviderConfig, modelId: string)
 }
 
 /**
+ * 读取指定模型是否启用网关显式 Prompt Cache。
+ *
+ * @param provider 目标提供商配置。
+ * @param modelId 已剥离前缀的模型 ID。
+ * @returns 仅模型字段严格为 true 时返回 true。
+ */
+export function resolveModelExplicitCache(provider: ProviderConfig, modelId: string): boolean {
+    return provider.models.find((item) => item.modelId === modelId)?.explicitCache === true;
+}
+
+/**
  * 读取指定模型的思考内容策略。
  *
  * 未配置时默认 `'passthrough'`：思考内容对用户有价值，应开箱即用；

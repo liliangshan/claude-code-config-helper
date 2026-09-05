@@ -307,9 +307,13 @@ export class TokenBudgetService implements vscode.Disposable {
             const estimated = estimateAnthropicInputTokens(input.anthropicBody);
             const session = this.ensureSession(input.sessionId, input.providerId, input.modelId);
             const previous = session.current.totalInputForBudget;
-            session.current.inputTokens = estimated;
-            session.current.totalInputForBudget = estimated;
-            session.lastSource = session.lastSource === 'api' ? 'api' : 'estimated';
+            // 首次尚无上游统计时用估算值兜底；已有已确认统计后，新请求阶段完整保留
+            // 上一份快照，等本次 usage 到达后再原子覆盖，避免计量条清空或混合两轮字段。
+            if (session.lastSource !== 'api') {
+                session.current.inputTokens = estimated;
+                session.current.totalInputForBudget = estimated;
+                session.lastSource = 'estimated';
+            }
             this.store.saveSession(session);
             this.appendHistory(session.sessionId, {
                 ts: new Date().toISOString(),
@@ -375,22 +379,28 @@ export class TokenBudgetService implements vscode.Disposable {
      */
     private applyUsage(session: SessionUsage, usage: UsageReport): void {
         // 有些 OpenAI-compatible 上游会返回 usage.input_tokens=0（日志里已出现），
-        // 这不是有效统计值。此时保留 beforeSend estimator 写入的 inputTokens，避免
-        // UI 从「29k/200k」被错误覆盖为「0/200k」。
+        // 这不是有效统计值。此时只保留本轮 beforeSend estimator 的 inputTokens；其余
+        // 字段必须按本次响应原子覆盖，避免上一轮 cache-write 串入当前快照。
         if (typeof usage.inputTokens === 'number' && usage.inputTokens > 0) {
             session.current.inputTokens = usage.inputTokens;
         }
-        if (typeof usage.outputTokens === 'number' && usage.outputTokens > 0) {
-            session.current.outputTokens = usage.outputTokens;
-        }
-        if (typeof usage.cacheCreationInputTokens === 'number' && usage.cacheCreationInputTokens > 0) {
-            session.current.cacheCreationInputTokens = usage.cacheCreationInputTokens;
-        }
-        if (typeof usage.cacheReadInputTokens === 'number' && usage.cacheReadInputTokens > 0) {
-            session.current.cacheReadInputTokens = usage.cacheReadInputTokens;
-        }
+        session.current.outputTokens = typeof usage.outputTokens === 'number' && usage.outputTokens >= 0
+            ? usage.outputTokens
+            : 0;
+        session.current.cacheCreationInputTokens =
+            typeof usage.cacheCreationInputTokens === 'number' && usage.cacheCreationInputTokens >= 0
+                ? usage.cacheCreationInputTokens
+                : 0;
+        session.current.cacheReadInputTokens =
+            typeof usage.cacheReadInputTokens === 'number' && usage.cacheReadInputTokens >= 0
+                ? usage.cacheReadInputTokens
+                : 0;
+        // Anthropic 将当前输入拆成普通输入、缓存写入和缓存读取三部分；三者都占用
+        // 当前上下文窗口，因此计量条必须全部计入。
         session.current.totalInputForBudget =
-            session.current.inputTokens + session.current.cacheCreationInputTokens;
+            session.current.inputTokens
+            + session.current.cacheCreationInputTokens
+            + session.current.cacheReadInputTokens;
         session.lastSource = usage.inputTokens && usage.inputTokens > 0 ? 'api' : session.lastSource;
     }
 

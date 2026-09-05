@@ -6,6 +6,7 @@
  */
 
 import type { ModelCacheMode, ModelReasoningMode } from '../../types';
+import { applyChatExplicitPromptCache } from '../explicitPromptCache';
 import { readThinkingEffort } from './reasoningEffort';
 import type { ReasoningEffort } from './reasoningEffort';
 
@@ -41,6 +42,8 @@ interface OpenAIChatMessage {
     role: OpenAIChatRole;
     /** 文本、富 content parts 或 null。 */
     content?: string | OpenAIChatContentPart[] | null;
+    /** 网关显式缓存断点，仅由显式缓存处理函数附加到 system 消息。 */
+    cache_control?: unknown;
     /** assistant tool calls。 */
     tool_calls?: OpenAIChatToolCall[];
     /** tool role 对应的 tool_call_id。 */
@@ -99,6 +102,10 @@ export interface OpenAIChatRequestBody {
     user?: string;
     /** OpenAI reasoning effort 档位；passthrough 模式下由 Anthropic thinking 预算映射而来。 */
     reasoning_effort?: ReasoningEffort;
+    /** 会话级显式缓存分组键。 */
+    prompt_cache_key?: string;
+    /** 网关显式缓存参数。 */
+    prompt_cache_options?: { mode: 'explicit'; ttl: '30m' };
 }
 
 /** 转换 warning，用于记录不兼容内容的降级。 */
@@ -125,6 +132,10 @@ export interface AnthropicConversionOptions {
     cacheMode?: ModelCacheMode;
     /** 模型级思考策略；缺省按 `'off'` 处理，即不下发任何 reasoning 参数。 */
     reasoningMode?: ModelReasoningMode;
+    /** 是否生成网关显式缓存字段。 */
+    explicitCache?: boolean;
+    /** 显式缓存使用的严格 CLI session_id。 */
+    cacheSessionId?: string;
 }
 
 /**
@@ -138,7 +149,7 @@ export function convertAnthropicToOpenAIChat(
     anthropicBody: unknown,
     options?: AnthropicConversionOptions
 ): AnthropicToOpenAIChatResult {
-    const cacheMode: ModelCacheMode = options?.cacheMode ?? 'auto';
+    const cacheMode: ModelCacheMode = options?.explicitCache === true ? 'auto' : options?.cacheMode ?? 'auto';
     const source = isRecord(anthropicBody) ? anthropicBody : {};
     const warnings: ConversionWarning[] = [];
     const messages: OpenAIChatMessage[] = [];
@@ -178,6 +189,18 @@ export function convertAnthropicToOpenAIChat(
     if (tools.length > 0) body.tools = tools;
     const toolChoice = convertToolChoice(source.tool_choice, warnings);
     if (toolChoice !== undefined) body.tool_choice = toolChoice;
+    if (options?.explicitCache === true) {
+        const result = applyChatExplicitPromptCache(body, options.cacheSessionId ?? '');
+        if (!result.applied) {
+            warnings.push({
+                path: '$.prompt_cache_key',
+                code: 'explicit_cache_not_applied',
+                message: result.reason === 'missing_session_id'
+                    ? '显式缓存缺少有效 session_id，未生成缓存字段。'
+                    : '显式缓存缺少非空 system 前缀，未生成缓存字段。'
+            });
+        }
+    }
     return { body, warnings };
 }
 

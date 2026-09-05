@@ -14,7 +14,8 @@ import { ChatCliSessionStore } from '../chat/cli/sessionStore';
 import type { ChatCliConfig } from '../chat/cli/types';
 import type { ChatRoute, ChatSegment } from '../chat/protocol';
 import { Logger } from '../logger';
-import { getChatViewHost, getRelayServer } from '../runtime';
+import { getLlsCcaiTaskTexts } from '../llsTask/messages';
+import { getChatViewHost, getConfigManager, getLlsTaskService, getRelayServer } from '../runtime';
 import {
     chatCliCancelState,
     chatRouteState,
@@ -59,6 +60,14 @@ let chatCliConfigService: ChatCliConfigService | undefined;
 
 /** Chat CLI session_id 项目持久化存储。 */
 let chatCliSessionStore: ChatCliSessionStore | undefined;
+
+/**
+ * CLI 启动/重启串行队列。
+ *
+ * Webview 消息、模型切换和自愈都可能同时请求重启；若并发执行，两次 start()
+ * 会互相清理刚创建的新进程。队列保证任意时刻只有一个启动流程在改写进程与 adapter。
+ */
+let cliStartQueue: Promise<void> = Promise.resolve();
 
 /** 注入上层依赖；必须在任何其它导出函数之前调用。 */
 export function configureCliLifecycle(value: CliLifecycleDeps): void {
@@ -270,6 +279,21 @@ export async function startChatCliFromCurrentConfig(options: { forceRestart?: bo
  * @throws Chat CLI 组件未初始化时抛出错误。
  */
 export async function startChatCliPair(options: { forceRestart?: boolean } = {}): Promise<void> {
+    const run = cliStartQueue.then(() => performStartChatCliPair(options));
+    // 失败只交给本次调用方；队列自身恢复为空闲态，避免一次失败毒化后续启动。
+    cliStartQueue = run.catch(() => undefined);
+    return run;
+}
+
+/**
+ * 实际执行一次 normal CLI 启动与 adapter 重建。
+ *
+ * 只允许由 {@link startChatCliPair} 的串行队列调用，避免并发 start() 互相终止
+ * 对方刚创建的子进程。
+ *
+ * @param options.forceRestart 为 true 时即使配置未变也强制重启。
+ */
+async function performStartChatCliPair(options: { forceRestart?: boolean }): Promise<void> {
     if (!chatCliConfigService || !routes.normal.process) {
         throw new Error('Chat CLI 组件尚未初始化');
     }
@@ -430,9 +454,20 @@ export async function handleChatCliExit(
         return;
     }
     if (event.code === 0) return;
-    const restart = '重启 CLI';
-    const choice = await vscode.window.showErrorMessage(`${source} Chat CLI 异常退出：${detail}`, restart);
-    if (choice === restart) {
+
+    const texts = getLlsCcaiTaskTexts(getConfigManager()?.getResolvedUiLanguage() ?? 'en');
+    const message = texts.cliExitedTitle.replace('{source}', source).replace('{detail}', detail);
+
+    // 任务流跑动中不弹模态框：模态会打断续推并要求用户手动点确认，
+    // 与 3.2.44「任务流中途不打扰」的原则一致，这里降级为 toast + 静默重启。
+    if (getLlsTaskService()?.hasActiveWorkflow()) {
+        await requireDeps().showChatToast('error', message);
+        await restartChatCli({ silent: true });
+        return;
+    }
+
+    const choice = await vscode.window.showErrorMessage(message, texts.cliRestartAction);
+    if (choice === texts.cliRestartAction) {
         await restartChatCli();
     }
 }

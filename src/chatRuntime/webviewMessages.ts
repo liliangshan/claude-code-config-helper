@@ -13,7 +13,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { promises as fs } from 'fs';
 
-import type { ChatCacheTtl } from '../constants';
+import { COMMANDS, type ChatCacheTtl } from '../constants';
 import type { ChatMessage, ChatModelOption, LlsTaskSnapshotPayload, ChatQuickPermissionMode, ChatRoute, ChatRoutedModelSelection, ChatUiLanguage, SessionListItem, WebviewToExtension } from '../chat/protocol';
 import { Logger } from '../logger';
 import { getChatViewHost, getConfigManager, getLlsTaskService } from '../runtime';
@@ -84,6 +84,15 @@ export interface WebviewMessagesDeps {
 /** 已注入的协作函数集合，未装配前访问会抛错。 */
 let deps: WebviewMessagesDeps | undefined;
 
+/**
+ * 会改变当前会话或重启 CLI 的 Webview 消息串行队列。
+ *
+ * VS Code 不会等待上一条 onDidReceiveMessage 的 Promise；切换会话尚在读取历史、
+ * 写 sessionId 和重启 CLI 时，紧接着的发送可能先落到旧进程。队列保证这些操作
+ * 严格按 Webview 到达顺序完成，同时不阻塞取消、日志和 AskUserQuestion 回答。
+ */
+let orderedMessageQueue: Promise<void> = Promise.resolve();
+
 /** 装配 webviewMessages 依赖，必须在 activate 早期调用一次。 */
 export function configureWebviewMessages(value: WebviewMessagesDeps): void {
     deps = value;
@@ -105,14 +114,30 @@ export async function switchChatRoute(route: ChatRoute, reason: string): Promise
 }
 
 /**
- * 处理 Chat Webview 发回扩展宿主的基础消息。
+ * 处理 Chat Webview 消息，并将会话/CLI 状态变更操作按到达顺序串行执行。
  *
- * 任务 4 阶段只实现 ready、发送回显、选择 CLI 和重启 CLI；真正写入 CLI stdin
- * 会在任务 5 的消息协议联通中接入。
+ * `user/cancel` 与 `askUser/answers` 必须即时处理，不能排在长操作后面；日志也无需
+ * 参与状态队列。其余消息进入同一队列，确保 `session/resume` 完成 CLI 重启之后，
+ * 紧接着的 `user/send` 才会写入新会话对应的进程。
  *
  * @param message WebviewToExtension 协议消息。
  */
-export async function handleChatWebviewMessage(message: WebviewToExtension): Promise<void> {
+export function handleChatWebviewMessage(message: WebviewToExtension): Promise<void> {
+    if (message.type === 'user/cancel' || message.type === 'askUser/answers' || message.type === 'log') {
+        return dispatchChatWebviewMessage(message);
+    }
+    const run = orderedMessageQueue.then(() => dispatchChatWebviewMessage(message));
+    // 单条消息失败只交给对应调用方，队列继续服务后续消息。
+    orderedMessageQueue = run.catch(() => undefined);
+    return run;
+}
+
+/**
+ * 实际分发一条 Chat Webview 消息。
+ *
+ * @param message WebviewToExtension 协议消息。
+ */
+async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<void> {
     switch (message.type) {
         case 'webview/ready':
             await postChatUiLanguage();
@@ -127,6 +152,7 @@ export async function handleChatWebviewMessage(message: WebviewToExtension): Pro
             await getChatViewHost()?.postMessage({ type: 'route/changed', route: chatRouteState.active });
             await postChatPermissionMode();
             await postChatCacheTtl();
+            await postChatSubagentsEnabled();
             await postChatTaskFlowStatus();
             await postActiveEditorAttachmentToChat();
             await requireDeps().maybePostTaskFlowRestorePrompt();
@@ -152,11 +178,17 @@ export async function handleChatWebviewMessage(message: WebviewToExtension): Pro
         case 'permissionMode/select':
             await selectChatPermissionMode(message.mode);
             return;
+        case 'subagents/select':
+            await selectChatSubagentsEnabled(message.enabled);
+            return;
         case 'cacheTtl/select':
             await selectChatCacheTtl(message.ttl);
             return;
         case 'taskFlow/model/select':
             await selectChatTaskFlowModel(message.modelId);
+            return;
+        case 'config/open':
+            await vscode.commands.executeCommand(COMMANDS.openConfigPanel);
             return;
         case 'taskFlow/open':
             await requireDeps().openLlsCcaiTaskMenu();
@@ -550,9 +582,27 @@ export async function postChatPermissionMode(): Promise<void> {
     await getChatViewHost()?.postMessage({ type: 'permissionMode/current', mode });
 }
 
-/**
- * 读取当前缓存时长选择并推送到 Chat Webview，用于回填模型选择弹窗里的下拉框。
- */
+/** 将持久化子智能体状态回推给输入框开关。 */
+export async function postChatSubagentsEnabled(): Promise<void> {
+    const manager = getConfigManager();
+    if (!manager) return;
+    await getChatViewHost()?.postMessage({ type: 'subagents/current', enabled: manager.getChatSubagentsEnabled() });
+}
+
+/** 保存子智能体开关并回推真实状态；失败时恢复显示，不重启 CLI。 */
+export async function selectChatSubagentsEnabled(enabled: boolean): Promise<void> {
+    const manager = getConfigManager();
+    if (!manager) throw new Error('配置管理器尚未初始化');
+    try {
+        await manager.setChatSubagentsEnabled(enabled);
+    } catch (error) {
+        await showChatToast('error', `子智能体开关保存失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+        await postChatSubagentsEnabled();
+    }
+}
+
+/** 读取缓存时长并回填模型选择弹窗。 */
 export async function postChatCacheTtl(): Promise<void> {
     const manager = getConfigManager();
     if (!manager) return;

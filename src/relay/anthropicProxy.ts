@@ -26,6 +26,7 @@ import { buildForwardHeaders, redactHeaders } from './forwardHeadersCommon';
 import type { UpstreamAdapter, UpstreamRequestContext } from './router';
 import { injectLlsTaskRequestBody, type LlsTaskRequestInjectionDeps } from './taskRequestInjection';
 import type { TokenBudgetService } from './tokenBudget/service';
+import { bindClientAbortToUpstream } from './upstreamAbort';
 import { UPSTREAM_FIRST_BYTE_TIMEOUT_MS, UPSTREAM_STREAM_IDLE_TIMEOUT_MS } from './upstreamTimeouts';
 import { UsageReporter, type UsageSink } from './usageReporter';
 
@@ -388,10 +389,14 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
         await new Promise<void>((resolve) => {
             let settled = false;
             let gotHeaders = false;
+            /** 客户端断开监听的解绑函数，上游请求发出后才有值。 */
+            let unbindClientAbort: (() => void) | undefined;
             const finish = () => {
                 if (settled) return;
                 settled = true;
                 clearTimeout(firstByteTimer);
+                // 本轮已结算，解除断开监听，避免正常收尾阶段再去 destroy 上游。
+                unbindClientAbort?.();
                 resolve();
             };
             const firstByteTimer = setTimeout(() => {
@@ -526,14 +531,8 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                 finish();
             });
 
-            // 客户端中途断开时尽量释放上游连接。
-            req.on('aborted', () => {
-                try {
-                    upstreamReq.destroy();
-                } catch {
-                    // ignore
-                }
-            });
+            // 客户端中途断开时尽量释放上游连接（替代已废弃的 req 'aborted'）。
+            unbindClientAbort = bindClientAbortToUpstream(res, upstreamReq, 'Anthropic 透传');
 
             upstreamReq.end(bodyBuffer);
         });

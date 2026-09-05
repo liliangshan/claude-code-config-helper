@@ -277,7 +277,9 @@ class ConfigWebviewController implements vscode.Disposable {
      */
     private async renameClaudeSettings(): Promise<void> {
         const source = getClaudeSettingsPath();
-        if (!fs.existsSync(source)) {
+        // 用异步 access 代替 existsSync：本方法已是 async，同步 stat 会白白阻塞扩展宿主主线程。
+        const exists = await fs.promises.access(source).then(() => true).catch(() => false);
+        if (!exists) {
             this.postToast('warn', '未找到 ~/.claude/settings.json，无需改名');
             this.postState();
             return;

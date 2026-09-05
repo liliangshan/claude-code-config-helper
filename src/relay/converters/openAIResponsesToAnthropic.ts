@@ -503,11 +503,10 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         if (response.incomplete_details !== undefined) this.state.incompleteDetails = response.incomplete_details;
         const usage = isRecord(response.usage) ? response.usage : undefined;
         if (usage) {
-            const cachedTokens = readCachedTokens(usage, 'input_tokens_details');
-            // Responses 的 input_tokens 含缓存命中部分，Anthropic 的不含。
-            this.state.inputTokens = readNumber(usage.input_tokens) - (cachedTokens ?? 0);
-            this.state.cacheReadTokens = cachedTokens;
-            this.state.outputTokens = readNumber(usage.output_tokens);
+            const normalizedUsage = normalizeResponsesUsage(usage);
+            this.state.inputTokens = normalizedUsage.inputTokens;
+            this.state.cacheReadTokens = normalizedUsage.cacheReadTokens;
+            this.state.outputTokens = normalizedUsage.outputTokens;
         }
     }
 
@@ -1014,24 +1013,52 @@ function ensureFilteredPlaceholder(source: Record<string, unknown>, content: Ant
  * @returns Anthropic usage。
  */
 function convertUsage(usage: unknown): AnthropicResponsesMessageResponse['usage'] {
-    const source = isRecord(usage) ? usage : {};
-    const cachedTokens = readCachedTokens(source, 'input_tokens_details');
+    const normalized = normalizeResponsesUsage(usage);
     return {
-        // Responses 的 input_tokens 含缓存命中部分，Anthropic 的不含，故做减法。
-        input_tokens: readNumber(source.input_tokens) - (cachedTokens ?? 0),
-        output_tokens: readNumber(source.output_tokens),
-        ...(cachedTokens === undefined ? {} : { cache_read_input_tokens: cachedTokens })
+        input_tokens: normalized.inputTokens,
+        output_tokens: normalized.outputTokens,
+        ...(normalized.cacheReadTokens === undefined
+            ? {}
+            : { cache_read_input_tokens: normalized.cacheReadTokens })
     };
 }
 
+/** Responses usage 的统一非负归一化结果。 */
+interface NormalizedResponsesUsage {
+    /** 已扣除缓存读且不小于 0 的输入 token。 */
+    inputTokens: number;
+    /** 输出 token。 */
+    outputTokens: number;
+    /** 经总输入上限约束的缓存读 token。 */
+    cacheReadTokens?: number;
+}
+
 /**
- * 安全读取数字字段。
+ * 统一归一化 JSON 与 response.completed 的 Responses usage。
  *
- * @param value 待读取值。
- * @returns 有效数字或 0。
+ * input_tokens 含 cached_tokens；明细异常大于总输入时钳制到总输入。由于没有
+ * cache_write_tokens 非零样本及其包含关系证据，当前不映射也不参与扣减。
+ *
+ * @param usage Responses usage 字段。
+ * @returns 可安全映射到 Anthropic 的 token 统计。
  */
-function readNumber(value: unknown): number {
-    return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+function normalizeResponsesUsage(usage: unknown): NormalizedResponsesUsage {
+    const source = isRecord(usage) ? usage : {};
+    const totalInput = readNonNegativeNumber(source.input_tokens);
+    const cached = readCachedTokens(source, 'input_tokens_details');
+    const cacheReadTokens = cached === undefined
+        ? undefined
+        : Math.min(readNonNegativeNumber(cached), totalInput);
+    return {
+        inputTokens: Math.max(0, totalInput - (cacheReadTokens ?? 0)),
+        outputTokens: readNonNegativeNumber(source.output_tokens),
+        cacheReadTokens
+    };
+}
+
+/** 安全读取有限非负数字；非法值返回 0。 */
+function readNonNegativeNumber(value: unknown): number {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
 /**

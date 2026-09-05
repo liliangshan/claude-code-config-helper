@@ -156,7 +156,8 @@ export function setupRelayPipeline(
         void editorAutoOpener.observeToolUse({ toolName, filePath });
     };
 
-    const debugRecorder = new DebugRecorder();
+    // 调试落盘默认关闭，用函数注入而非布尔值，保证用户改配置后立即生效、无需重启 relay。
+    const debugRecorder = new DebugRecorder(() => configManager.getRelayDebugRecordEnabled());
     const adapterDeps = { configManager, llsTaskService, autoContinueScheduler };
     const buildAdapterArgs = () => [
         debugRecorder,

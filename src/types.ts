@@ -105,6 +105,13 @@ export interface ModelConfig {
      */
     cacheMode?: ModelCacheMode;
     /**
+     * 是否为目标网关启用模型级显式 Prompt Cache。
+     *
+     * 该字段按“提供商 + 模型”持久化；仅显式保存 `true` 时开启。重新拉取模型时
+     * 必须保留本地选择，旧数据或非法值由 `ConfigManager.normalizeModel()` 归一为 `false`。
+     */
+    explicitCache?: boolean;
+    /**
      * 思考内容处理策略。
      *
      * - `passthrough`（缺省）：请求侧把 Anthropic `thinking.budget_tokens` 映射为
