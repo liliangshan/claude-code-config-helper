@@ -1,8 +1,21 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.51
+**Version:** 3.2.54
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
+
+## What's New in 3.2.54
+
+- **Fewer spurious restarts.** The self-healing watchdog now waits 120 seconds (was 20) for the CLI to reach the relay after you send a message before restarting and resending.
+
+## What's New in 3.2.53
+
+- **Auto compact switch.** A new toggle next to Subagents under the input box (backed by `chat.autoCompact.enabled`, default off) makes the extension send `/compact` automatically when the session's real context usage reaches the model's context length minus 50K tokens. Estimates never trigger it, in-flight compactions are respected, and a 60-second debounce avoids repeat sends. Off by default, so existing behaviour is unchanged unless you opt in.
+- **No more flash-reload of the chat area.** Long sessions that exceeded the 160-message in-memory window caused every panel open (task-flow continuation, sending a message) to rebuild the whole message list and scroll top-to-bottom. The webview now stays in sync with the trimmed list and appends incrementally, so the view keeps its position.
+
+## What's New in 3.2.52
+
+- **Compaction model routing works with Claude CLI 2.1.260+.** Newer CLI builds append a `role: "system"` reminder after the `/compact` summary request, so the summary prompt is no longer the last message in the request. The relay now skips trailing system messages when detecting compaction, so `/compact` reaches the configured compaction model again, compaction snapshots are written and the token meter's in-flight state arms as expected. Older CLI versions are unaffected.
 
 ## What's New in 3.2.51
 

@@ -44,6 +44,13 @@
     Object.assign(chatTranslations.ja, { subagentsLabel: 'サブエージェント', subagentsTitle: 'モデルに Agent、SendMessage、ListAgents ツールを提供するかを設定します。次のリクエストから適用されます' });
     Object.assign(chatTranslations.fr, { subagentsLabel: 'Sous-agents', subagentsTitle: 'Fournir les outils Agent, SendMessage et ListAgents au modèle ; prend effet à la prochaine requête' });
     Object.assign(chatTranslations.de, { subagentsLabel: 'Unteragenten', subagentsTitle: 'Dem Modell die Werkzeuge Agent, SendMessage und ListAgents bereitstellen; gilt ab der nächsten Anfrage' });
+    Object.assign(chatTranslations.en, { autoCompactLabel: 'Auto compact', autoCompactTitle: 'Automatically send /compact when context usage reaches the model context limit minus 50K tokens' });
+    Object.assign(chatTranslations['zh-cn'], { autoCompactLabel: '自动压缩', autoCompactTitle: '上下文用量达到模型上限减 50K token 时自动发送 /compact' });
+    Object.assign(chatTranslations['zh-tw'], { autoCompactLabel: '自動壓縮', autoCompactTitle: '上下文用量達到模型上限減 50K token 時自動發送 /compact' });
+    Object.assign(chatTranslations.ko, { autoCompactLabel: '자동 압축', autoCompactTitle: '컨텍스트 사용량이 모델 한도 - 50K 토큰에 도달하면 /compact 를 자동 전송' });
+    Object.assign(chatTranslations.ja, { autoCompactLabel: '自動圧縮', autoCompactTitle: 'コンテキスト使用量がモデル上限 - 50K トークンに達したら /compact を自動送信' });
+    Object.assign(chatTranslations.fr, { autoCompactLabel: 'Compactage auto', autoCompactTitle: 'Envoie /compact automatiquement lorsque le contexte atteint la limite du modèle moins 50K jetons' });
+    Object.assign(chatTranslations.de, { autoCompactLabel: 'Auto-Komprimierung', autoCompactTitle: 'Sendet /compact automatisch, wenn der Kontext das Modelllimit minus 50K Token erreicht' });
 
     /** 缓存低命中解决方案文案，动态弹窗打开时按当前语言读取。 */
     Object.assign(chatTranslations.en, { cacheSolutionLink: 'Solution', cacheSolutionTitle: 'Improve prompt cache hits', cacheSolutionSteps: 'Cache hit rate is below 80%. In the provider list, choose View Models, find “{model}”, select Edit, enable Explicit Prompt Cache, and save.', cacheSolutionSettings: 'Open extension settings', cacheSolutionSessionHint: 'The current session_id is used automatically as the cache key; no manual value is needed.', cacheSolutionCaveat: 'The first request warms the cache. A 30-minute expiry, prefix changes, or a short static prefix can still reduce hits; enabling it does not guarantee 80%.', cacheSolutionUnknownModel: 'the model used for this response', cacheSolutionClose: 'Got it' });
@@ -533,6 +540,7 @@
         permissionMode: 'acceptEdits',
         cacheTtl: 'default',
         subagentsEnabled: false,
+        autoCompactEnabled: false,
         defaultAttachmentPaths: new Set(),
         dragDepth: 0,
         chatRunning: false,
@@ -978,6 +986,26 @@
         subagentsText.textContent = t('subagentsLabel');
         subagentsLabel.append(subagentsInput, subagentsText);
         shortcutBar.appendChild(subagentsLabel);
+
+        // 阈值自动压缩开关：与子智能体开关同款样式，写入 chat.autoCompact.enabled。
+        const autoCompactLabel = document.createElement('label');
+        autoCompactLabel.className = 'composer-subagents-toggle';
+        autoCompactLabel.dataset.i18nTitle = 'autoCompactTitle';
+        autoCompactLabel.title = t('autoCompactTitle');
+        const autoCompactInput = document.createElement('input');
+        autoCompactInput.type = 'checkbox';
+        autoCompactInput.dataset.role = 'auto-compact-toggle';
+        autoCompactInput.setAttribute('role', 'switch');
+        autoCompactInput.checked = composerState.autoCompactEnabled;
+        autoCompactInput.addEventListener('change', () => {
+            autoCompactInput.disabled = true;
+            post({ type: 'autoCompact/select', enabled: autoCompactInput.checked });
+        });
+        const autoCompactText = document.createElement('span');
+        autoCompactText.dataset.i18n = 'autoCompactLabel';
+        autoCompactText.textContent = t('autoCompactLabel');
+        autoCompactLabel.append(autoCompactInput, autoCompactText);
+        shortcutBar.appendChild(autoCompactLabel);
 
         composerBox.insertAdjacentElement('afterend', shortcutBar);
         renderBrowserAutoApproveHint();
@@ -3350,6 +3378,50 @@
     }
 
     /**
+     * 丢弃消息区头部最早的 count 条消息节点，并重写剩余节点的 data-index。
+     *
+     * 对应扩展端 `messages/dropHead`：扩展端内存消息窗口裁剪后，Webview 必须同步
+     * 移除同样数量的头部节点，否则双方 id 序列失配，下一次 session/init 会被当成
+     * 新会话而全量清空重绘。不动 scrollTop 之外的滚动状态：头部节点被移除后浏览器
+     * 会自动保持视口相对内容位置（scroll anchoring）。
+     *
+     * @param {number} count 需要移除的头部消息条数。
+     */
+    function dropHeadMessages(count) {
+        if (!messagesEl) return;
+        if (typeof count !== 'number' || !isFinite(count) || count <= 0) return;
+        var nodes = Array.from(messagesEl.querySelectorAll('.message_07S1Yg'));
+        var removeCount = Math.min(count, nodes.length);
+        for (var i = 0; i < removeCount; i++) nodes[i].remove();
+        for (var j = removeCount; j < nodes.length; j++) nodes[j].dataset.index = String(j - removeCount);
+        renderedMessagesCache = renderedMessagesCache.slice(Math.min(count, renderedMessagesCache.length));
+        syncSessionInitSignatureFromDom();
+    }
+
+    /**
+     * 判断 session/init 携带的消息序列能否在当前 DOM 基础上增量追加。
+     *
+     * 当 DOM 中已渲染的消息 id 序列恰好是 incoming 的前缀时，只需追加缺失的尾部
+     * 消息，不必清空重绘；返回需要追加的起始下标。若 DOM 为空、或序列不是前缀
+     * 关系（例如切换了会话、重发截断），返回 -1 表示需要全量重绘。
+     *
+     * @param {any[]} messages session/init 携带的消息数组。
+     * @returns {number} 增量追加起点下标；-1 表示需要全量重绘。
+     */
+    function findIncrementalInitStart(messages) {
+        if (!messagesEl) return -1;
+        var nodes = messagesEl.querySelectorAll('.message_07S1Yg');
+        if (nodes.length === 0 || nodes.length > (messages || []).length) return -1;
+        for (var i = 0; i < nodes.length; i++) {
+            var m = messages[i];
+            var id = (m && m.id) || '';
+            var role = (m && m.role) || '';
+            if (nodes[i].getAttribute('data-id') !== String(id) || nodes[i].getAttribute('data-role') !== String(role)) return -1;
+        }
+        return nodes.length;
+    }
+
+    /**
      * 展示 AskUserQuestion 授权提问弹窗。
      *
      * 行为说明：
@@ -5108,6 +5180,22 @@
                     break;
                 }
                 lastSessionInitSignature = initSignature;
+                var incrementalStart = findIncrementalInitStart(initMessages);
+                if (incrementalStart >= 0) {
+                    // DOM 已是 incoming 的前缀：只追加缺失的尾部消息，避免清空重绘
+                    // 导致滚动条先跳顶再回底。
+                    syncClaudeTodoFromMessages(initMessages);
+                    historyReplayMode = true;
+                    try {
+                        for (var _incIdx = incrementalStart; _incIdx < initMessages.length; _incIdx++) {
+                            appendMessage(initMessages[_incIdx]);
+                        }
+                    } finally {
+                        finalizeHistoryReplayAskUser();
+                    }
+                    syncSessionInitSignatureFromDom();
+                    break;
+                }
                 renderEmptyState();
                 syncClaudeTodoFromMessages(initMessages);
                 // 批量渲染历史消息——进入历史回放模式；授权通道模式下
@@ -5147,6 +5235,9 @@
                 if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
                 forceScrollToBottomOnce = true;
                 syncSessionInitSignatureFromDom();
+                break;
+            case 'messages/dropHead':
+                dropHeadMessages(message.count);
                 break;
             case 'cli/status':
                 currentCliPath = '';
@@ -5224,6 +5315,15 @@
                 if (input instanceof HTMLInputElement) {
                     input.checked = composerState.subagentsEnabled;
                     input.disabled = false;
+                }
+                break;
+            }
+            case 'autoCompact/current': {
+                composerState.autoCompactEnabled = message.enabled === true;
+                const autoCompactToggle = document.querySelector('[data-role="auto-compact-toggle"]');
+                if (autoCompactToggle instanceof HTMLInputElement) {
+                    autoCompactToggle.checked = composerState.autoCompactEnabled;
+                    autoCompactToggle.disabled = false;
                 }
                 break;
             }

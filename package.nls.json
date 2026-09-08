@@ -55,6 +55,7 @@
     "configuration.chat.compactionMode.project.model.description": "Project-level model id used only for Claude /compact requests. Empty string inherits chat.compactionMode.global.model; if none is configured, compaction uses the normal chat model.",
     "configuration.chat.compactionMode.global.enabled.description": "Global default switch for the dedicated compaction model, applied to all workspaces unless overridden by the workspace.",
     "configuration.chat.compactionMode.global.model.description": "Global default model id used only for Claude /compact requests. Project-level chat.compactionMode.project.model takes precedence.",
+    "configuration.chat.autoCompact.enabled.description": "Automatically send /compact to the Chat CLI when the session's context usage (input + cache tokens) reaches contextLength - 50000. Off by default; the CLI's own auto-compaction still works when this is off.",
     "configuration.chat.taskFlow.model.description": "Model used when a task flow is triggered, stored at workspace level. Format: providerId/modelId. Leave empty to fall back to the current main model.",
     "configuration.chat.dispatcher.appendSystemPrompt.description": "Optional override for the main CLI --append-system-prompt text. The main CLI handles everything directly by default. Leave empty to use the built-in default prompt.",
     "configuration.openapicopilot.systemPrompt.description": "System prompt shared with LLS OAI / openapi-compatible-copilot."

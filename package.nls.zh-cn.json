@@ -55,6 +55,7 @@
     "configuration.chat.compactionMode.project.model.description": "项目级 Claude /compact 压缩请求专用模型 id。空字符串表示继承全局值 chat.compactionMode.global.model；若未配置则使用普通聊天模型。",
     "configuration.chat.compactionMode.global.enabled.description": "全局默认的压缩专用模型开关，除非工作区覆盖，否则对所有工作区生效。",
     "configuration.chat.compactionMode.global.model.description": "全局默认的 Claude /compact 压缩请求专用模型 id。项目级 chat.compactionMode.project.model 优先级更高。",
+    "configuration.chat.autoCompact.enabled.description": "当会话上下文用量（输入 + 缓存 token）达到 contextLength - 50000 时，自动向 Chat CLI 发送 /compact。默认关闭；关闭时仍由 CLI 自身的自动压缩兜底。",
     "configuration.chat.taskFlow.model.description": "任务流触发时使用的模型，保存在工作区级。格式：providerId/modelId。留空表示沿用当前主模型。",
     "configuration.chat.dispatcher.appendSystemPrompt.description": "可选覆盖：主 CLI 的 --append-system-prompt 文案。主 CLI 默认直接处理一切。留空表示使用内置默认提示词。",
     "configuration.openapicopilot.systemPrompt.description": "与 LLS OAI / openapi-compatible-copilot 共享的系统提示词。"

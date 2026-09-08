@@ -2,6 +2,29 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.54] - 2026-09-08
+
+### Changed
+
+- **Relay watchdog timeout raised from 20 s to 120 s.** After a user sends a message, the extension waits for the CLI to hit the relay before treating the request as stuck and restarting Relay/CLI with an automatic resend. Slow CLI start-up or long pre-flight work could exceed 20 s and cause spurious restarts; the window is now 120 s.
+
+## [3.2.53] - 2026-09-08
+
+### Added
+
+- **Threshold auto-compaction is back, behind a switch.** A new setting `claudeCodeConfigHelper.chat.autoCompact.enabled` (default off) lets `TokenBudgetService` send `/compact` to the Chat CLI on its own once a session's context usage (input + cache-creation + cache-read tokens, from the upstream `usage`) reaches `contextLength - 50000`. Estimated usage never triggers, compaction-summary requests are excluded from the check, an in-flight compaction (including CLI-native or user-typed `/compact`) suppresses re-triggering, and a 60-second debounce prevents back-to-back sends after a failure. With the switch off, behaviour is unchanged: metering only, compaction by the CLI or the user.
+- **Auto compact toggle in the composer bar.** A switch styled like the Subagents toggle sits right after it under the input box and is two-way bound to the new setting (workspace scope, falling back to global when no folder is open). Flipping it takes effect on the next request without restarting the CLI. Labels and tooltips are provided in all seven UI languages.
+
+### Fixed
+
+- **Chat area no longer flashes "clear and reload" on task-flow continuation or send.** The extension trims its in-memory message list to the most recent 160 entries, but never told the webview. After a trim, the message-id sequence on the two sides diverged, so every `session/init` (re-sent whenever the chat panel is opened, including by task-flow continuation and `appendUserMessageAndSend`) was treated as a new conversation and rebuilt the whole message container, which scrolled to the top and then back to the bottom. The extension now posts a `messages/dropHead` notice when it trims, the webview removes the same number of leading nodes and re-indexes the rest, and `session/init` appends incrementally when the DOM already holds a prefix of the incoming list instead of clearing it. Full rebuilds still happen when the sequence genuinely changes (switching sessions, resend truncation).
+
+## [3.2.52] - 2026-09-07
+
+### Fixed
+
+- Compaction requests from Claude CLI 2.1.260 and later are routed to the configured **compaction model** again. The newer CLI enables the `mid-conversation-system` beta and appends a `role: "system"` reminder after every user turn, including the `/compact` summary request, so the last element of `messages` is no longer the user message. The relay only inspected `messages[-1]` and therefore treated every compaction request as a normal turn: the summary fell back to the main model, no compaction snapshot was written and the token-budget in-flight marker never armed. Compaction detection now locates the last `user` message by skipping trailing `system` messages, while an `assistant` message in that position still ends the scan so ordinary turns are not misclassified. Requests from CLI 2.1.141 and earlier are detected exactly as before.
+
 ## [3.2.51] - 2026-09-05
 
 ### Added

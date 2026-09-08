@@ -2,7 +2,7 @@
     "name": "claude-code-config-helper",
     "displayName": "%extension.displayName%",
     "description": "%extension.description%",
-    "version": "3.2.51",
+    "version": "3.2.54",
     "publisher": "liliangshan",
     "license": "MIT",
     "repository": {
@@ -435,6 +435,12 @@
                     "default": "",
                     "description": "%configuration.chat.compactionMode.global.model.description%",
                     "scope": "application"
+                },
+                "claudeCodeConfigHelper.chat.autoCompact.enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "%configuration.chat.autoCompact.enabled.description%",
+                    "scope": "resource"
                 },
                 "claudeCodeConfigHelper.chat.dispatcher.appendSystemPrompt": {
                     "type": "string",

@@ -32,6 +32,12 @@ const THRESHOLD_RESERVE = 50_000;
 
 /** 发送给 Claude CLI 的原生上下文压缩指令。 */
 export const CLAUDE_COMPACT_COMMAND = '/compact';
+
+/** 自动压缩开关配置键（claudeCodeConfigHelper.chat.autoCompact.enabled）。 */
+const AUTO_COMPACT_ENABLED_KEY = 'chat.autoCompact.enabled';
+
+/** 同一会话两次自动触发之间的最短间隔，避免压缩失败后连环重发。 */
+const AUTO_COMPACT_DEBOUNCE_MS = 60_000;
 const MODEL_CONTEXT_LIMITS: Record<string, number> = {
     'claude-opus-4-7': 200_000,
     'claude-sonnet-4-6': 200_000,
@@ -76,6 +82,8 @@ export interface AfterRecvInput {
     usage: UsageReport;
     /** 本轮上行 Anthropic 形态请求体；afterRecv 触发压缩时作为 messages 输入。 */
     requestBodyAtSend: string;
+    /** 本次响应对应的请求是否为压缩摘要请求；为 true 时只计量，不做阈值触发。 */
+    compactCommandTriggered?: boolean;
 }
 
 /** 自动压缩状态机事件。 */
@@ -134,6 +142,9 @@ export class TokenBudgetService implements vscode.Disposable {
 
     /** 记录每轮请求最近一次的 anthropicBody。 */
     private readonly lastRequestBodyBySession = new Map<string, string>();
+
+    /** 每个 session 最近一次请求是否为压缩摘要请求；afterRecv 据此跳过阈值判定。 */
+    private readonly lastRequestCompactBySession = new Map<string, boolean>();
 
     /**
      * 创建服务实例。
@@ -322,6 +333,7 @@ export class TokenBudgetService implements vscode.Disposable {
                 deltaInput: Math.max(0, estimated - previous)
             });
             this.lastRequestBodyBySession.set(input.sessionId, input.anthropicBody);
+            this.lastRequestCompactBySession.set(input.sessionId, input.compactCommandTriggered === true);
             this.usageEmitter.fire(session);
             if (input.compactCommandTriggered) {
                 // 压缩摘要请求已经在路上：登记在途，让手动/CLI 压缩期间的状态保持一致。
@@ -336,8 +348,9 @@ export class TokenBudgetService implements vscode.Disposable {
     /**
      * 响应侧入口：用上游 usage 权威值覆盖 current。
      *
-     * 只做计量，不再按阈值自动触发压缩；压缩改为完全由用户手动发起
-     * （token 计量条上的压缩按钮或 `/compact`）。
+     * 计量完成后，若 `chat.autoCompact.enabled` 开启且本次不是压缩摘要请求，
+     * 则按阈值判断是否自动向 CLI 发送 `/compact`（见 {@link maybeAutoCompact}）。
+     * 开关默认关闭，关闭时仅计量，压缩由用户手动或 CLI 自身触发。
      *
      * @param input 入参。
      */
@@ -356,6 +369,9 @@ export class TokenBudgetService implements vscode.Disposable {
                 outputTokens: session.current.outputTokens
             });
             this.usageEmitter.fire(session);
+            const wasCompactRequest = input.compactCommandTriggered === true
+                || this.lastRequestCompactBySession.get(input.sessionId) === true;
+            if (!wasCompactRequest) this.maybeAutoCompact(session);
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             Logger.warn(`[tokenBudget] afterRecv 异常：${message}`);
@@ -414,6 +430,53 @@ export class TokenBudgetService implements vscode.Disposable {
      */
     private noteCompactionInFlight(session: SessionUsage): void {
         this.markCompactionCommandPending(session);
+    }
+
+    /**
+     * 阈值自动压缩判定：满足以下全部条件时向 CLI 发送 `/compact`。
+     *
+     * 1. `chat.autoCompact.enabled` 为 true；
+     * 2. 本次 usage 来自上游权威值（source=api），估算值不触发；
+     * 3. `totalInputForBudget >= threshold`；
+     * 4. 当前没有在途压缩（含 CLI 原生 / 用户手敲的外部压缩）；
+     * 5. 距上次触发超过 {@link AUTO_COMPACT_DEBOUNCE_MS}；
+     * 6. `commandSender` 已注入。
+     *
+     * @param session 当前会话桶。
+     */
+    private maybeAutoCompact(session: SessionUsage): void {
+        if (!this.isAutoCompactEnabled()) return;
+        if (session.lastSource !== 'api') return;
+        if (session.threshold <= 0 || session.current.totalInputForBudget < session.threshold) return;
+        if (session.compact.inProgress) return;
+        if (!this.deps.commandSender) return;
+        const lastAt = session.compact.lastTriggeredAt ? Date.parse(session.compact.lastTriggeredAt) : NaN;
+        if (Number.isFinite(lastAt) && Date.now() - lastAt < AUTO_COMPACT_DEBOUNCE_MS) return;
+        Logger.info(
+            `[tokenBudget] 达到阈值，自动压缩：session=${session.sessionId} used=${session.current.totalInputForBudget} threshold=${session.threshold}`
+        );
+        this.markCompactionCommandPending(session);
+        session.compact.triggerCount += 1;
+        this.store.saveSession(session);
+        this.deps.notifier?.notifyCompactionState({
+            kind: 'started',
+            sessionId: session.sessionId,
+            beforeTokens: session.current.totalInputForBudget
+        });
+        void this.sendCompactionCommand(session.sessionId);
+    }
+
+    /**
+     * 读取自动压缩开关。
+     *
+     * @returns `chat.autoCompact.enabled` 配置值，未配置时为 false。
+     */
+    private isAutoCompactEnabled(): boolean {
+        try {
+            return vscode.workspace.getConfiguration('claudeCodeConfigHelper').get<boolean>(AUTO_COMPACT_ENABLED_KEY, false) === true;
+        } catch (_err) {
+            return false;
+        }
     }
 
     /**

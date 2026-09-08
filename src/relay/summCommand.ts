@@ -48,16 +48,35 @@ function containsCompactCommandMarker(text: string): boolean {
     return /<command-name>\s*\/?compact\s*<\/command-name>/i.test(text);
 }
 
-/** 读取 Anthropic 请求最后一条 user 消息文本。 */
-function readLastUserMessageText(parsedBody: unknown): string {
-    if (!parsedBody || typeof parsedBody !== 'object') return '';
+/**
+ * 定位 Anthropic 请求中「最后一条 user 消息」。
+ *
+ * 从数组末尾向前扫描，跳过尾部的 `system` 消息：Claude CLI 2.1.260+ 启用
+ * `mid-conversation-system` beta 后，会在每条 user 消息之后追加一条
+ * `role: "system"` 的 system-reminder，压缩摘要请求也不例外。若仍只看
+ * `messages[-1]`，会因其 role 为 system 而把压缩请求当成普通请求，导致
+ * 压缩专用模型路由失效。遇到 assistant 消息即停止（说明末尾没有 user 输入）。
+ *
+ * @param parsedBody Anthropic 请求体。
+ * @returns 最后一条 user 消息的 content；不存在时返回 undefined。
+ */
+function findLastUserMessageContent(parsedBody: unknown): unknown {
+    if (!parsedBody || typeof parsedBody !== 'object') return undefined;
     const messages = (parsedBody as { messages?: unknown }).messages;
-    if (!Array.isArray(messages) || messages.length === 0) return '';
-    const last = messages[messages.length - 1];
-    if (!last || typeof last !== 'object') return '';
-    const record = last as { role?: unknown; content?: unknown };
-    if (record.role !== 'user') return '';
-    return readTextContent(record.content);
+    if (!Array.isArray(messages) || messages.length === 0) return undefined;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const item = messages[i];
+        if (!item || typeof item !== 'object') return undefined;
+        const record = item as { role?: unknown; content?: unknown };
+        if (record.role === 'user') return record.content;
+        if (record.role !== 'system') return undefined;
+    }
+    return undefined;
+}
+
+/** 读取 Anthropic 请求最后一条 user 消息文本（跳过尾部 system 消息）。 */
+function readLastUserMessageText(parsedBody: unknown): string {
+    return readTextContent(findLastUserMessageContent(parsedBody));
 }
 
 /**
@@ -66,22 +85,17 @@ function readLastUserMessageText(parsedBody: unknown): string {
  * 用于把当前轮用户真正的新输入，与历史 caveat / system-reminder 等被 CLI 塞进
  * 同一条 user 消息的前置 text block 区分开。`/compact` 跑完后嵌入的命令 caveat
  * 永远在前置 block 里，用户新输入永远是最后一个 block，据此避免误判压缩。
+ * 「最后一条 user 消息」的定位见 {@link findLastUserMessageContent}，兼容尾部 system 消息。
  *
  * @param parsedBody Anthropic 请求体。
  * @returns 最后一个非空 text block 文本；无则空串。
  */
 function readLastUserMessageLastTextBlock(parsedBody: unknown): string {
-    if (!parsedBody || typeof parsedBody !== 'object') return '';
-    const messages = (parsedBody as { messages?: unknown }).messages;
-    if (!Array.isArray(messages) || messages.length === 0) return '';
-    const last = messages[messages.length - 1];
-    if (!last || typeof last !== 'object') return '';
-    const record = last as { role?: unknown; content?: unknown };
-    if (record.role !== 'user') return '';
-    if (typeof record.content === 'string') return record.content;
-    if (!Array.isArray(record.content)) return '';
-    for (let i = record.content.length - 1; i >= 0; i -= 1) {
-        const block = record.content[i];
+    const content = findLastUserMessageContent(parsedBody);
+    if (typeof content === 'string') return content;
+    if (!Array.isArray(content)) return '';
+    for (let i = content.length - 1; i >= 0; i -= 1) {
+        const block = content[i];
         if (!block || typeof block !== 'object') continue;
         const rec = block as { type?: unknown; text?: unknown };
         if ((rec.type === 'text' || rec.type === undefined) && typeof rec.text === 'string' && rec.text.trim()) {

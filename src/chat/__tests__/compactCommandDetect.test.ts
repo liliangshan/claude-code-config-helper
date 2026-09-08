@@ -58,3 +58,49 @@ test('compact: 普通对话不判为压缩请求', () => {
     assert.equal(isClaudeCompactCommandRequest(userBody('帮我看下这段代码')), false);
 });
 
+
+/** 与 Claude CLI 2.1.260 实际发出的压缩摘要请求一致的 prompt 开头片段。 */
+const SUMMARY_PROMPT = 'CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\n'
+    + '- Do NOT use Read, Bash, Grep, Glob, Edit, Write, or ANY other tool.\n\n'
+    + 'Your task is to create a detailed summary of the conversation so far, paying close attention to the user\'s explicit requests.';
+
+test('compact: CLI 2.1.260 末尾带 system 消息的压缩摘要请求判为压缩请求', () => {
+    // 新版 CLI 把摘要 prompt 追加为最后一条 user 消息的末尾 text block，
+    // 并在其后再追加一条 role=system 的 system-reminder。
+    const body = {
+        messages: [
+            { role: 'user', content: 'tell me a fruit' },
+            { role: 'assistant', content: [{ type: 'text', text: 'apple' }] },
+            {
+                role: 'user',
+                content: [
+                    { type: 'text', text: 'tell me a color\n' },
+                    { type: 'text', text: SUMMARY_PROMPT }
+                ]
+            },
+            { role: 'system', content: '<system-reminder>\n<total_tokens>15000000 tokens left</total_tokens>\n</system-reminder>' }
+        ]
+    };
+    assert.equal(isClaudeCompactCommandRequest(body), true);
+});
+
+test('compact: CLI 2.1.260 末尾带 system 消息的 /compact 命令判为压缩请求', () => {
+    const body = {
+        messages: [
+            { role: 'user', content: [{ type: 'text', text: '<command-name>/compact</command-name>' }] },
+            { role: 'system', content: '<system-reminder>x</system-reminder>' }
+        ]
+    };
+    assert.equal(isClaudeCompactCommandRequest(body), true);
+});
+
+test('compact: 末尾 system 消息之前是 assistant 时不判为压缩请求', () => {
+    const body = {
+        messages: [
+            { role: 'user', content: SUMMARY_PROMPT },
+            { role: 'assistant', content: [{ type: 'text', text: '<summary>done</summary>' }] },
+            { role: 'system', content: '<system-reminder>x</system-reminder>' }
+        ]
+    };
+    assert.equal(isClaudeCompactCommandRequest(body), false);
+});

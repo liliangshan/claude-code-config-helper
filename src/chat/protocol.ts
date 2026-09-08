@@ -285,6 +285,19 @@ export type ExtensionToWebview =
           /** 起始消息索引（基于 chatMessages 数组的下标）。 */
           fromIndex: number;
       }
+    | {
+          /**
+           * 丢弃消息列表头部最早的若干条。
+           *
+           * 扩展端在内存消息数超过窗口上限时会裁掉最早的消息；若不同步告知
+           * Webview，双方的消息 id 序列就会失配，随后每次 `session/init` 都会被
+           * 判定为"新会话"而触发全量清空重绘（表现为聊天区从顶部滚到底部）。
+           * 同时 `data-index` 也会与扩展端数组下标错位，影响 `messages/truncate`。
+           */
+          type: 'messages/dropHead';
+          /** 需要从头部移除的消息条数。 */
+          count: number;
+      }
     | { type: 'message/error'; id?: string; error: string; detail?: string }
     /**
      * 兼容保留：按需专家方案下 route/changed 协议已退役，但 webview 可能仍订阅
@@ -301,6 +314,8 @@ export type ExtensionToWebview =
     | { type: 'permissionMode/current'; mode: ChatQuickPermissionMode }
     | { type: 'cacheTtl/current'; ttl: ChatCacheTtlOption }
     | { type: 'subagents/current'; enabled: boolean }
+    /** 阈值自动压缩开关当前状态（对应设置 chat.autoCompact.enabled）。 */
+    | { type: 'autoCompact/current'; enabled: boolean }
     | {
           /**
            * AskUserQuestion 授权通道提问：CLI 发出 `can_use_tool` 后由扩展宿主
@@ -535,6 +550,8 @@ export type WebviewToExtension =
     | { type: 'permissionMode/select'; mode: ChatQuickPermissionMode }
     | { type: 'cacheTtl/select'; ttl: ChatCacheTtlOption }
     | { type: 'subagents/select'; enabled: boolean }
+    /** 用户在输入框下方切换阈值自动压缩开关。 */
+    | { type: 'autoCompact/select'; enabled: boolean }
     | {
           /**
            * 用户在 AskUserQuestion 弹窗中提交答案，与 `askUser/request` 配对。

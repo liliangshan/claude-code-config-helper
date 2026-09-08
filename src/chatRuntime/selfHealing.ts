@@ -36,14 +36,14 @@ let isHealingRelayAndCli = false;
 let pendingResendTimer: NodeJS.Timeout | undefined;
 
 /** 用户消息提交后等待 Relay 命中的超时阈值（毫秒）。 */
-const HTTP_EXPECTATION_TIMEOUT_MS = 20_000;
+const HTTP_EXPECTATION_TIMEOUT_MS = 120_000;
 
 /** 自愈重启后到内部重发之间的等待时长（毫秒），给 CLI 充足启动时间。 */
 const HEAL_RESEND_DELAY_MS = 2_000;
 /**
  * 登记一次"等待 Relay 命中"全局计时器。
  *
- * 用户主动 `user/send` 提交消息后调用：若 20 秒内 RelayServer 未收到 `POST
+ * 用户主动 `user/send` 提交消息后调用：若 120 秒内 RelayServer 未收到 `POST
  * /v1/messages` 请求（命中后会清除该计时器），则视为 HTTP 卡死，进入自愈流程
  * （{@link healRelayAndCli}）。后续提交或自愈再次启动时会先清除上一次计时器。
  *

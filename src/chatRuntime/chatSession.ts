@@ -399,6 +399,9 @@ export function trimInMemoryChatMessages(): void {
         chatSessionState.activeAssistantMessageId = undefined;
     }
     Logger.info(`内存 chatSessionState.messages 已裁剪：dropped=${dropCount}, remaining=${chatSessionState.messages.length}`);
+    // 同步通知 Webview 丢弃同样数量的头部节点，保持双方消息序列与下标一致；
+    // 否则后续 session/init 会因 id 序列失配而全量重绘，产生"清空后重载"闪滚。
+    void getChatViewHost()?.postMessage({ type: 'messages/dropHead', count: dropCount });
 }
 
 /**
