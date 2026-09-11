@@ -12,6 +12,8 @@ import * as vscode from 'vscode';
 import type { ChatMessage, ChatRoute, ChatSegment } from '../chat/protocol';
 import { Logger } from '../logger';
 import type { TokenBudgetService } from '../relay/tokenBudget/service';
+import { requestUsageRegistry } from './requestUsage';
+import type { RequestUsageSummary } from '../relay/requestUsage';
 import { getChatViewHost, getExtensionContext } from '../runtime';
 import { currentChatCliSessionIdSync } from './cliLifecycle';
 import { chatRouteState } from './routeState';
@@ -394,6 +396,7 @@ export function trimInMemoryChatMessages(): void {
     if (chatSessionState.messages.length <= MAX_IN_MEMORY_CHAT_MESSAGES) return;
     const dropCount = chatSessionState.messages.length - MAX_IN_MEMORY_CHAT_MESSAGES;
     const dropped = chatSessionState.messages.splice(0, dropCount);
+    pruneChatRequestUsage();
     if (chatSessionState.activeAssistantMessageId && dropped.some((item) => item.id === chatSessionState.activeAssistantMessageId)) {
         Logger.info(`内存 chatSessionState.messages 裁剪丢弃了当前活动 assistant 消息：id=${chatSessionState.activeAssistantMessageId}`);
         chatSessionState.activeAssistantMessageId = undefined;
@@ -462,6 +465,10 @@ export function extractPlainTextFromSegments(segments: ChatSegment[] | undefined
  */
 export async function appendAssistantSegments(segments: ChatSegment[], done: boolean): Promise<void> {
     const visibleSegments = segments.filter((segment) => !isHiddenChatToolSegment(segment));
+    for (const segment of visibleSegments) {
+        if (segment.kind === 'usage') continue;
+        if (segment.requestId) segment.requestUsage = requestUsageRegistry.getSummary(segment.requestId) ?? segment.requestUsage;
+    }
     if (visibleSegments.length === 0 && !done) return;
     const message = await getActiveAssistantMessageForPatch();
     const activeSegments: ChatSegment[] = [];
@@ -470,7 +477,7 @@ export async function appendAssistantSegments(segments: ChatSegment[], done: boo
     for (const incoming of visibleSegments) {
         syncTokenBudgetContextWindowFromUsage(incoming, message);
         if (incoming.id) {
-            const existingIndex = message.segments.findIndex((item) => item.id === incoming.id);
+            const existingIndex = message.segments.findIndex((item) => item.id === incoming.id && item.requestId === incoming.requestId);
             if (existingIndex >= 0) {
                 message.segments[existingIndex] = incoming;
                 activeSegments.push(incoming);
@@ -510,7 +517,7 @@ async function patchSegmentIntoOwnerMessage(incoming: ChatSegment, activeMessage
     for (let i = chatSessionState.messages.length - 1; i >= 0; i -= 1) {
         const candidate = chatSessionState.messages[i];
         if (candidate.role !== 'assistant' || candidate.id === activeMessageId) continue;
-        const index = candidate.segments.findIndex((item) => item.id === incoming.id);
+        const index = candidate.segments.findIndex((item) => item.id === incoming.id && item.requestId === incoming.requestId);
         if (index < 0) continue;
         candidate.segments[index] = incoming;
         await getChatViewHost()?.postMessage({
@@ -523,6 +530,27 @@ async function patchSegmentIntoOwnerMessage(incoming: ChatSegment, activeMessage
         return true;
     }
     return false;
+}
+
+/** 保存请求统计到所有所属片段，并通知前端；旧会话的迟到报告不写入当前历史。 */
+export async function recordChatRequestUsage(summary: RequestUsageSummary): Promise<void> {
+    if (summary.context.compactCommandTriggered || !requestUsageRegistry.recordRequestUsage(summary)) return;
+    for (const message of chatSessionState.messages) {
+        for (const segment of message.segments) {
+            if (segment.kind !== 'usage' && segment.requestId === summary.context.requestId) segment.requestUsage = summary;
+        }
+    }
+    schedulePersistChatSession();
+    await getChatViewHost()?.postMessage({ type: 'request/usage', summary });
+}
+
+/** 回收已完成且不再被消息历史引用的请求；未完成请求保留等待输出。 */
+export function pruneChatRequestUsage(): void {
+    const retained = new Set<string>();
+    for (const message of chatSessionState.messages) {
+        for (const segment of message.segments) if (segment.requestId) retained.add(segment.requestId);
+    }
+    requestUsageRegistry.prune(retained);
 }
 
 export function isHiddenChatToolSegment(segment: ChatSegment): boolean {

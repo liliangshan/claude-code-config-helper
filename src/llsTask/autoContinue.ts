@@ -112,6 +112,32 @@ export class AutoContinueScheduler {
 
     /** 外部注入的续推提交前回调。 */
     private static beforeSubmit: AutoContinueBeforeSubmit | undefined;
+    /** 恢复控制器的同步守卫，不引入 runtime 反向依赖。 */
+    private static recoveryGuard: (() => boolean) | undefined;
+    /** 多次暂停只保留一份续推意图。 */
+    private static deferredByRecovery = false;
+
+    /** 装配共享 CLI 恢复互斥条件。 */
+    public static setRecoveryGuard(guard: (() => boolean) | undefined): void {
+        AutoContinueScheduler.recoveryGuard = guard;
+    }
+
+    /** 恢复期间暂停且合并意图，不增加缺失工具计数。 */
+    private deferForRecovery(): boolean {
+        if (!AutoContinueScheduler.recoveryGuard?.()) return false;
+        this.cancel('请求恢复占用 CLI');
+        this.notifyRequestStarted();
+        AutoContinueScheduler.deferredByRecovery = this.service.hasActiveWorkflow() && !this.service.isWorkflowCompleted();
+        return true;
+    }
+
+    /** 明确恢复成功后重新检查任务流，已有正常定时器则不重复补发。 */
+    public resumeAfterRecovery(): void {
+        if (AutoContinueScheduler.recoveryGuard?.() || !AutoContinueScheduler.deferredByRecovery) return;
+        AutoContinueScheduler.deferredByRecovery = false;
+        if (!this.service.hasActiveWorkflow() || this.service.isWorkflowCompleted() || AutoContinueScheduler.timer) return;
+        this.scheduleAfter(TOOL_CONTINUE_DELAY_MS, '恢复后 4 秒', 'workflow');
+    }
 
     /**
      * 空闲看门狗:是否处于「命中非任务流工具后等待 CLI 自己往下走」的观察期。
@@ -193,6 +219,7 @@ export class AutoContinueScheduler {
      * 停止本次以及后续的自动续推，并通过 VS Code 通知告知用户介入。
      */
     public schedule(): void {
+        if (this.deferForRecovery()) return;
         AutoContinueScheduler.consecutiveMissingCount += 1;
         const count = AutoContinueScheduler.consecutiveMissingCount;
         Logger.info(`[LlsTask][AutoContinue] 缺失工具续推累计第 ${count}/${MAX_CONSECUTIVE_MISSING_TOOL_COUNT} 次`);
@@ -207,6 +234,7 @@ export class AutoContinueScheduler {
      * 调度一次本地任务流工具返回后的自动续推。
      */
     public scheduleAfterWorkflowTool(): void {
+        if (this.deferForRecovery()) return;
         this.resetMissingToolCounter('workflow 工具命中');
         this.scheduleAfter(TOOL_CONTINUE_DELAY_MS, '4 秒', 'workflow');
     }
@@ -225,7 +253,6 @@ export class AutoContinueScheduler {
             clearTimeout(AutoContinueScheduler.idleWatchdogTimer);
             AutoContinueScheduler.idleWatchdogTimer = undefined;
         }
-        Logger.info('[LlsTask][AutoContinue] 收到新请求,空闲看门狗已撤销(CLI 仍在活动)');
     }
 
     /**
@@ -237,11 +264,11 @@ export class AutoContinueScheduler {
      *     (计入熔断,连续无进展最终会熔断,避免任务流卡死又不至于无限自激)。
      */
     public armIdleWatchdog(): void {
+        if (this.deferForRecovery()) return;
         if (AutoContinueScheduler.idleWatchdogTimer) {
             clearTimeout(AutoContinueScheduler.idleWatchdogTimer);
         }
         AutoContinueScheduler.idleWatchdogPending = true;
-        Logger.info('[LlsTask][AutoContinue] 命中非任务流工具,启动 30 秒空闲看门狗');
         AutoContinueScheduler.idleWatchdogTimer = setTimeout(() => {
             AutoContinueScheduler.idleWatchdogTimer = undefined;
             if (!AutoContinueScheduler.idleWatchdogPending) return;
@@ -310,13 +337,12 @@ export class AutoContinueScheduler {
      * @param reason 取消定时器的调用来源或原因。
      */
     public cancel(reason = '未指定原因'): void {
+        AutoContinueScheduler.deferredByRecovery = false;
         AutoContinueScheduler.version += 1;
         if (AutoContinueScheduler.timer) {
             clearTimeout(AutoContinueScheduler.timer);
             AutoContinueScheduler.timer = undefined;
             Logger.info(`[LlsTask][AutoContinue] 已取消自动续推定时器：${reason}`);
-        } else {
-            Logger.info(`[LlsTask][AutoContinue] 无待取消自动续推定时器：${reason}`);
         }
     }
 
@@ -353,9 +379,10 @@ export class AutoContinueScheduler {
      * @param expectedVersion 定时器创建时捕获的版本号。
      */
     private async runIfCurrent(expectedVersion: number): Promise<void> {
-        AutoContinueScheduler.timer = undefined;
         if (expectedVersion !== AutoContinueScheduler.version) return;
-        const prompt = this.resolvePromptForCurrentKind();
+        AutoContinueScheduler.timer = undefined;
+        if (this.deferForRecovery()) return;
+        let prompt = this.resolvePromptForCurrentKind();
         if (!prompt) return;
         const submitter = AutoContinueScheduler.submitter;
         const beforeSubmit = AutoContinueScheduler.beforeSubmit;
@@ -364,6 +391,9 @@ export class AutoContinueScheduler {
                 Logger.info('[LlsTask][AutoContinue] 执行续推提交前回调');
                 await beforeSubmit();
             }
+            if (expectedVersion !== AutoContinueScheduler.version || this.deferForRecovery()) return;
+            prompt = this.resolvePromptForCurrentKind();
+            if (!prompt) return;
             if (submitter) {
                 Logger.info(`[LlsTask][AutoContinue] 通过 submitter 提交续推消息，长度=${prompt.length}`);
                 await submitter(prompt);

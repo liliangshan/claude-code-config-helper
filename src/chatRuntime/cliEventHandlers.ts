@@ -16,6 +16,8 @@ import type { AskUserQuestionItem, ChatRoute, ChatSegment, WebviewToExtension } 
 import { Logger } from '../logger';
 import { getChatViewHost } from '../runtime';
 import { getChatCliConfigService, getChatCliSessionStore } from './cliLifecycle';
+import type { RecoveryIdentity, RequestRecoveryController } from './requestRecovery';
+import { requestUsageRegistry } from './requestUsage';
 import { appendAssistantSegments, finishActiveAssistantMessage, getTokenBudgetServiceRef, pushSessionTitleToWebview } from './chatSession';
 import {
     assistantTurnTextBySource,
@@ -31,10 +33,14 @@ import {
 export interface CliEventHandlerDeps {
     /** 向 Webview 推送轻提示。 */
     showChatToast: (level: 'info' | 'success' | 'warn' | 'error', text: string) => Promise<void>;
+    /** 后续激活装配注入；身份必须来自进程事件订阅时捕获的回合。 */
+    recoveryController?: RequestRecoveryController;
 }
 
 /** 已注入的协作函数集合，未装配前访问会抛错。 */
 let deps: CliEventHandlerDeps | undefined;
+/** 等待问题答案的原始回合身份，不能在答案到达时反推。 */
+const pendingRecoveryPermissions = new Map<string, RecoveryIdentity>();
 
 /** 装配 cliEventHandlers 依赖，必须在 activate 早期调用一次。 */
 export function configureCliEventHandlers(value: CliEventHandlerDeps): void {
@@ -103,10 +109,28 @@ export function notifyPermissionDeniedToUser(resultText: string): void {
  * @param event 已解析的 CLI 事件。
  * @param source 事件来源路由；taskFlow 复用 normal CLI，事件仍以 `'normal'` 上报。
  */
-export async function handleParsedCliEvent(event: ParsedCliEvent, source: ChatRoute = 'normal'): Promise<void> {
+export async function handleParsedCliEvent(event: ParsedCliEvent, source: ChatRoute = 'normal', recoveryIdentity?: RecoveryIdentity): Promise<void> {
+    const recovery = deps?.recoveryController;
+    const identity = recoveryIdentity;
+    try {
     switch (event.type) {
+        case 'api/retry':
+            if (identity && (!event.sessionId || event.sessionId === identity.sessionId)) {
+                recovery?.onCliApiRetry(identity, { status: event.errorStatus, code: event.errorCode });
+            }
+            await appendAssistantSegments(event.segments, false);
+            return;
         case 'segments':
             {
+                for (const segment of event.segments) {
+                    if (identity && segment.kind === 'tool' && segment.tool?.name !== 'System' && segment.id) {
+                        recovery?.setBlocked(identity, `tool:${segment.id}`, ['pending', 'running'].includes(segment.tool?.status || ''));
+                    }
+                    const context = requestUsageRegistry.resolveRequestForSegment(
+                        getSessionIdForRoute(source), segment.responseMessageId, segment.responseCallId
+                    );
+                    if (context) segment.requestId = context.requestId;
+                }
                 const chunkText = event.segments.map(getSegmentLogText).filter(Boolean).join('');
                 if (chunkText) assistantTurnTextBySource[source] += chunkText;
                 if (event.done) {
@@ -151,13 +175,31 @@ export async function handleParsedCliEvent(event: ParsedCliEvent, source: ChatRo
             void pushSessionTitleToWebview(event.cwd, event.sessionId);
             return;
         case 'compact/status':
+            if (identity) recovery?.setBlocked(identity, 'compaction', event.status === 'compacting');
             handleCliCompactStatus(event, source);
             return;
         case 'tool/permissionRequest':
-            await handleToolPermissionRequest(event, source);
+            if (identity) recovery?.setBlocked(identity, `permission:${event.requestId}`, true);
+            try {
+                await handleToolPermissionRequest(event, source);
+            } finally {
+                if (identity && pendingAskUserRequests.has(event.requestId)) {
+                    pendingRecoveryPermissions.set(event.requestId, identity);
+                } else if (identity) recovery?.setBlocked(identity, `permission:${event.requestId}`, false);
+            }
             return;
         default:
             return;
+    }
+    } finally {
+        // 先处理 result 的正文和用量，再发压缩，避免旧回合收尾覆盖压缩状态。
+        if ((event.type === 'segments' || event.type === 'done') && event.turnFinished) {
+            const result = event.turnResult;
+            if (identity && (!result?.sessionId || result.sessionId === identity.sessionId)) {
+                recovery?.onCliTurnFinished(identity, result?.isError);
+            }
+            await getTokenBudgetServiceRef()?.flushPendingAutoCompaction(getSessionIdForRoute(source));
+        }
     }
 }
 
@@ -337,6 +379,9 @@ export function handleAskUserAnswers(message: Extract<WebviewToExtension, { type
         return;
     }
     pendingAskUserRequests.delete(message.requestId);
+    const recoveryIdentity = pendingRecoveryPermissions.get(message.requestId);
+    pendingRecoveryPermissions.delete(message.requestId);
+    if (recoveryIdentity) deps?.recoveryController?.setBlocked(recoveryIdentity, `permission:${message.requestId}`, false);
     const adapter = getStreamAdapterForRoute(pending.route);
     if (!adapter) {
         Logger.warn(`askUser/answers 对应路由 ${pending.route} 的适配器已不存在：requestId=${message.requestId}`);

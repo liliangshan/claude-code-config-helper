@@ -1,0 +1,53 @@
+{
+  "description": "Synthetic recovery events; provenance and unknown fields are documented in REQUEST_RECOVERY_EVIDENCE.md.",
+  "cases": [
+    {
+      "name": "persisted-api-error",
+      "provenance": "observed-shape-synthetic-values",
+      "event": { "type": "system", "subtype": "api_error", "retryInMs": 600, "retryAttempt": 1, "maxRetries": 10, "error": { "message": "synthetic temporary failure", "status": 502, "connection": false } },
+      "expected": { "terminal": false, "waitMs": 600, "transport": "session-jsonl" }
+    },
+    {
+      "name": "stdout-api-retry-unknown-wait",
+      "provenance": "existing-parser-test-contract-not-live-capture",
+      "event": { "type": "system", "subtype": "api_retry", "attempt": 1, "max_retries": 10, "error_status": 502, "error": "synthetic temporary failure" },
+      "expected": { "terminal": false, "waitMs": null, "transport": "stream-json" }
+    },
+    {
+      "name": "last-native-attempt-not-terminal",
+      "provenance": "synthetic-boundary",
+      "event": { "type": "system", "subtype": "api_retry", "attempt": 10, "max_retries": 10 },
+      "expected": { "terminal": false, "waitMs": null }
+    },
+    {
+      "name": "invalid-retry-metadata",
+      "provenance": "synthetic-invalid-input",
+      "event": { "type": "system", "subtype": "api_retry", "attempt": "1", "max_retries": -1, "retry_delay_ms": "600" },
+      "expected": { "terminal": false, "waitMs": null }
+    },
+    {
+      "name": "partial-message-stop",
+      "provenance": "current-parser-contract",
+      "event": { "type": "message_stop" },
+      "expected": { "terminal": false }
+    },
+    {
+      "name": "empty-failed-result",
+      "provenance": "synthetic-terminal-contract-not-live-capture",
+      "event": { "type": "result", "subtype": "error_during_execution", "is_error": true, "errors": ["synthetic connection timeout"], "session_id": "synthetic-session", "result": "" },
+      "expected": { "terminal": true, "isError": true }
+    },
+    {
+      "name": "successful-result",
+      "provenance": "synthetic-terminal-contract-not-live-capture",
+      "event": { "type": "result", "subtype": "success", "is_error": false, "session_id": "synthetic-session", "result": "Synthetic completion" },
+      "expected": { "terminal": true, "isError": false }
+    },
+    {
+      "name": "result-without-error-classification",
+      "provenance": "synthetic-boundary",
+      "event": { "type": "result", "result": "" },
+      "expected": { "terminal": true, "isError": null }
+    }
+  ]
+}

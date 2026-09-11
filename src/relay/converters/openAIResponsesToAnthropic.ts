@@ -37,6 +37,8 @@ export interface AnthropicResponsesMessageResponse {
         output_tokens: number;
         /** 命中缓存的输入 token 数；上游未返回该字段时不下发。 */
         cache_read_input_tokens?: number;
+        /** OpenAI 输入已包含所有非缓存读取 token，无额外缓存写入项。 */
+        cache_creation_input_tokens?: number;
     };
 }
 
@@ -135,7 +137,29 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         finished: false
     };
 
-    /** 转换 warning。 */
+    /** 在工具块结束时检查参数 JSON，异常时完整记录原始参数及解析错误，便于本地排查。 */
+    private logInvalidToolArguments(state: ResponsesOutputItemState, source: string): void {
+        try {
+            JSON.parse(state.argumentsJson);
+        } catch (error) {
+            this.onInvalidToolArguments?.(
+                `[tool-json] invalid JSON: ${JSON.stringify({
+                    tool: state.name,
+                    callId: state.callId || state.id,
+                    outputIndex: state.outputIndex,
+                    source,
+                    chars: state.argumentsJson.length,
+                    emittedChars: state.emittedArgumentsLength,
+                    error: error instanceof Error ? error.message : String(error),
+                    argumentsRaw: state.argumentsJson
+                })}`
+            );
+        }
+    }
+
+    /** 注入诊断日志通道，保持转换器不依赖 VS Code。 */
+    public constructor(private readonly onInvalidToolArguments?: (message: string) => void) {}
+
     private readonly warnings: ResponsesConversionWarning[] = [];
 
     /**
@@ -334,6 +358,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         }
         let out = this.ensureMessageStart() + this.maybeStartFunctionCall(state) + this.emitPendingFunctionArgumentsDelta(state);
         if (state.started && !state.closed && state.anthropicBlockIndex !== undefined) {
+            this.logInvalidToolArguments(state, 'output_item.done');
             state.closed = true;
             out += formatAnthropicSse('content_block_stop', { type: 'content_block_stop', index: state.anthropicBlockIndex });
         }
@@ -533,7 +558,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
                     output_tokens: 0,
                     ...(this.state.cacheReadTokens === undefined
                         ? {}
-                        : { cache_read_input_tokens: this.state.cacheReadTokens })
+                        : { cache_read_input_tokens: this.state.cacheReadTokens, cache_creation_input_tokens: 0 })
                 }
             }
         });
@@ -674,7 +699,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
                 output_tokens: this.state.outputTokens,
                 ...(this.state.cacheReadTokens === undefined
                     ? {}
-                    : { cache_read_input_tokens: this.state.cacheReadTokens })
+                    : { cache_read_input_tokens: this.state.cacheReadTokens, cache_creation_input_tokens: 0 })
             }
         });
         out += formatAnthropicSse('message_stop', { type: 'message_stop' });
@@ -702,6 +727,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
             out += this.maybeStartFunctionCall(item);
             out += this.emitPendingFunctionArgumentsDelta(item);
             if (item.started && !item.closed && item.anthropicBlockIndex !== undefined) {
+                this.logInvalidToolArguments(item, 'stream_finish');
                 item.closed = true;
                 out += formatAnthropicSse('content_block_stop', { type: 'content_block_stop', index: item.anthropicBlockIndex });
             }
@@ -1007,7 +1033,8 @@ function ensureFilteredPlaceholder(source: Record<string, unknown>, content: Ant
 }
 
 /**
- * 转换 Responses usage，仅保留 Anthropic 支持的 input/output tokens。
+ * 转换 Responses usage；缓存写入无额外输入项，已知缓存读取时按 0 映射。
+ * input_tokens + cache_read_input_tokens 即 OpenAI 总输入，不重复添加缓存写入。
  *
  * @param usage Responses usage 字段。
  * @returns Anthropic usage。
@@ -1019,7 +1046,7 @@ function convertUsage(usage: unknown): AnthropicResponsesMessageResponse['usage'
         output_tokens: normalized.outputTokens,
         ...(normalized.cacheReadTokens === undefined
             ? {}
-            : { cache_read_input_tokens: normalized.cacheReadTokens })
+            : { cache_read_input_tokens: normalized.cacheReadTokens, cache_creation_input_tokens: 0 })
     };
 }
 

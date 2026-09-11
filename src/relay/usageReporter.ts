@@ -14,10 +14,30 @@
  * 改写"，本模块只管"token 抽取"。
  */
 
+import { requestUsageRegistry } from '../chatRuntime/requestUsage';
+import type { UpstreamRequestContext } from './router';
 import { Logger } from '../logger';
+
+/** 每个转发上下文共享一个报告器，覆盖尚未收到响应头的失败路径。 */
+const requestReporters = new WeakMap<UpstreamRequestContext, UsageReporter>();
+
+/** 取请求级报告器，禁止 JSON、SSE 和错误分支重复上报同一请求。 */
+export function getRequestUsageReporter(ctx: UpstreamRequestContext, sink?: UsageSink): UsageReporter {
+    let reporter = requestReporters.get(ctx);
+    if (!reporter) {
+        reporter = new UsageReporter(sink, ctx.usageContext);
+        requestReporters.set(ctx, reporter);
+    }
+    return reporter;
+}
+import { normalizeRequestUsage, type RequestUsageContext, type RequestUsageSummary, type RequestUsageStatus } from './requestUsage';
 
 /** 单次响应聚合后的 token 使用量。 */
 export interface UsageReport {
+    /** 由请求入口固定的身份；后续代理接入时填充。 */
+    context?: RequestUsageContext;
+    /** 请求级结束状态、用量及完整性，不使用 CLI 累计 usage。 */
+    summary?: RequestUsageSummary;
     /** 上游返回的模型 id（来自 Anthropic message.model）。 */
     model?: string;
     /** 输入 token 数。 */
@@ -72,7 +92,13 @@ export class UsageReporter {
      *
      * @param sink usage 上报回调；为空时模块仅维护内部状态、不向外发布。
      */
-    public constructor(private readonly sink: UsageSink | undefined) {}
+    public constructor(private readonly sink: UsageSink | undefined, context?: RequestUsageContext) {
+        this.report.context = context;
+        if (context) requestUsageRegistry.registerRequest(context);
+    }
+
+    /** 终止状态；错误事件优先于普通流结束。 */
+    private status: RequestUsageStatus = 'completed';
 
     /**
      * 喂入一段 Anthropic SSE 文本（流式专用）。
@@ -80,7 +106,7 @@ export class UsageReporter {
      * @param chunk Anthropic SSE 文本片段。
      */
     public feed(chunk: string): void {
-        if (!chunk) return;
+        if (this.reported || !chunk) return;
         this.buffer += chunk;
         const events = this.drainCompleteEvents();
         for (const ev of events) this.handleEvent(ev);
@@ -89,7 +115,9 @@ export class UsageReporter {
     /**
      * 流式输入结束，发出最终上报。
      */
-    public end(): void {
+    public end(status?: RequestUsageStatus): void {
+        if (this.reported) return;
+        if (status) this.status = status;
         const tail = this.buffer.trim();
         this.buffer = '';
         if (tail) this.handleEvent(tail);
@@ -102,11 +130,13 @@ export class UsageReporter {
      * @param body Anthropic JSON 响应文本。
      */
     public feedJson(body: string): void {
-        if (!body) return;
+        if (this.reported) return;
+        if (!body) { this.end(); return; }
         try {
             const json = JSON.parse(body) as unknown;
             this.collectFromAnthropicMessage(json);
         } catch (err) {
+            this.status = 'error';
             const message = err instanceof Error ? err.message : String(err);
             Logger.warn(`[UsageReporter] 非流式响应解析失败：${message}`);
         }
@@ -114,17 +144,17 @@ export class UsageReporter {
     }
 
     /**
-     * 从缓冲区取出所有完整的 SSE event 文本。
+     * 从缓冲区取出所有完整的 SSE event 文本，兼容 LF、CRLF 及跨分片分隔符。
      *
      * @returns event 原始文本数组。
      */
     private drainCompleteEvents(): string[] {
         const events: string[] = [];
-        let idx = this.buffer.indexOf('\n\n');
-        while (idx !== -1) {
-            events.push(this.buffer.slice(0, idx));
-            this.buffer = this.buffer.slice(idx + 2);
-            idx = this.buffer.indexOf('\n\n');
+        while (true) {
+            const marker = /\r?\n\r?\n/.exec(this.buffer);
+            if (!marker) break;
+            events.push(this.buffer.slice(0, marker.index));
+            this.buffer = this.buffer.slice(marker.index + marker[0].length);
         }
         return events;
     }
@@ -145,6 +175,12 @@ export class UsageReporter {
         }
         if (!isRecord(payload)) return;
         const type = payload.type;
+        const context = this.report.context;
+        if (context && type === 'content_block_start' && isRecord(payload.content_block)
+            && payload.content_block.type === 'tool_use' && typeof payload.content_block.id === 'string') {
+            requestUsageRegistry.bindResponseMessage(context.requestId, context.sessionId, payload.content_block.id, 'tool');
+        }
+        if (type === 'error') this.status = 'error';
         if (type === 'message_start') {
             this.collectFromAnthropicMessage(payload.message);
         } else if (type === 'message_delta') {
@@ -159,8 +195,20 @@ export class UsageReporter {
      */
     private collectFromAnthropicMessage(messageJson: unknown): void {
         if (!isRecord(messageJson)) return;
+        if (messageJson.type === 'error' || messageJson.error) this.status = 'error';
         if (typeof messageJson.model === 'string' && messageJson.model) {
             this.report.model = messageJson.model;
+        }
+        const context = this.report.context;
+        if (context && typeof messageJson.id === 'string') {
+            requestUsageRegistry.bindResponseMessage(context.requestId, context.sessionId, messageJson.id);
+        }
+        if (context && Array.isArray(messageJson.content)) {
+            for (const block of messageJson.content) {
+                if (isRecord(block) && block.type === 'tool_use' && typeof block.id === 'string') {
+                    requestUsageRegistry.bindResponseMessage(context.requestId, context.sessionId, block.id, 'tool');
+                }
+            }
         }
         this.collectUsage(messageJson.usage);
     }
@@ -191,6 +239,16 @@ export class UsageReporter {
      */
     private flushReport(): void {
         if (this.reported) return;
+        if (this.report.context) {
+            this.report.summary = normalizeRequestUsage(this.report.context, this.report, this.status);
+        }
+        this.reported = true;
+        // 每个上游请求独立汇总一次，不等待 CLI 整轮 result；缺失字段不冒充实际用量。
+        const { model, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens } = this.report;
+        const totalInput = this.report.summary?.totalInputTokens;
+        const rate = this.report.summary?.cacheHitRate;
+        const hitRate = rate === undefined ? 'N/A' : `${rate.toFixed(2)}%`;
+        Logger.info(`[usage] 请求结束：model=${model || 'unknown'} 输入合计=${totalInput ?? 'N/A'} 输出=${outputTokens ?? 'N/A'} 未缓存输入=${inputTokens ?? 'N/A'} 缓存读取=${cacheReadInputTokens ?? 'N/A'} 缓存写入=${cacheCreationInputTokens ?? 'N/A'} 缓存命中率=${hitRate}`);
         if (!this.sink) {
             this.reported = true;
             return;
@@ -199,7 +257,7 @@ export class UsageReporter {
             || this.report.outputTokens !== undefined
             || this.report.cacheCreationInputTokens !== undefined
             || this.report.cacheReadInputTokens !== undefined;
-        if (!hasAny) {
+        if (!hasAny && !this.report.context) {
             this.reported = true;
             return;
         }

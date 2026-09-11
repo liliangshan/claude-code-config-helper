@@ -54,6 +54,23 @@ function feedStreamEvent(
     return adapter.parseOutput({ source: 'stdout', text: line + '\n', receivedAt: Date.now() });
 }
 
+/** 流式和 SDK 响应必须保留上游身份，不借用另一请求的身份。 */
+test('response identity survives stream and SDK parsing', () => {
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    feedStreamEvent(adapter, { type: 'message_start', message: { id: 'request-message-a', role: 'assistant', content: [] } });
+    feedStreamEvent(adapter, { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } });
+    const events = feedStreamEvent(adapter, { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'test reasoning' } });
+    const segments = events.flatMap(event => event.type === 'segments' ? event.segments : []);
+    assert.ok(segments.length > 0);
+    assert.ok(segments.every(segment => segment.responseMessageId === 'request-message-a'));
+    feedStreamEvent(adapter, { type: 'message_stop' });
+    const sdk = adapter.parseOutput({ source: 'stdout', receivedAt: Date.now(), text: JSON.stringify({ type: 'assistant', message: { id: 'request-message-b', role: 'assistant', content: [{ type: 'text', text: 'SDK response' }] } }) + '\n' });
+    const sdkSegments = sdk.flatMap(event => event.type === 'segments' ? event.segments : []);
+    assert.ok(sdkSegments.length > 0);
+    assert.ok(sdkSegments.every(segment => segment.responseMessageId === 'request-message-b'));
+    adapter.dispose();
+});
+
 /** 喂一个 thinking_delta 分片，返回首个 markdown segment（无则 undefined）。 */
 function feedThinking(
     adapter: InstanceType<typeof StreamJsonCliAdapter>,

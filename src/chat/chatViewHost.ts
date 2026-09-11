@@ -134,8 +134,6 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
     public async postMessage(message: ExtensionToWebview): Promise<boolean> {
         if (message.type === 'taskFlow/status') {
             this.lastTaskFlowStatus = message;
-            const taskCount = message.snapshot?.workflow?.tasks?.length ?? 0;
-            Logger.info(`[ChatViewHost] postMessage taskFlow/status：tasks=${taskCount}, hasTarget=${!!this.target}`);
         }
         const webview = this.target?.webview;
         if (!webview) return false;

@@ -23,6 +23,7 @@ import { Logger } from '../logger';
 import type { AutoContinueScheduler } from '../llsTask/autoContinue';
 import { isLlsCcaiTaskTriggered } from '../llsTask/detector';
 import type { LlsTaskService } from '../llsTask/service';
+import { createRequestUsageContext, type RequestUsageContext } from './requestUsage';
 import { isClaudeCompactCommandRequest } from './summCommand';
 import type {
     ApiType,
@@ -36,6 +37,7 @@ import type { UpstreamTimeoutKind } from './upstreamTimeouts';
 const RELAY_PATH = '/v1/messages';
 
 /** 转发请求体读取上限，避免恶意大包占用内存（10 MiB）。 */
+import { RequestOutcomeReporter, type RelayRequestOutcome } from './requestOutcome';
 const MAX_BODY_BYTES = 10 * 1024 * 1024;
 
 /**
@@ -45,6 +47,10 @@ const MAX_BODY_BYTES = 10 * 1024 * 1024;
  * 自行负责对上游发起请求并把响应写回到 res。
  */
 export interface UpstreamRequestContext {
+    /** 三种协议共享的独立故障证据收集器。 */
+    outcome?: RequestOutcomeReporter;
+    /** 请求入口冻结的统计身份；旧适配器测试可省略，真实路由始终提供。 */
+    usageContext?: RequestUsageContext;
     /** 原始 HTTP 请求。 */
     req: http.IncomingMessage;
     /** 原始 HTTP 响应。 */
@@ -87,6 +93,8 @@ export interface UpstreamAdapter {
 }
 
 export interface RelayUpstreamRequestInfo {
+    /** 请求开始及结束共享的不可变身份。 */
+    usageContext?: RequestUsageContext;
     /** 发起本次 HTTP 请求的本地 CLI 路由。 */
     route: ChatRoute;
     providerId: string;
@@ -128,6 +136,8 @@ export interface RelayRouterDeps {
     /** 上游请求生命周期回调，用于宿主按 normal/taskFlow 路由维护执行中状态。 */
     onUpstreamRequestStart?: (info: RelayUpstreamRequestInfo) => void;
     onUpstreamRequestEnd?: (info: RelayUpstreamRequestInfo) => void;
+    /** 结构化请求终态；不同于 adapter 返回通知。 */
+    onUpstreamRequestOutcome?: (result: RelayRequestOutcome) => void;
     /** 可选任务流服务，用于处理 @llsccai-task 触发。 */
     llsTaskService?: LlsTaskService;
     /**
@@ -463,12 +473,18 @@ export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
         Logger.info(
             `Relay 转发：${providerId}/${modelId} -> ${provider.baseUrl}（apiType=${provider.apiType}）`
         );
-        const requestInfo = { route, providerId, modelId };
+        const usageContext = createRequestUsageContext(parsedBody, route, providerId, modelId, compactCommandTriggered, provider.apiType);
+        const requestInfo = { route, providerId, modelId, usageContext };
         onUpstreamRequestStart?.(requestInfo);
+        const outcome = new RequestOutcomeReporter(usageContext, deps.onUpstreamRequestOutcome);
         try {
-            await adapter.handle({ req, res, provider, modelId, rawBody, parsedBody, llsTaskCreateTriggered, compactCommandTriggered, onUpstreamTimeout });
+            await adapter.handle({ req, res, provider, modelId, rawBody, parsedBody, usageContext, outcome, llsTaskCreateTriggered, compactCommandTriggered, onUpstreamTimeout });
+        } catch (error) {
+            outcome.fail('upstream_connect', error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined);
+            throw error;
         } finally {
-            onUpstreamRequestEnd?.(requestInfo);
+            try { outcome.end(res.statusCode); }
+            finally { onUpstreamRequestEnd?.(requestInfo); }
         }
     };
 }

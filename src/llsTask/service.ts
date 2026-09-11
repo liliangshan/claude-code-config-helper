@@ -46,6 +46,12 @@ export class LlsTaskService implements vscode.Disposable {
     /** 上一次 active workflow 响应是否没有调用任务流状态更新工具。 */
     private workflowUpdateMissing = false;
 
+    /** 当前任务流最近一次有效回写的任务 ID 与状态，用于识别连续无变化更新。 */
+    private lastTaskUpdate = '';
+
+    /** 最近一次回写是否重复且没有实际变化；用于增强下一次续推提示。 */
+    private repeatedTaskUpdate = false;
+
     /** 持久化防抖定时器句柄；undefined 表示当前没有待落盘的写。 */
     private persistTimer: NodeJS.Timeout | undefined;
 
@@ -196,6 +202,8 @@ export class LlsTaskService implements vscode.Disposable {
     public clear(): void {
         this.workflowCreationPending = false;
         this.workflowUpdateMissing = false;
+        this.lastTaskUpdate = '';
+        this.repeatedTaskUpdate = false;
         this.snapshot = { workflow: null, updatedAt: Date.now() };
         if (this.persistTimer) {
             clearTimeout(this.persistTimer);
@@ -276,7 +284,10 @@ export class LlsTaskService implements vscode.Disposable {
             '',
             updateInstruction
         ];
-        return `${lines.join('\n')}${pathSuffix}${promptSuffix}${missingSuffix}`;
+        const repeatedSuffix = this.repeatedTaskUpdate
+            ? `\n\nRepeated status update detected: no task state changed. Do not call ${LLS_CCAI_TASK_TOOL_NAME} again with the same task ID and unchanged status. Work on the next actionable task: id=${nextTask.id}, status=${nextTask.status}, title=${nextTask.title}. If it is still in progress, perform its actual work first; only update its status when it genuinely changes. Do not skip unfinished tasks or mark them completed without doing the work.`
+            : '';
+        return `${lines.join('\n')}${pathSuffix}${promptSuffix}${missingSuffix}${repeatedSuffix}`;
     }
 
     /**
@@ -287,6 +298,28 @@ export class LlsTaskService implements vscode.Disposable {
      *
      * @returns 当前 UI 语言对应的任务流文案集合。
      */
+    /** 创建失败后重新准备创建提示，保留原始需求及规划文档；重复点击不重复提交。 */
+    public retryWorkflowCreation(): string {
+        if (this.snapshot.workflow || !this.snapshot.lastError?.startsWith('Workflow create failed:')) return '';
+        const { originalUserPrompt, planningDocumentPath, lastError } = this.snapshot;
+        this.snapshot = { ...this.snapshot, lastError: undefined, updatedAt: Date.now() };
+        this.markWorkflowCreationPending();
+        this.emitChange();
+        return [
+            '@llsccai-task',
+            'Retry creating the workflow using create_llsccai_task_workflow. Correct the previous invalid arguments and provide a non-empty tasks array. Do not claim creation succeeded without calling the tool.',
+            `Previous error: ${lastError}`,
+            originalUserPrompt ? `Original request: ${originalUserPrompt}` : '',
+            planningDocumentPath ? `Planning document: ${planningDocumentPath}` : ''
+        ].filter(Boolean).join('\n\n');
+    }
+
+    /** 恢复重试发送失败提示，允许用户再次点击重试。 */
+    public failWorkflowCreationRetry(error: string): void {
+        this.workflowCreationPending = false;
+        this.setError(`Workflow create failed: ${error}`);
+    }
+
     public getTexts() {
         return getLlsCcaiTaskTexts(this.configManager.getResolvedUiLanguage());
     }
@@ -307,13 +340,19 @@ export class LlsTaskService implements vscode.Disposable {
             return { ok: false, updated: 0, progress: this.buildProgressText(workflow), message: 'Invalid updates.' };
         }
         let changed = 0;
+        let repeated = false;
         for (const update of updates) {
             if (!update || typeof update.taskId !== 'string' || !VALID_STATUSES.has(update.status)) continue;
             const task = workflow.tasks.find((item) => item.id === update.taskId);
-            if (!task || task.status === update.status) continue;
+            if (!task) continue;
+            const key = JSON.stringify([task.id, update.status]);
+            if (task.status === update.status && this.lastTaskUpdate === key) repeated = true;
+            this.lastTaskUpdate = key;
+            if (task.status === update.status) continue;
             task.status = update.status;
             changed += 1;
         }
+        this.repeatedTaskUpdate = repeated && changed === 0;
         if (changed > 0) {
             this.snapshot = {
                 ...this.snapshot,
@@ -327,7 +366,9 @@ export class LlsTaskService implements vscode.Disposable {
             ok: true,
             updated: changed,
             progress,
-            message: `Workflow status updated: ${progress}.`
+            message: changed > 0
+                ? `Workflow status updated: ${progress}.`
+                : `No task status changed: ${progress}. Do not repeat an update with the same task ID and unchanged status. ${this.buildContinuePrompt()}`
         };
     }
 
@@ -347,6 +388,8 @@ export class LlsTaskService implements vscode.Disposable {
         this.workflowCreationPending = false;
         try {
             const normalized = this.normalizeWorkflow(workflow as Partial<LlsTaskWorkflow>);
+            this.lastTaskUpdate = '';
+            this.repeatedTaskUpdate = false;
             const trimmedPath = planningDocumentPath.trim();
             const trimmedPrompt = originalUserPrompt.trim();
             this.snapshot = {

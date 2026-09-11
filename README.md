@@ -1,8 +1,28 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.54
+**Version:** 3.2.59
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
+
+## What's New in 3.2.59
+
+- **Auto-compaction waits for the CLI turn to finish.** Crossing the token threshold queues compaction without writing `/compact` during a tool loop. The command is sent after an explicit CLI `result`, preventing it from being absorbed as a mid-turn prompt. Pending compaction continues to hold new sends; relay request endings and `message_stop` do not release the command.
+
+## What's New in 3.2.58
+
+- **Task-flow repeat-update guidance.** The service remembers the latest task ID and status across continuation turns. No-op updates now report that nothing changed instead of claiming progress. Consecutive identical updates add a continuation reminder naming the next actionable task and requiring actual work before another status update. Legitimate transitions for the same task remain allowed, unfinished work is not skipped, and creating or clearing a workflow resets the in-memory record.
+
+## What's New in 3.2.57
+
+- **Accurate compaction status.** Automatic compaction no longer shows “compacting” merely because `/compact` was queued. The indicator starts when the CLI reports compaction or the relay detects the summary request. Resetting compaction state also clears the UI and releases waiting senders. The existing 30-minute stale-marker window and 60-minute send-wait cap are unchanged.
+
+## What's New in 3.2.56
+
+- **Patient compaction wait.** Queued sends now keep waiting while a compaction is genuinely running (re-checked every minute, 60-minute cap) instead of giving up after 3 minutes, so slow compaction models no longer get raced by task-flow continuations.
+
+## What's New in 3.2.55
+
+- **Sends wait for compaction.** Task-flow continuation, self-healing resends and timeout Continues now hold until an in-flight compaction finishes instead of racing the summary request. Stale in-flight markers are reset automatically so nothing gets stuck.
 
 ## What's New in 3.2.54
 

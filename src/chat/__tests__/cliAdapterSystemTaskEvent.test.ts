@@ -16,6 +16,8 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // cliAdapter 顶层 `import * as vscode from 'vscode'`，必须先装好 stub 再 require。
 import { installVscodeStub } from './testUtils/vscodeStub';
@@ -251,8 +253,11 @@ test('api_retry 保留 System 卡片，task_updated 转为内部补丁', () => {
     const retry = parseSingleStdoutLine(JSON.stringify({
         type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, error_status: 401, error: 'authentication_failed'
     }));
-    assert.equal(retry[0].type, 'segments');
-    if (retry[0].type === 'segments') {
+    assert.equal(retry[0].type, 'api/retry');
+    if (retry[0].type === 'api/retry') {
+        assert.equal(retry[0].attempt, 1);
+        assert.equal(retry[0].waitMs, undefined);
+        assert.equal(retry[0].segments[0].tool?.status, 'running');
         assert.equal(retry[0].segments[0].tool?.summary, 'api_retry');
         assert.match(String(retry[0].segments[0].tool?.detail), /authentication_failed/);
     }
@@ -262,6 +267,23 @@ test('api_retry 保留 System 卡片，task_updated 转为内部补丁', () => {
     assert.deepEqual(updated, [{
         type: 'backgroundTasks/update', taskId: 'bkvhac6wt', patch: { status: 'killed' }
     }]);
+});
+
+/** 合成夹具覆盖未知等待、最后一次重试、局部结束与失败 result。 */
+test('recovery fixtures preserve terminal metadata without guessing retry completion', () => {
+    const fixture = JSON.parse(readFileSync(resolve(__dirname, '../../../fixtures/cli-output/request-recovery.json'), 'utf8'));
+    for (const item of fixture.cases) {
+        const event = parseSingleStdoutLine(JSON.stringify(item.event))[0];
+        assert.ok(event, item.name);
+        if (item.event.subtype === 'api_retry') {
+            assert.equal(event.type, 'api/retry');
+            if (event.type === 'api/retry') assert.equal(event.waitMs, undefined);
+        }
+        if (event.type === 'segments' || event.type === 'done') {
+            assert.equal(event.turnFinished === true, item.expected.terminal, item.name);
+            if (item.expected.terminal) assert.equal(event.turnResult?.isError, item.expected.isError ?? undefined);
+        }
+    }
 });
 
 /** 快照允许没有状态，空列表仍是有效的全量快照。 */

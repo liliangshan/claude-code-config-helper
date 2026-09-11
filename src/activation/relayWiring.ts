@@ -13,9 +13,8 @@ import { createBrowserToolRelayHandler } from '../browserTools/httpBridge';
 import { BrowserSessionStore } from '../browserTools/sessionStore';
 import { handleUpstreamTimeoutAutoContinue, sendHiddenUserMessageToCli } from '../chatRuntime/chatMessaging';
 import { setTokenBudgetServiceRef } from '../chatRuntime/chatSession';
-import { currentChatCliSessionIdSync } from '../chatRuntime/cliLifecycle';
 import { setRelayRouteBusy } from '../chatRuntime/routeState';
-import { clearHttpExpectation } from '../chatRuntime/selfHealing';
+import { observeRecoveryRequestStart, observeRecoveryRequestOutcome } from '../chatRuntime/selfHealing';
 import { EditorAutoOpener, extractFilePathFromToolInput } from '../editorAutoOpen';
 import type { AutoContinueScheduler } from '../llsTask/autoContinue';
 import { Logger } from '../logger';
@@ -25,6 +24,7 @@ import { OpenAIChatProxyAdapter } from '../relay/openaiChatProxy';
 import { OpenAIResponsesProxyAdapter } from '../relay/openaiResponsesProxy';
 import { createRelayRouter } from '../relay/router';
 import { TokenBudgetService, type CompactionState } from '../relay/tokenBudget/service';
+import { recordChatRequestUsage } from '../chatRuntime/chatSession';
 import type { UsageSink } from '../relay/usageReporter';
 import { getChatViewHost, getConfigManager, getLlsTaskService, getRelayServer } from '../runtime';
 import { createVscodeToolRelayHandler } from '../vscodeTools/httpBridge';
@@ -102,15 +102,20 @@ function createTokenBudgetService(context: vscode.ExtensionContext): TokenBudget
  */
 function createUsageSink(tokenBudgetService: TokenBudgetService): UsageSink {
     return (report) => {
-        const sessionId = currentChatCliSessionIdSync();
-        if (!sessionId) return;
-        const snapshot = tokenBudgetService.getSnapshot(sessionId);
-        const providerId = snapshot?.providerId ?? '';
-        if (!providerId) return;
+        const context = report.context;
+        if (!context?.sessionId) return;
+        const { sessionId, providerId, modelId } = context;
+        if (report.summary) {
+            void recordChatRequestUsage(report.summary).catch(error => Logger.warn(`[usage] 保存请求统计失败：${String(error)}`));
+        }
+        // 无 usage 的失败报告不能清零会话计量或触发自动压缩。
+        if (report.inputTokens === undefined && report.outputTokens === undefined
+            && report.cacheReadInputTokens === undefined && report.cacheCreationInputTokens === undefined) return;
         tokenBudgetService.afterRecv({
             sessionId,
             providerId,
-            modelId: report.model ?? snapshot?.modelId ?? '',
+            modelId,
+            compactCommandTriggered: context.compactCommandTriggered,
             usage: report,
             requestBodyAtSend: ''
         });
@@ -181,7 +186,10 @@ export function setupRelayPipeline(
                 Logger.error(`上游超时自动 Continue 失败：${err instanceof Error ? err.message : String(err)}`);
             });
         },
-        onUpstreamRequestStart: ({ route }) => {
+        onUpstreamRequestOutcome: observeRecoveryRequestOutcome,
+        onUpstreamRequestStart: (info) => {
+            observeRecoveryRequestStart(info);
+            const { route } = info;
             setRelayRouteBusy(route, true, 'relay_request_start');
             // 新请求进来说明 CLI 仍在活动：撤销命中非任务流工具后武装的空闲看门狗，
             // 避免在 CLI 自己发起 tool_result 往返时还兜底续推，造成抢跑。
@@ -197,10 +205,11 @@ export function setupRelayPipeline(
     const wakeupToolRelayHandler = createWakeupPipeline(context);
 
     relayServer.setHandler(async (req, res) => {
+        if (req.method === 'GET' && req.url === '/_lls/health') { res.writeHead(204); res.end(); return; }
         if (await browserToolRelayHandler(req, res)) return;
         if (await vscodeToolRelayHandler(req, res)) return;
         if (await wakeupToolRelayHandler(req, res)) return;
         await chatRelayHandler(req, res);
     });
-    relayServer.setOnHit(() => clearHttpExpectation('relay_hit'));
+    // 请求命中由带身份的 router 回调处理。
 }

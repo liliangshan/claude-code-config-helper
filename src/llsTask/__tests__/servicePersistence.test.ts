@@ -75,6 +75,33 @@ test('updateTaskStatuses saves the latest status', async () => {
     assert.equal(last.workflow?.tasks[0].status, 'completed');
 });
 
+/** 重复完成状态回写应提示执行下一项，真正的状态转换不受影响。 */
+test('repeated updates guide continuation to the next task', () => {
+    const service = new LlsTaskService(makeConfigManager());
+    const workflow = {
+        title: 'Demo', summary: '',
+        tasks: [
+            { id: '1', title: 'A', description: '', status: 'pending' },
+            { id: '2', title: 'B', description: '', status: 'pending' }
+        ]
+    };
+    service.createWorkflow(workflow);
+    assert.equal(service.updateTaskStatuses([{ taskId: '1', status: 'completed' }]).updated, 1);
+    const repeat = service.updateTaskStatuses([{ taskId: '1', status: 'completed' }]);
+    assert.equal(repeat.updated, 0);
+    assert.match(repeat.message, /No task status changed/);
+    assert.match(service.buildContinuePrompt(), /Repeated status update detected/);
+    assert.match(service.buildContinuePrompt(), /id=2/);
+    assert.equal(service.updateTaskStatuses([{ taskId: '2', status: 'in_progress' }]).updated, 1);
+    assert.doesNotMatch(service.buildContinuePrompt(), /Repeated status update detected/);
+    service.updateTaskStatuses([{ taskId: '2', status: 'in_progress' }]);
+    assert.match(service.buildContinuePrompt(), /perform its actual work first/);
+    assert.equal(service.updateTaskStatuses([{ taskId: '2', status: 'completed' }]).updated, 1);
+    service.createWorkflow(workflow);
+    assert.doesNotMatch(service.buildContinuePrompt(), /Repeated status update detected/);
+    service.dispose();
+});
+
 test('clear delegates to store.clear', () => {
     const store = new FakeStore();
     const service = new LlsTaskService(makeConfigManager(), asStore(store));

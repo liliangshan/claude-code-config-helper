@@ -28,7 +28,7 @@ import { injectLlsTaskRequestBody, type LlsTaskRequestInjectionDeps } from './ta
 import type { TokenBudgetService } from './tokenBudget/service';
 import { bindClientAbortToUpstream } from './upstreamAbort';
 import { UPSTREAM_FIRST_BYTE_TIMEOUT_MS, UPSTREAM_STREAM_IDLE_TIMEOUT_MS } from './upstreamTimeouts';
-import { UsageReporter, type UsageSink } from './usageReporter';
+import { getRequestUsageReporter, type UsageSink } from './usageReporter';
 
 /** Anthropic 协议默认转发路径；provider.baseUrl 已自行决定是否包含 /v1。 */
 const ANTHROPIC_MESSAGES_PATH = '/messages';
@@ -384,7 +384,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
         const streamedOutputChunks: string[] = [];
         let errorMessage: string | undefined;
         // 每次响应独立的 usage 抽取器，从下行 Anthropic SSE / JSON 中收集 token 统计。
-        const usageReporter = new UsageReporter(this.usageSink);
+        const usageReporter = getRequestUsageReporter(ctx, this.usageSink);
 
         await new Promise<void>((resolve) => {
             let settled = false;
@@ -394,6 +394,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
             const finish = () => {
                 if (settled) return;
                 settled = true;
+                usageReporter.end(errorMessage || (responseStatus ?? 500) >= 400 ? 'error' : undefined);
                 clearTimeout(firstByteTimer);
                 // 本轮已结算，解除断开监听，避免正常收尾阶段再去 destroy 上游。
                 unbindClientAbort?.();
@@ -404,6 +405,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                 const seconds = Math.round(UPSTREAM_FIRST_BYTE_TIMEOUT_MS / 1000);
                 errorMessage = `上游首字节超时（${seconds}s）`;
                 Logger.error(`Anthropic 透传上游首字节 ${seconds}s 超时，主动断开：${upstreamUrl.toString()}`);
+                ctx.outcome?.fail('upstream_first_byte', 'first_byte_timeout');
                 ctx.onUpstreamTimeout?.('first_byte');
                 try {
                     upstreamReq.destroy(new Error(errorMessage));
@@ -411,7 +413,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                     // ignore
                 }
                 this.writeErrorJson(res, 504, 'timeout', errorMessage);
-                usageReporter.end();
+                usageReporter.end('timeout');
                 finish();
             }, UPSTREAM_FIRST_BYTE_TIMEOUT_MS);
             const upstreamReq = transport.request(options, (upstreamRes) => {
@@ -419,13 +421,16 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                 clearTimeout(firstByteTimer);
                 responseStatus = upstreamRes.statusCode;
                 responseHeaders = upstreamRes.headers;
+                ctx.outcome?.headers(upstreamRes.statusCode, upstreamRes.headers['retry-after']);
+                upstreamRes.once('aborted', () => { ctx.outcome?.fail('upstream_stream', 'ECONNRESET'); usageReporter.end('aborted'); finish(); });
                 const isStream = this.isEventStream(upstreamRes.headers['content-type']);
                 if (isStream) {
                     upstreamRes.setTimeout(UPSTREAM_STREAM_IDLE_TIMEOUT_MS, () => {
                         const seconds = Math.round(UPSTREAM_STREAM_IDLE_TIMEOUT_MS / 1000);
                         errorMessage = `上游流式响应空闲超时（${seconds}s）`;
                         Logger.error(`Anthropic 透传上游流式响应空闲 ${seconds}s 超时，主动断开：${upstreamUrl.toString()}`);
-                        ctx.onUpstreamTimeout?.('stream_idle');
+                        ctx.outcome?.fail('upstream_stream', 'stream_idle_timeout');
+            ctx.onUpstreamTimeout?.('stream_idle');
                         try {
                             upstreamRes.destroy(new Error(errorMessage));
                         } catch {
@@ -434,7 +439,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                         if (!res.writableEnded) {
                             res.end();
                         }
-                        usageReporter.end();
+                        usageReporter.end('timeout');
                         finish();
                     });
                 }
@@ -461,6 +466,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                 upstreamRes.on('data', (chunk: Buffer | string) => {
                     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
                     responseChunks.push(buf);
+                    if (isStream) ctx.outcome?.feed(buf.toString('utf-8'));
                     if (isStream && !res.writableEnded) {
                         const out = streamInterceptor ? streamInterceptor.feed(buf.toString('utf-8')) : buf;
                         if (typeof out === 'string') {
@@ -473,12 +479,13 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                     }
                 });
                 upstreamRes.on('error', (err) => {
+                    ctx.outcome?.fail('upstream_stream', (err as NodeJS.ErrnoException).code);
                     errorMessage = err.message;
                     Logger.error(`上游响应流错误：${err.message}`);
                     if (!res.writableEnded) {
                         res.end();
                     }
-                    usageReporter.end();
+                    usageReporter.end('error');
                     finish();
                 });
                 upstreamRes.on('end', () => {
@@ -501,6 +508,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                             finish();
                             return;
                         }
+                        try { ctx.outcome?.json(JSON.parse(rawResponseBody)); } catch { ctx.outcome?.fail('upstream_inline_error', 'invalid_json'); }
                         const finalBody = this.taskDeps
                             ? interceptAnthropicResponse(rawResponseBody, upstreamRes.headers['content-type'], {
                                 service: this.taskDeps.llsTaskService,
@@ -524,13 +532,17 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
 
             upstreamReq.on('error', (err) => {
                 if (settled) return;
+                ctx.outcome?.fail('upstream_connect', (err as NodeJS.ErrnoException).code);
                 errorMessage = err.message;
                 Logger.error(`上游请求错误：${err.message}`);
                 this.writeErrorJson(res, 502, 'bad_gateway', `上游请求失败：${err.message}`);
-                usageReporter.end();
+                usageReporter.end('error');
                 finish();
             });
 
+            res.once('close', () => {
+                if (!settled) { ctx.outcome?.fail(undefined, 'client_aborted', true); usageReporter.end('aborted'); finish(); }
+            });
             // 客户端中途断开时尽量释放上游连接（替代已废弃的 req 'aborted'）。
             unbindClientAbort = bindClientAbortToUpstream(res, upstreamReq, 'Anthropic 透传');
 
@@ -588,6 +600,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
         if (!this.recorder) return;
         try {
             await this.recorder.record(entry);
+            await this.recorder.recordChatSnapshot(entry);
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             Logger.warn(`调试快照写入失败：${message}`);

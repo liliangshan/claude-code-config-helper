@@ -29,7 +29,7 @@ import type { TokenBudgetService } from './tokenBudget/service';
 import { joinUpstreamUrl } from './upstreamUrl';
 import { bindClientAbortToUpstream } from './upstreamAbort';
 import { UPSTREAM_FIRST_BYTE_TIMEOUT_MS, UPSTREAM_STREAM_IDLE_TIMEOUT_MS } from './upstreamTimeouts';
-import { UsageReporter, type UsageSink } from './usageReporter';
+import { getRequestUsageReporter, type UsageSink } from './usageReporter';
 
 /** OpenAI Chat Completions 路径。 */
 const OPENAI_CHAT_COMPLETIONS_PATH = '/chat/completions';
@@ -186,6 +186,7 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
         let responseBody = '';
         let upstreamResponseBody = '';
         let errorMessage: string | undefined;
+        const requestUsage = getRequestUsageReporter(ctx, this.usageSink);
 
         await new Promise<void>((resolve) => {
             let settled = false;
@@ -195,6 +196,7 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
             const finish = () => {
                 if (settled) return;
                 settled = true;
+                requestUsage.end(errorMessage || (responseStatus ?? 500) >= 400 ? 'error' : undefined);
                 clearTimeout(firstByteTimer);
                 // 本轮已结算，解除断开监听，避免正常收尾阶段再去 destroy 上游。
                 unbindClientAbort?.();
@@ -205,6 +207,8 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
                 const seconds = Math.round(UPSTREAM_FIRST_BYTE_TIMEOUT_MS / 1000);
                 errorMessage = `上游首字节超时（${seconds}s）`;
                 Logger.error(`OpenAI Chat 上游首字节 ${seconds}s 超时，主动断开：${upstreamUrl.toString()}`);
+                requestUsage.end('timeout');
+                ctx.outcome?.fail('upstream_first_byte', 'first_byte_timeout');
                 ctx.onUpstreamTimeout?.('first_byte');
                 try {
                     upstreamReq.destroy(new Error(errorMessage));
@@ -220,13 +224,17 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
                 clearTimeout(firstByteTimer);
                 responseStatus = upstreamRes.statusCode;
                 responseHeaders = upstreamRes.headers;
+                ctx.outcome?.headers(upstreamRes.statusCode, upstreamRes.headers['retry-after']);
                 const isStream = this.isEventStream(upstreamRes.headers['content-type']);
+                upstreamRes.once('aborted', () => { ctx.outcome?.fail('upstream_stream', 'ECONNRESET'); requestUsage.end('aborted'); finish(); });
+                upstreamRes.once('error', (err) => { ctx.outcome?.fail('upstream_stream', (err as NodeJS.ErrnoException).code); requestUsage.end('error'); finish(); });
                 const chunks: Buffer[] = [];
                 if ((upstreamRes.statusCode ?? 500) >= 400) {
                     upstreamRes.on('data', (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))));
                     upstreamRes.on('end', () => {
                         const body = Buffer.concat(chunks).toString('utf-8');
                         upstreamResponseBody = body;
+                        try { ctx.outcome?.json(JSON.parse(body)); } catch { /* HTTP 状态已记录。 */ }
                         const error = buildAnthropicErrorFromUpstream(upstreamRes.statusCode ?? 500, body);
                         responseBody = JSON.stringify(error);
                         this.writeJsonError(ctx.res, upstreamRes.statusCode ?? 500, error);
@@ -246,6 +254,7 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
                     finish();
                 });
                 upstreamRes.on('error', (err) => {
+                    ctx.outcome?.fail('upstream_stream', (err as NodeJS.ErrnoException).code);
                     errorMessage = err.message;
                     this.writeStreamOrJsonError(ctx.res, isStream, 'api_error', `上游响应流中断：${err.message}`);
                     finish();
@@ -253,9 +262,14 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
             });
             upstreamReq.on('error', (err) => {
                 if (settled) return;
+                ctx.outcome?.fail('upstream_connect', (err as NodeJS.ErrnoException).code);
                 errorMessage = err.message;
                 this.writeJsonError(ctx.res, 502, buildAnthropicErrorFromUpstream(502, err.message));
                 finish();
+            });
+            // 提前关闭只记录一次中断，正常 finish 后忽略。
+            ctx.res.once('close', () => {
+                if (!settled) { ctx.outcome?.fail(undefined, 'client_aborted', true); requestUsage.end('aborted'); finish(); }
             });
             upstreamReq.write(upstreamBodyText);
             // 客户端中途断开时销毁上游请求（替代已废弃的 req 'aborted'）。
@@ -295,13 +309,15 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
         reasoningMode: ModelReasoningMode
     ): string {
         try {
-            const converted = convertOpenAIChatJsonToAnthropic(JSON.parse(body) as unknown, reasoningMode);
+            const parsed = JSON.parse(body) as unknown;
+            ctx.outcome?.json(parsed);
+            const converted = convertOpenAIChatJsonToAnthropic(parsed, reasoningMode);
             const anthropicBody = JSON.stringify(converted.body);
             const intercepted = this.taskDeps
                 ? interceptAnthropicResponse(anthropicBody, 'application/json', this.toInterceptorDeps())
                 : { body: anthropicBody };
             // 在 Anthropic 转换完成后立即抽取 usage 并上报给 Chat UI。
-            const usageReporter = new UsageReporter(this.usageSink);
+            const usageReporter = getRequestUsageReporter(ctx, this.usageSink);
             usageReporter.feedJson(intercepted.body);
             ctx.res.statusCode = statusCode;
             this.copyResponseHeaders(ctx.res, headers, 'application/json; charset=utf-8');
@@ -309,6 +325,8 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
             return intercepted.body;
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
+            ctx.outcome?.fail('upstream_inline_error', 'invalid_json');
+            getRequestUsageReporter(ctx, this.usageSink).end('error');
             const error = buildAnthropicErrorFromUpstream(502, message);
             this.writeJsonError(ctx.res, 502, error);
             return JSON.stringify(error);
@@ -339,11 +357,12 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
         const converter = new OpenAIChatToAnthropicStreamConverter(reasoningMode);
         const interceptor = this.taskDeps ? new LlsTaskStreamingInterceptor(this.toInterceptorDeps()) : undefined;
         // 每次响应独立的 usage 抽取器，吃下行 Anthropic SSE。
-        const usageReporter = new UsageReporter(this.usageSink);
+        const usageReporter = getRequestUsageReporter(ctx, this.usageSink);
         const chunks: string[] = [];
         upstreamRes.setTimeout(UPSTREAM_STREAM_IDLE_TIMEOUT_MS, () => {
             const seconds = Math.round(UPSTREAM_STREAM_IDLE_TIMEOUT_MS / 1000);
             const message = sanitizeErrorMessage(`上游流式响应空闲超时（${seconds}s）`);
+            ctx.outcome?.fail('upstream_stream', 'stream_idle_timeout');
             ctx.onUpstreamTimeout?.('stream_idle');
             const out = converter.end() + formatAnthropicSseError('timeout', message);
             chunks.push(out);
@@ -352,11 +371,12 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
                 ctx.res.end();
             }
             captureBody(chunks.join(''));
-            usageReporter.end();
+            usageReporter.end('timeout');
             upstreamRes.destroy(new Error(message));
             resolve();
         });
         upstreamRes.on('data', (chunk: Buffer | string) => {
+            ctx.outcome?.feed(Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : String(chunk));
             const converted = converter.feed(Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : String(chunk));
             if (!converted) return;
             const out = interceptor ? interceptor.feed(converted) : converted;
@@ -378,6 +398,7 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
             resolve();
         });
         upstreamRes.on('error', (err) => {
+                    ctx.outcome?.fail('upstream_stream', (err as NodeJS.ErrnoException).code);
             const message = sanitizeErrorMessage(`上游响应流中断：${err.message}`);
             const out = converter.end() + formatAnthropicSseError('api_error', message);
             chunks.push(out);
@@ -386,7 +407,7 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
                 ctx.res.end();
             }
             captureBody(chunks.join(''));
-            usageReporter.end();
+            usageReporter.end('error');
             resolve();
         });
     }
@@ -538,7 +559,8 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
         error?: string
     ): Promise<void> {
         if (!this.recorder) return;
-        await this.recorder.record({
+        const entry = {
+            sessionId: ctx.usageContext?.sessionId,
             providerId: ctx.provider.id,
             modelId: ctx.modelId,
             upstreamUrl,
@@ -553,56 +575,39 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
             startedAt,
             endedAt: Date.now(),
             error
-        });
+        };
+        await this.recorder.record(entry);
+        await this.recorder.recordChatSnapshot(entry);
     }
 
     /**
-    * 保留旧调用签名但不再写入 request/response 调试快照文件。
-    *
-    * 现在只保留 {@link safeRecord} 的按天 messages 聚合日志，避免落盘完整请求和响应体。
+     * 写入 OpenAI Chat 转换前后的审计快照。
      *
      * @param stage 快照阶段。
      * @param ctx 请求上下文。
-     * @param startedAt 开始时间。
+     * @param startedAt 请求开始时间。
      * @param upstreamUrl 上游 URL。
-     * @param requestHeaders 已脱敏请求头。
-     * @param requestBody Anthropic 请求体。
-     * @param responseBody Anthropic 响应体。
-     * @param upstreamRequestBody 转换后提交给 OpenAI Chat 的请求体。
-    * @param upstreamRequestHeaders 转换后提交给 OpenAI Chat 的请求头。
-     * @param upstreamResponseBody OpenAI Chat 原始响应体。
-     * @param responseStatus 响应状态。
-     * @param responseHeaders 响应头。
-     * @param error 错误消息。
+     * @param requestHeaders 脱敏请求头。
+     * @param requestBody Anthropic 请��体。
+     * @param responseBody 转换后的 Anthropic 响应。
+     * @param upstreamRequestBody OpenAI Chat 请求体。
+     * @param upstreamRequestHeaders OpenAI Chat 请求头。
+     * @param upstreamResponseBody OpenAI Chat 原始响应。
+     * @param responseStatus 上游状态码。
+     * @param responseHeaders 上游响应头。
+     * @param error 错误信息。
      */
     private async safeRecordSnapshot(
-        stage: 'request' | 'response',
-        ctx: UpstreamRequestContext,
-        startedAt: number,
-        upstreamUrl: string,
-        requestHeaders: Record<string, string>,
-        requestBody: string,
-        responseBody: string,
-        upstreamRequestBody: string | undefined,
-        upstreamRequestHeaders: Record<string, string> | undefined,
-        upstreamResponseBody: string | undefined,
-        responseStatus: number | undefined,
-        responseHeaders: Record<string, string | string[] | undefined>,
-        error?: string
+        stage: 'request' | 'response', ctx: UpstreamRequestContext, startedAt: number, upstreamUrl: string,
+        requestHeaders: Record<string, string>, requestBody: string, responseBody: string,
+        upstreamRequestBody: string | undefined, upstreamRequestHeaders: Record<string, string> | undefined,
+        upstreamResponseBody: string | undefined, responseStatus: number | undefined,
+        responseHeaders: Record<string, string | string[] | undefined>, error?: string
     ): Promise<void> {
         void stage;
-        void ctx;
-        void startedAt;
-        void upstreamUrl;
-        void requestHeaders;
-        void requestBody;
-        void responseBody;
-        void upstreamRequestBody;
         void upstreamRequestHeaders;
-        void upstreamResponseBody;
-        void responseStatus;
-        void responseHeaders;
-        void error;
+        if (!this.recorder) return;
+        await this.recorder.recordChatSnapshot({ sessionId: ctx.usageContext?.sessionId, providerId: ctx.provider.id, modelId: ctx.modelId, upstreamUrl, method: 'POST', requestHeaders, requestBody, responseBody, upstreamRequestBody, upstreamResponseBody, responseStatus, responseHeaders, startedAt, endedAt: Date.now(), error });
     }
 
     /**

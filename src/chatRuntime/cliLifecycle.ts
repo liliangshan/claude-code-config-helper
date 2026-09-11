@@ -7,6 +7,8 @@
  */
 import * as vscode from 'vscode';
 import { StreamJsonCliAdapter, type ParsedCliEvent } from '../chat/cli/cliAdapter';
+import { getRecoveryAdapterIdentity, bindRecoveryAdapter, requestRecoveryController } from './selfHealing';
+import type { RecoveryContext, RecoveryIdentity } from './requestRecovery';
 import { ChatCliConfigService } from '../chat/cli/cliConfig';
 import { CliProcess } from '../chat/cli/cliProcess';
 import { CliResolver } from '../chat/cli/cliResolver';
@@ -42,7 +44,7 @@ export interface CliLifecycleDeps {
     /** 取消待执行的自愈重发。 */
     cancelPendingResend: (reason: string) => void;
     /** 处理适配器解析出的 CLI 事件。 */
-    handleParsedCliEvent: (event: ParsedCliEvent, source: ChatRoute) => Promise<void>;
+    handleParsedCliEvent: (event: ParsedCliEvent, source: ChatRoute, identity?: RecoveryIdentity) => Promise<void>;
     /** CLI 结果文本命中权限拒绝时提示用户。 */
     notifyPermissionDeniedToUser: (resultText: string) => void;
     /** 记录三条 MCP 桥的注入状态。 */
@@ -130,6 +132,7 @@ export async function selectChatCli(): Promise<void> {
  * 如果进程尚未启动，则按当前配置和路径选择逻辑启动一个新进程。
  */
 export async function restartChatCli(options: { silent?: boolean } = {}): Promise<void> {
+    deps?.cancelPendingResend('manual_cli_restart');
     if (!routes.normal.process || !chatCliConfigService) return;
     chatCliCancelState.requested = false;
     await startChatCliFromCurrentConfig({ forceRestart: true });
@@ -337,7 +340,41 @@ async function performStartChatCliPair(options: { forceRestart?: boolean }): Pro
  *
  * @param options.silent 是否抑制成功 toast。
  */
+/** 恢复前先终止旧进程，明确指定原会话；每次 await 后检查取消。 */
+export async function recoverCliForRequest(context: Readonly<RecoveryContext>, signal: AbortSignal, restartRelay: boolean): Promise<void> {
+    const run = cliStartQueue.then(() => performRecoveryCliStart(context, signal, restartRelay));
+    cliStartQueue = run.catch(() => undefined);
+    await run;
+}
+
+/** 与普通启动共用串行队列，防止恢复重启覆盖用户新启动。 */
+async function performRecoveryCliStart(context: Readonly<RecoveryContext>, signal: AbortSignal, restartRelay: boolean): Promise<void> {
+    signal.throwIfAborted();
+    const process = routes.normal.process;
+    const service = chatCliConfigService;
+    if (!process || !service || !context.sessionId || getSessionIdForRoute('normal') !== context.sessionId) throw new Error('Original recovery session unavailable');
+    routes.normal.adapterSubscription?.dispose();
+    routes.normal.adapter?.dispose();
+    await process.stop();
+    signal.throwIfAborted();
+    if (restartRelay) {
+        const relay = getRelayServer();
+        if (!relay) throw new Error('Relay unavailable');
+        await relay.restart();
+        signal.throwIfAborted();
+    }
+    const port = await requireDeps().ensureRelayServerStarted();
+    signal.throwIfAborted();
+    const configs = await service.getRoutedConfigsWithRelayEnv(port);
+    signal.throwIfAborted();
+    if (getSessionIdForRoute('normal') !== context.sessionId) throw new Error('Recovery session changed');
+    await process.start({ ...configs.normal, resumeSessionId: context.sessionId });
+    signal.throwIfAborted();
+    rebuildNormalAdapter();
+}
+
 export async function restartChatCliPair(options: { silent?: boolean } = {}): Promise<void> {
+    deps?.cancelPendingResend('manual_pair_restart');
     if (!routes.normal.process || !chatCliConfigService) return;
     chatCliCancelState.requested = false;
     resetAllRouteBusy();
@@ -354,6 +391,7 @@ export async function restartChatCliPair(options: { silent?: boolean } = {}): Pr
  * 重新调用 {@link startChatCliPair}。
  */
 export async function stopChatCliPair(): Promise<void> {
+    requireDeps().cancelPendingResend('stop_cli');
     resetAllRouteBusy();
     // CLI 即将停止，等待中的 AskUserQuestion 弹窗请求全部作废，防止残留死等条目。
     pendingAskUserRequests.clear();
@@ -377,8 +415,14 @@ export function rebuildNormalAdapter(): void {
     routes.normal.adapter = new StreamJsonCliAdapter(routes.normal.process, (resultText) => {
         requireDeps().notifyPermissionDeniedToUser(resultText);
     });
-    routes.normal.adapterSubscription = routes.normal.adapter.onParsedEvent((event) => {
-        void requireDeps().handleParsedCliEvent(event, 'normal').catch((err: unknown) => {
+    const adapter = routes.normal.adapter;
+    routes.normal.adapterSubscription = adapter.onParsedEvent((event) => {
+        let identity = getRecoveryAdapterIdentity(adapter);
+        if (identity && event.type === 'session/init' && !identity.sessionId) {
+            const bound = requestRecoveryController.bindSession(identity, event.sessionId);
+            if (bound) { bindRecoveryAdapter(adapter, bound); identity = bound; }
+        }
+        void requireDeps().handleParsedCliEvent(event, 'normal', identity).catch((err: unknown) => {
             Logger.error('处理 normal CLI 流式事件失败', err);
         });
     });
@@ -443,8 +487,10 @@ export async function handleChatCliExit(
     source: ChatRoute = 'normal'
 ): Promise<void> {
     const detail = `source=${source}, code=${event.code ?? 'null'}, signal=${event.signal ?? 'null'}`;
+    const recoveryIdentity = routes.normal.adapter && getRecoveryAdapterIdentity(routes.normal.adapter);
     requireDeps().clearHttpExpectation(`${source}_cli_exit`);
-    requireDeps().cancelPendingResend(`${source}_cli_exit`);
+    if (chatCliCancelState.requested) requireDeps().cancelPendingResend(`${source}_cli_exit`);
+    else if (recoveryIdentity) requestRecoveryController.onCliTurnFinished(recoveryIdentity, true, { code: 'cli_exited' });
     if (source === 'normal') {
         await getChatViewHost()?.postMessage({ type: 'cli/status', status: event.code === 0 ? 'exited' : 'error', detail });
     }
@@ -458,13 +504,7 @@ export async function handleChatCliExit(
     const texts = getLlsCcaiTaskTexts(getConfigManager()?.getResolvedUiLanguage() ?? 'en');
     const message = texts.cliExitedTitle.replace('{source}', source).replace('{detail}', detail);
 
-    // 任务流跑动中不弹模态框：模态会打断续推并要求用户手动点确认，
-    // 与 3.2.44「任务流中途不打扰」的原则一致，这里降级为 toast + 静默重启。
-    if (getLlsTaskService()?.hasActiveWorkflow()) {
-        await requireDeps().showChatToast('error', message);
-        await restartChatCli({ silent: true });
-        return;
-    }
+    // 异常退出没有可靠网络故障分类；不因任务流存在而绕过恢复策略重启。
 
     const choice = await vscode.window.showErrorMessage(message, texts.cliRestartAction);
     if (choice === texts.cliRestartAction) {

@@ -104,9 +104,31 @@ export interface CliBackgroundTaskPatch extends Record<string, unknown> {
     end_time?: number | null;
 }
 
+/** CLI 整轮终止信息；缺少错误标记保持未知。 */
+export interface CliTurnResult {
+    isError?: boolean;
+    subtype?: string;
+    errors?: string[];
+    sessionId?: string;
+}
+
+/** 结构化原生重试事件；等待时间未核实时保持未知。 */
+export interface CliApiRetryEvent {
+    type: 'api/retry';
+    attempt?: number;
+    maxRetries?: number;
+    errorStatus?: number;
+    errorCode?: string;
+    waitMs?: number;
+    sessionId?: string;
+    raw: Record<string, unknown>;
+    segments: ChatSegment[];
+}
+
 /** 适配器解析出的 CLI 事件类型。 */
 export type ParsedCliEvent =
-    | { type: 'segments'; segments: ChatSegment[]; done?: boolean }
+    | CliApiRetryEvent
+    | { type: 'segments'; segments: ChatSegment[]; done?: boolean; turnFinished?: boolean; turnResult?: CliTurnResult }
     | { type: 'error'; message: string; detail?: string }
     | { type: 'session/init'; sessionId: string; cwd: string }
     | { type: 'compact/status'; status: 'compacting' | null; compactResult?: string; sessionId?: string; uuid?: string }
@@ -117,7 +139,7 @@ export type ParsedCliEvent =
     | ToolPermissionRequestEvent
     | ExpertSubturnStartedEvent
     | ExpertSubturnFinishedEvent
-    | { type: 'done' };
+    | { type: 'done'; turnFinished?: boolean; turnResult?: CliTurnResult };
 
 /** 主 CLI 发起一次 ask_expert MCP 工具调用的事件。 */
 export interface ExpertSubturnStartedEvent {
@@ -683,6 +705,8 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         if (backgroundTaskEvent) return backgroundTaskEvent;
 
         // 1.3. 其余 system 事件（api_retry 等）→ 折叠卡片而非原文降级
+        const retryEvent = this.parseApiRetryEvent(record);
+        if (retryEvent) return retryEvent;
         const genericSystemEvent = this.parseSystemGenericEvent(record);
         if (genericSystemEvent) return genericSystemEvent;
 
@@ -691,15 +715,29 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         if (permissionRequest) return permissionRequest;
 
         // 2. Anthropic 官方 stream-json
+        const streamIdentity = this.unwrapStreamEvent(record);
+        const streamMessage = streamIdentity?.message as Record<string, unknown> | undefined;
+        const responseId = streamIdentity?.type === 'message_start'
+            ? (typeof streamMessage?.id === 'string' ? streamMessage.id : undefined)
+            : this.currentMessage?.messageId;
         const streamEvent = this.parseAnthropicStreamEvent(record);
-        if (streamEvent) return streamEvent;
+        if (streamEvent) return this.attachResponseIdentity(streamEvent, responseId);
 
         // 3. SDK 包装（{ type: "assistant", message: {...} } / { type: "user", message: {...} }）
         const sdkEvent = this.parseSdkWrapperEvent(record);
-        if (sdkEvent) return sdkEvent;
+        if (sdkEvent) {
+            const message = record.message as Record<string, unknown> | undefined;
+            return this.attachResponseIdentity(sdkEvent, record.type === 'assistant' && typeof message?.id === 'string' ? message.id : undefined);
+        }
 
         // 4. 流结束；result 事件可能同时携带聚合后的正文，需要先兜底输出再结束。
-        if (record.type === 'result') return this.parseResultEvent(record);
+        if (record.type === 'result') {
+            const result = this.parseResultEvent(record);
+            // 只有 CLI result 代表整轮结束；message_stop 和工具响应结束不能启动压缩。
+            return result.type === 'segments' || result.type === 'done'
+                ? { ...result, turnFinished: true }
+                : result;
+        }
         if (record.type === 'done' || record.type === 'message_stop') return { type: 'done' };
 
         // CLI 会为长时间运行的工具周期性发送独立 heartbeat ID；它只是保活通知，
@@ -954,6 +992,20 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      * @param record CLI JSON 事件对象。
      * @returns 命中 system 事件时返回折叠卡片 segment，否则返回 undefined。
      */
+    /** 解析 stdout 重试，不猜测等待字段或最后一次 attempt 的完成状态。 */
+    private parseApiRetryEvent(record: Record<string, unknown>): CliApiRetryEvent | undefined {
+        if (record.type !== 'system' || record.subtype !== 'api_retry') return undefined;
+        const integer = (value: unknown): number | undefined => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+        const error = record.error && typeof record.error === 'object' ? record.error as Record<string, unknown> : undefined;
+        return {
+            type: 'api/retry', attempt: integer(record.attempt), maxRetries: integer(record.max_retries),
+            errorStatus: integer(record.error_status),
+            errorCode: typeof error?.code === 'string' ? error.code : undefined,
+            sessionId: typeof record.session_id === 'string' ? record.session_id : undefined,
+            raw: { ...record }, segments: [this.buildSystemEventSegment(record)]
+        };
+    }
+
     private parseSystemGenericEvent(record: Record<string, unknown>): ParsedCliEvent | undefined {
         if (record.type !== 'system') return undefined;
         return { type: 'segments', segments: [this.buildSystemEventSegment(record)], done: false };
@@ -973,7 +1025,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
             kind: 'tool',
             tool: {
                 name: 'System',
-                status: 'success',
+                status: subtype === 'api_retry' ? 'running' : 'success',
                 summary: subtype,
                 detail: JSON.stringify(record, null, 2),
                 input: record
@@ -1000,6 +1052,21 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      * @param record CLI JSON 事件对象。
      * @returns 命中流式事件时返回内部事件，否则返回 undefined。
      */
+    /** 将可信响应 ID 与工具调用 ID 附到输出片段；工具结果保留原请求身份。 */
+    private attachResponseIdentity(event: ParsedCliEvent, messageId?: string): ParsedCliEvent {
+        if (event.type !== 'segments') return event;
+        for (const segment of event.segments) {
+            if (messageId && !segment.responseMessageId) segment.responseMessageId = messageId;
+            for (const [callId, toolSegment] of this.toolSegmentById) {
+                if (toolSegment === segment || (segment.id && toolSegment.id === segment.id)) {
+                    segment.responseCallId = callId;
+                    break;
+                }
+            }
+        }
+        return event;
+    }
+
     private parseAnthropicStreamEvent(record: Record<string, unknown>): ParsedCliEvent | undefined {
         const event = this.unwrapStreamEvent(record);
         if (!event) return undefined;
@@ -1811,8 +1878,14 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
             }
         }
         if (usageSegment) tailSegments.push(usageSegment);
-        if (tailSegments.length === 0) return { type: 'done' };
-        return { type: 'segments', segments: tailSegments, done: true };
+        const turnResult: CliTurnResult = {
+            isError: typeof record.is_error === 'boolean' ? record.is_error : undefined,
+            subtype: typeof record.subtype === 'string' ? record.subtype : undefined,
+            errors: Array.isArray(record.errors) ? record.errors.filter((value): value is string => typeof value === 'string') : undefined,
+            sessionId: typeof record.session_id === 'string' ? record.session_id : undefined
+        };
+        if (tailSegments.length === 0) return { type: 'done', turnResult };
+        return { type: 'segments', segments: tailSegments, done: true, turnResult };
     }
 
     /**

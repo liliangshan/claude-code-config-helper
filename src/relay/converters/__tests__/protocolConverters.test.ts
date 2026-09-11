@@ -198,7 +198,8 @@ const tests: TestCase[] = [
             assert.deepStrictEqual(result.body.content[0], { type: 'text', text: 'hello' });
             assert.deepStrictEqual(result.body.content[1], { type: 'tool_use', id: 'call_1', name: 'lookup', input: { q: 'x' } });
             assert.strictEqual(result.body.stop_reason, 'tool_use');
-            assert.deepStrictEqual(result.body.usage, { input_tokens: 4, output_tokens: 11, cache_read_input_tokens: 3 });
+            // OpenAI 无额外缓存写入输入项，映射为 0 后总输入仍为 7。
+            assert.deepStrictEqual(result.body.usage, { input_tokens: 4, output_tokens: 11, cache_read_input_tokens: 3, cache_creation_input_tokens: 0 });
         }
     },
     {

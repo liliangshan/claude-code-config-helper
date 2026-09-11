@@ -457,6 +457,20 @@
         taskflowGuideDismiss: 'Schließen',
         taskflowGuideLink: 'Vollständige Anleitung ansehen →'
     });
+    /** 请求统计文案覆盖全部现有界面语言。 */
+    var usageTranslations = {
+        en: ['Uncached input', 'Cache read', 'Cache write', 'Output', 'Cache hit', 'Request interrupted / usage may be incomplete'],
+        'zh-cn': ['未缓存输入', '缓存读取', '缓存写入', '输出', '缓存命中率', '请求中断 / 用量可能不完整'],
+        'zh-tw': ['未快取輸入', '快取讀取', '快取寫入', '輸出', '快取命中率', '請求中斷 / 用量可能不完整'],
+        ja: ['未キャッシュ入力', 'キャッシュ読取', 'キャッシュ書込', '出力', 'キャッシュ命中率', 'リクエスト中断 / 使用量が不完全な可能性'],
+        ko: ['비캐시 입력', '캐시 읽기', '캐시 쓰기', '출력', '캐시 적중률', '요청 중단 / 사용량이 불완전할 수 있음'],
+        fr: ['Entrée hors cache', 'Lecture cache', 'Écriture cache', 'Sortie', 'Taux de cache', 'Requête interrompue / usage potentiellement incomplet'],
+        de: ['Ungecachte Eingabe', 'Cache-Lesen', 'Cache-Schreiben', 'Ausgabe', 'Cache-Trefferquote', 'Anfrage unterbrochen / Verbrauch möglicherweise unvollständig']
+    };
+    Object.keys(usageTranslations).forEach(function (language) {
+        var labels = usageTranslations[language];
+        Object.assign(chatTranslations[language], { usageInput: labels[0], usageRead: labels[1], usageWrite: labels[2], usageOutput: labels[3], usageHit: labels[4], usageInterrupted: labels[5], usageUnknown: '—' });
+    });
     const vscode = acquireVsCodeApi();
     const messagesEl = document.querySelector('[data-role="messages"]');
     const composerShellEl = document.querySelector('[data-role="composer-shell"]');
@@ -675,6 +689,23 @@
     function renderTaskFlowTodoPanel() {
         if (!(composerShellEl instanceof HTMLElement)) return;
         var snapshot = taskFlowTodoState.snapshot;
+        if (snapshot && !snapshot.workflow && typeof snapshot.lastError === 'string' && snapshot.lastError.indexOf('Workflow create failed:') === 0) {
+            var errorPanel = ensureTaskFlowTodoPanel();
+            if (!errorPanel) return;
+            errorPanel.textContent = '';
+            var errorText = document.createElement('span');
+            errorText.textContent = snapshot.lastError + ' ';
+            var retry = document.createElement('button');
+            retry.type = 'button';
+            retry.textContent = /^zh/.test(currentLanguage) ? '重试创建任务流' : 'Retry workflow creation';
+            retry.style.cssText = 'color:var(--vscode-textLink-foreground);background:none;border:0;text-decoration:underline;cursor:pointer';
+            retry.addEventListener('click', function () {
+                retry.disabled = true;
+                post({ type: 'taskFlow/retryCreate' });
+            });
+            errorPanel.append(errorText, retry);
+            return;
+        }
         if (!hasRenderableTaskFlowTodos(snapshot)) {
             var old = composerShellEl.querySelector('[data-role="task-flow-todo-panel"]');
             if (old) old.remove();
@@ -2872,7 +2903,7 @@
         return name === 'Agent' || name === 'Task' || name === 'EnterPlanMode' || name === 'ExitPlanMode';
     }
 
-    /** 以参考项目风格渲染一个 ChatSegment。
+    /** 以参考项目风格渲染一个 ChatSegment；整轮 usage 不再展示，保留请求标题统计。
      *
      * @param {HTMLElement} container 消息内容容器。
      * @param {any} segment ChatSegment 对象。
@@ -2903,7 +2934,10 @@
             return;
         }
         if (segment.kind === 'usage') {
-            appendUsageFooter(container, segment);
+            if (segment.requestUsage && segment.requestUsage.context
+                && segment.requestUsage.context.apiType === 'anthropic') {
+                appendUsageFooter(container, segment);
+            }
             return;
         }
         if (segment.kind === 'task') {
@@ -3290,7 +3324,7 @@
         target.segments = Array.isArray(target.segments) ? target.segments : [];
         visibleSegments.forEach(function (segment) {
             if (segment && segment.id) {
-                var index = target.segments.findIndex(function (item) { return item && item.id === segment.id; });
+                var index = target.segments.findIndex(function (item) { return item && item.id === segment.id && item.requestId === segment.requestId; });
                 if (index >= 0) {
                     target.segments[index] = cloneMessagesForCache([segment])[0];
                     return;
@@ -3311,6 +3345,9 @@
         if (!messagesEl) return;
         var messages = cloneMessagesForCache(renderedMessagesCache);
         var wasAtBottom = isScrolledNearBottom();
+        var previousScrollTop = messagesEl.scrollTop;
+        var expandedTools = new Set(Array.from(messagesEl.querySelectorAll('[data-segment-id].root_ZUQaOA:not(.is-collapsed)')).map(function (node) { return node.dataset.segmentId; }));
+        var openDetails = new Set(Array.from(messagesEl.querySelectorAll('details[open][data-segment-id]')).map(function (node) { return node.dataset.segmentId; }));
         renderEmptyState();
         historyReplayMode = true;
         try {
@@ -3319,7 +3356,16 @@
             historyReplayMode = false;
         }
         lastSessionInitSignature = buildSessionInitSignature(messages);
+        messagesEl.querySelectorAll('[data-segment-id]').forEach(function (node) {
+            if (expandedTools.has(node.dataset.segmentId)) {
+                node.classList.remove('is-collapsed');
+                var button = node.querySelector(':scope > .toolSummary_ZUQaOA');
+                if (button) button.setAttribute('aria-expanded', 'true');
+            }
+            if (node instanceof HTMLDetailsElement && openDetails.has(node.dataset.segmentId)) node.open = true;
+        });
         if (wasAtBottom) forceScrollToBottomSettled();
+        else messagesEl.scrollTop = previousScrollTop;
     }
 
     /**
@@ -4770,8 +4816,94 @@
         target.insertBefore(label, target.firstChild);
     }
 
+    /** 按请求缓存统计，兼容统计先于正文到达。 */
+    var requestUsageCache = new Map();
+
+    /** 将请求五项用量格式化为直接可见文案；不显示总输入。 */
+    function formatRequestUsage(summary) {
+        var s = summary || {};
+        var number = function (value) {
+            return typeof value === 'number' && Number.isFinite(value) && value >= 0
+                ? value.toLocaleString(currentLanguage) : t('usageUnknown');
+        };
+        var text = t('usageInput') + ' ' + number(s.inputTokens)
+            + ' · ' + t('usageRead') + ' ' + number(s.cacheReadInputTokens)
+            + ' · ' + t('usageWrite') + ' ' + number(s.cacheCreationInputTokens)
+            + ' · ' + t('usageOutput') + ' ' + number(s.outputTokens)
+            + ' · ' + t('usageHit') + ' ' + (typeof s.cacheHitRate === 'number' && Number.isFinite(s.cacheHitRate)
+                ? s.cacheHitRate.toFixed(2) + '%' : t('usageUnknown'));
+        if (s.status === 'error' || s.status === 'timeout' || s.status === 'aborted') text += ' · ' + t('usageInterrupted');
+        return text;
+    }
+
+    /** 分字段建立文本节点，允许字段之间换行且不截断数字。 */
+    function renderRequestUsageFields(fields, summary) {
+        fields.textContent = '';
+        formatRequestUsage(summary).split(' · ').forEach(function (text) {
+            var field = document.createElement('span');
+            field.className = 'requestUsageField';
+            field.textContent = text;
+            fields.appendChild(field);
+        });
+    }
+
+    /** 创建请求标题，来源和用量均通过 textContent 写入。 */
+    function buildRequestUsageHeader(requestId, sourceText) {
+        var header = document.createElement('div');
+        header.className = 'assistantSourcePrefix_07S1Yg requestUsageHeader';
+        header.dataset.usageRequestId = requestId;
+        var source = document.createElement('span');
+        source.textContent = sourceText;
+        var fields = document.createElement('span');
+        fields.className = 'requestUsageFields';
+        renderRequestUsageFields(fields, requestUsageCache.get(requestId));
+        header.append(source, fields);
+        return header;
+    }
+
+    /** 保存最终统计并定点更新标题及历史缓存，不触发滚动或列表重建。 */
+    function updateRequestUsageHeader(requestId, summary) {
+        if (!requestId || !summary || summary.context?.compactCommandTriggered) return;
+        requestUsageCache.set(requestId, summary);
+        renderedMessagesCache.forEach(function (message) {
+            (message.segments || []).forEach(function (segment) {
+                if (segment.requestId === requestId) segment.requestUsage = summary;
+            });
+        });
+        if (!messagesEl) return;
+        messagesEl.querySelectorAll('[data-usage-request-id="' + CSS.escape(requestId) + '"] .requestUsageFields').forEach(function (fields) {
+            renderRequestUsageFields(fields, summary);
+        });
+    }
+
+    /** 在已挂载节点中保证每个请求只在第一个可见片段显示一次标题。 */
+    function reconcileRequestUsageHeaders() {
+        if (!messagesEl) return;
+        var seen = new Set();
+        messagesEl.querySelectorAll('[data-output-request-id]').forEach(function (node) {
+            var requestId = node.dataset.outputRequestId;
+            var header = node.querySelector(':scope > .requestUsageHeader');
+            if (seen.has(requestId)) {
+                if (header) header.remove();
+                return;
+            }
+            seen.add(requestId);
+            if (!header) node.insertBefore(buildRequestUsageHeader(requestId, node.dataset.requestSource || ''), node.firstChild);
+        });
+    }
+
+    /** 渲染片段并标记请求归属，标题去重在挂载完成后进行。 */
     function appendSegmentWithInlinePrefix(container, segment, prefixState) {
+        var previous = container.lastElementChild;
         appendSegment(container, segment);
+        var rendered = container.lastElementChild;
+        if (segment && segment.requestId && segment.kind !== 'usage' && !isHiddenChatToolSegment(segment)
+            && rendered instanceof HTMLElement && rendered !== previous) {
+            rendered.dataset.outputRequestId = segment.requestId;
+            rendered.dataset.requestSource = prefixState && prefixState.text || '';
+            if (segment.requestUsage) requestUsageCache.set(segment.requestId, segment.requestUsage);
+            return;
+        }
         if (!prefixState || prefixState.used || !prefixState.text || !segment || isHiddenChatToolSegment(segment)) return;
         if (segment.kind === 'usage' || segment.kind === 'task' || segment.kind === 'image') return;
         var target = container.lastElementChild;
@@ -4786,7 +4918,7 @@
 
     function appendSegmentWithPatchPrefix(item, content, segment, forcePrefix) {
         var prefixText = '';
-        if (forcePrefix) {
+        if (forcePrefix || (segment && segment.requestId)) {
             prefixText = assistantSourcePrefixTextFromItem(item);
         } else if (!contentAlreadyHasAssistantSourceLabel(content)) {
             prefixText = assistantSourcePrefixTextFromItem(item);
@@ -4878,6 +5010,7 @@
         ensureAssistantMessageContainer(item);
         var _wasAtBottomAsst = isScrolledNearBottom();
         messagesEl.appendChild(item);
+        reconcileRequestUsageHeaders();
         if (message.role === 'assistant' && message.pending && scrollAfterNextPendingAssistant) {
             scrollAfterNextPendingAssistant = false;
             messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -4979,7 +5112,9 @@
             // 如果 segment 带稳定 id 且已有对应 DOM，则原地替换（典型场景：工具卡片在
             // tool_use 启动、input_json_delta 累积、tool_result 回填等时机被反复更新）
             if (segment && segment.id) {
-                var existing = content.querySelector('[data-segment-id="' + CSS.escape(segment.id) + '"]');
+                var existing = Array.from(content.querySelectorAll('[data-segment-id="' + CSS.escape(segment.id) + '"]')).find(function (node) {
+                    return (node.dataset.outputRequestId || '') === (segment.requestId || '');
+                });
                 if (existing && existing.parentNode === content) {
                     // 模型响应很快时，同一 segment 会在极短时间内被反复投递。内容签名
                     // 一致说明这次 patch 没有带来任何可见变化，跳过重建避免闪烁。
@@ -5019,6 +5154,7 @@
                 return !(node instanceof HTMLElement && node.classList.contains('chat-pending-indicator'));
             })
         });
+        reconcileRequestUsageHeaders();
         scrollToBottomIfNeeded(wasAtBottom);
     }
 
@@ -5141,6 +5277,66 @@
      *
      * @param {MessageEvent} event 浏览器 message 事件。
      */
+    var recoveryViewState = null;
+    var recoveryViewTimer = null;
+    var recoveryTranslations = {
+        'en': ['CLI retrying', 'Automatic recovery in', 'Recovering', 'Automatic recovery exhausted', 'Manual retry required', 'Retry', 's'],
+        'zh-cn': ['CLI 正在重试', '自动恢复倒计时', '正在恢复', '自动恢复次数已用完', '需要手动重试', '重试', '秒'],
+        'zh-tw': ['CLI 正在重試', '自動恢復倒數', '正在恢復', '自動恢復次數已用完', '需要手動重試', '重試', '秒'],
+        'ja': ['CLI 再試行中', '自動復旧まで', '復旧中', '自動復旧の上限に到達', '手動再試行が必要', '再試行', '秒'],
+        'ko': ['CLI 재시도 중', '자동 복구까지', '복구 중', '자동 복구 횟수 소진', '수동 재시도 필요', '재시도', '초'],
+        'fr': ['CLI en réessai', 'Rétablissement dans', 'Rétablissement', 'Réessais automatiques épuisés', 'Réessai manuel requis', 'Réessayer', 's'],
+        'de': ['CLI versucht erneut', 'Wiederherstellung in', 'Wiederherstellung läuft', 'Automatische Versuche aufgebraucht', 'Manueller Versuch erforderlich', 'Erneut versuchen', 's']
+    };
+
+    /** 格式化倒计时只负责显示，绝不触发请求。 */
+    function formatRecoveryStatus(state, language, now) {
+        var words = recoveryTranslations[language] || recoveryTranslations.en;
+        if (!state) return '';
+        var attempt = Math.min(5, state.attemptsUsed + (state.state === 'waiting_recovery' ? 1 : 0));
+        var suffix = ' (' + attempt + '/5)';
+        if (state.state === 'native_retry') return words[0];
+        if (state.state === 'waiting_recovery') return words[1] + ' ' + Math.max(0, Math.ceil(((state.nextRetryAt || now) - now) / 1000)) + ' ' + words[6] + suffix;
+        if (state.state === 'recovering') return words[2] + suffix;
+        if (state.state === 'exhausted') return words[3] + suffix;
+        if (state.state === 'non_retryable') return words[4];
+        return '';
+    }
+
+    /** 原地更新独立状态行，不改变消息历史或滚动位置。 */
+    function renderRequestRecoveryStatus() {
+        var node = document.getElementById('requestRecoveryStatus');
+        var text = formatRecoveryStatus(recoveryViewState, currentLanguage, Date.now());
+        if (!text) { if (node) node.remove(); return; }
+        if (!node) {
+            node = document.createElement('div');
+            node.id = 'requestRecoveryStatus';
+            node.className = 'requestRecoveryStatus';
+            node.setAttribute('role', 'status');
+            if (messagesEl && messagesEl.parentNode) messagesEl.parentNode.insertBefore(node, messagesEl.nextSibling);
+        }
+        node.textContent = text;
+        if (['exhausted', 'non_retryable'].includes(recoveryViewState.state)) {
+            var button = document.createElement('button');
+            button.textContent = (recoveryTranslations[currentLanguage] || recoveryTranslations.en)[5];
+            var state = recoveryViewState;
+            button.addEventListener('click', function () {
+                button.disabled = true;
+                post({ type: 'request/retry', identity: { generation: state.generation, turnId: state.turnId, sessionId: state.sessionId, cliInstanceId: state.cliInstanceId, cycle: state.cycle } });
+            });
+            node.appendChild(button);
+        }
+    }
+
+    /** 仅宿主实时状态可以创建显示计时器，历史消息不参与恢复。 */
+    function updateRequestRecoveryStatus(state) {
+        if (recoveryViewTimer) clearInterval(recoveryViewTimer);
+        recoveryViewTimer = null;
+        recoveryViewState = state;
+        renderRequestRecoveryStatus();
+        if (state && state.state === 'waiting_recovery') recoveryViewTimer = setInterval(renderRequestRecoveryStatus, 1000);
+    }
+
     function handleExtensionMessage(event) {
         let message = event.data;
         if (!message || typeof message !== 'object') return;
@@ -5157,8 +5353,12 @@
             console.log('[chat] handleExtensionMessage', message.type, message);
         } catch (_logErr) { /* noop */ }
         switch (message.type) {
+            case 'request/recovery':
+                updateRequestRecoveryStatus(message.state);
+                break;
             case 'i18n/update':
                 setChatLanguage(message.language || DEFAULT_CHAT_LANGUAGE);
+                renderRequestRecoveryStatus();
                 break;
             case 'browser/autoApproveState':
                 browserAutoApproveState.supported = message.supported === true;
@@ -5166,6 +5366,7 @@
                 renderBrowserAutoApproveHint();
                 break;
             case 'session/init':
+                updateRequestRecoveryStatus(null);
                 setChatRunning(false);
                 currentCliPath = message.cliPath || '';
                 currentCliStatus = '';
@@ -5214,6 +5415,11 @@
                 // 会在渲染时先滚一次，但随后 assistant 消息可能因为 wasAtBottom
                 // 判定失败而不再跟随，导致打开时停在最后一条用户消息附近。
                 forceScrollToBottomSettled();
+                break;
+            case 'request/usage':
+                if (message.summary && message.summary.context) {
+                    updateRequestUsageHeader(message.summary.context.requestId, message.summary);
+                }
                 break;
             case 'message/append':
                 cacheAppendedMessage(message.message);

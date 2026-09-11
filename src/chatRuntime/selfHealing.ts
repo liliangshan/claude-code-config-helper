@@ -1,252 +1,143 @@
-/**
- * Relay 命中看门狗与 Relay/CLI 自愈重发链路。
- *
- * 拆分自 extension.ts：把「用户提交后等待 Relay 命中 → 超时判定 HTTP 卡死 →
- * 重启 Relay 与 CLI → 延时静默重发上一条 prompt」这条自愈闭环，连同其全部
- * 计时器与互斥锁状态收敛到一个模块。
- *
- * 依赖方向：本模块位于 chatRuntime 上层，直接 import 会话、消息、生命周期与
- * Webview 模块；无需反向注入 extension.ts 的函数。
- */
+/** @file 通用恢复装配桥；旧自愈接口不再拥有重试额度或重发计时器。 */
+import { randomUUID } from 'node:crypto';
+import * as http from 'node:http';
 import { Logger } from '../logger';
-import { getRelayServer } from '../runtime';
-import { appendAssistantSegments } from './chatSession';
-import { sendUserMessageToCli } from './chatMessaging';
-import { restartChatCli } from './cliLifecycle';
-import { showChatToast } from './webviewMessages';
+import { getRelayServer, getChatViewHost } from '../runtime';
+import { RequestRecoveryController, type RecoveryContext, type RecoveryIdentity } from './requestRecovery';
+import type { RelayUpstreamRequestInfo } from '../relay/router';
+import type { RelayRequestOutcome } from '../relay/requestOutcome';
 
-/**
- * 用户主动提交消息后等待 Relay 命中的全局计时器。
- *
- * 计时窗口内 RelayServer 收到 `POST /v1/messages` 即清除；超时则触发自愈：
- * 重启 HTTP Relay → 重启 Claude CLI → 自动重发最近一次 prompt。
- */
-let pendingHttpExpectationTimer: NodeJS.Timeout | undefined;
+/** 生命周期层提供安全中断/恢复和保留会话的发送动作。 */
+export interface RecoveryRuntimeActions {
+    /** 最终成功通知，用于合并任务流续推。 */
+    onSucceeded?(): void;
+    submit(context: Readonly<RecoveryContext>, signal: AbortSignal): Promise<void>;
+    recoverCli(context: Readonly<RecoveryContext>, signal: AbortSignal, restartRelay: boolean): Promise<void>;
+}
+let actions: RecoveryRuntimeActions | undefined;
+let expectation: ReturnType<typeof setTimeout> | undefined;
+const requestIdentities = new Map<string, RecoveryIdentity>();
+/** 每次提交绑定到具体适配器，事件到达时立即捕获身份。 */
+const adapterIdentities = new WeakMap<object, RecoveryIdentity>();
 
-/** 等待命中的最近一次 prompt，用于自愈后自动重发。 */
-let pendingHttpExpectationPrompt: string | undefined;
-
-/** 等待命中的开始时间戳，便于日志诊断耗时。 */
-let pendingHttpExpectationStartedAt: number | undefined;
-
-/** 自愈流程互斥锁，避免并发重启 Relay/CLI。 */
-let isHealingRelayAndCli = false;
-
-/** 自愈重启后等待 CLI 完全就绪、再内部重发上次消息的延时计时器。 */
-let pendingResendTimer: NodeJS.Timeout | undefined;
-
-/** 用户消息提交后等待 Relay 命中的超时阈值（毫秒）。 */
-const HTTP_EXPECTATION_TIMEOUT_MS = 120_000;
-
-/** 自愈重启后到内部重发之间的等待时长（毫秒），给 CLI 充足启动时间。 */
-const HEAL_RESEND_DELAY_MS = 2_000;
-/**
- * 登记一次"等待 Relay 命中"全局计时器。
- *
- * 用户主动 `user/send` 提交消息后调用：若 120 秒内 RelayServer 未收到 `POST
- * /v1/messages` 请求（命中后会清除该计时器），则视为 HTTP 卡死，进入自愈流程
- * （{@link healRelayAndCli}）。后续提交或自愈再次启动时会先清除上一次计时器。
- *
- * 重入保护：若当前正处于自愈流程（`isHealingRelayAndCli === true`），说明
- * 之前还存在一个由 {@link scheduleHealResend} 排队的 60s 静默重发计时器。
- * 此时用户重新发送消息已经覆盖了旧 prompt 的意图，先调用
- * {@link cancelPendingResend} 取消旧重发并释放互斥锁，避免到点后旧 prompt
- * 被静默重新发送一次造成双重提交。
- *
- * @param prompt 本次提交的完整 prompt 文本，超时后用于自动重发。
- */
-export function armHttpExpectation(prompt: string): void {
-    if (isHealingRelayAndCli) {
-        Logger.info('armHttpExpectation 检测到自愈进行中，取消旧的待重发任务避免重复发送');
-        cancelPendingResend('user-resend-supersedes');
-    }
-    clearHttpExpectation('rearm');
-    pendingHttpExpectationPrompt = prompt;
-    pendingHttpExpectationStartedAt = Date.now();
-    Logger.info(`Relay 看门狗已启动（等待 Relay 命中）：timeout=${HTTP_EXPECTATION_TIMEOUT_MS}ms, promptLength=${prompt.length}`);
-    pendingHttpExpectationTimer = setTimeout(() => {
-        pendingHttpExpectationTimer = undefined;
-        void onHttpExpectationTimeout();
-    }, HTTP_EXPECTATION_TIMEOUT_MS);
+/** 为新提交或恢复提交登记事件归属。 */
+export function bindRecoveryAdapter(adapter: object, identity: RecoveryIdentity): void {
+    adapterIdentities.set(adapter, { ...identity });
 }
 
-/**
- * 清除"等待 Relay 命中"全局计时器。
- *
- * 在以下情况下调用：RelayServer 命中、用户取消、会话清空、CLI 退出、重新登记
- * 计时器、扩展 deactivate。多次调用幂等。
- *
- * @param reason 触发清除的原因，仅用于日志诊断。
- */
-export function clearHttpExpectation(reason: string): void {
-    if (pendingHttpExpectationTimer) {
-        clearTimeout(pendingHttpExpectationTimer);
-        pendingHttpExpectationTimer = undefined;
-        const elapsed = pendingHttpExpectationStartedAt ? Date.now() - pendingHttpExpectationStartedAt : -1;
-        Logger.info(`Relay 看门狗已清除：reason=${reason}, elapsed=${elapsed}ms`);
-    }
-    pendingHttpExpectationPrompt = undefined;
-    pendingHttpExpectationStartedAt = undefined;
+/** 返回事件订阅对应的身份副本；未登记不得猜配。 */
+export function getRecoveryAdapterIdentity(adapter: object): RecoveryIdentity | undefined {
+    const identity = adapterIdentities.get(adapter);
+    return identity ? { ...identity } : undefined;
 }
 
-/**
- * 看门狗超时回调：触发"重启 HTTP Relay → 重启 CLI → 延时 60s 内部重发"自愈流程。
- *
- * 通过 {@link isHealingRelayAndCli} 互斥，避免并发触发；自愈期间不会再次启动
- * 看门狗，重启完成后由 {@link scheduleHealResend} 延时重发，重发时再调用
- * {@link armHttpExpectation} 重新计时。
- */
-export async function onHttpExpectationTimeout(): Promise<void> {
-    if (isHealingRelayAndCli) {
-        Logger.warn('Relay 看门狗超时，但已有自愈流程在执行，本次忽略');
-        return;
-    }
-    const prompt = pendingHttpExpectationPrompt;
-    pendingHttpExpectationPrompt = undefined;
-    pendingHttpExpectationStartedAt = undefined;
-    if (!prompt) {
-        Logger.warn('Relay 看门狗超时，但未保留 prompt，跳过自愈');
-        return;
-    }
-    isHealingRelayAndCli = true;
-    try {
-        await healRelayAndCli(prompt);
-    } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        Logger.error(`Relay/CLI 自愈流程失败：${message}`);
-        await appendAssistantSegments(
-            [{ kind: 'error', text: `\n自动恢复失败：${message}\n` }],
-            true
-        );
-        isHealingRelayAndCli = false;
-    }
-    // 注意：成功路径下不在这里释放锁。
-    // 锁会在 scheduleHealResend → 内部重发完成时释放，避免重启刚完成又被新的超时
-    // 抢占触发第二轮自愈。
-}
-
-/**
- * 执行 HTTP Relay 与 Claude CLI 的自愈流程（不包含重发）。
- *
- * 顺序：写入一条 Chat 提示 → 重启 RelayServer（可能换端口）→ 重启 CLI 子进程
- * （新端口随 ANTHROPIC_BASE_URL 注入）→ 安排 60 秒后内部重发。重启异常会上抛
- * 给调用方处理；安排好延时重发后立即返回，等待计时器到期。
- *
- * @param prompt 需要重发的 prompt 文本。
- */
-export async function healRelayAndCli(prompt: string): Promise<void> {
-    const expectationSeconds = Math.round(HTTP_EXPECTATION_TIMEOUT_MS / 1000);
-    Logger.warn(`Relay ${expectationSeconds} 秒未命中，开始自愈：promptLength=${prompt.length}`);
-    void appendAssistantSegments(
-        [{
-            kind: 'error',
-            text: `\n本地中转 ${expectationSeconds} 秒内未收到请求，正在自动重启 Relay 与 CLI，重启完成后 ${Math.round(HEAL_RESEND_DELAY_MS / 1000)} 秒再重发上一条消息…\n`
-        }],
-        false
-    );
-    void showChatToast('warn', `本地中转 ${expectationSeconds} 秒未响应，正在自动恢复…`);
-    const relay = getRelayServer();
-    if (relay) {
-        const oldPort = relay.getActualPort();
-        Logger.warn(`自愈：准备重启 Relay，oldPort=${oldPort ?? 'unknown'}`);
-        void appendAssistantSegments(
-            [{
-                kind: 'markdown',
-                text: `\n> 正在停止本地中转 HTTP 服务${typeof oldPort === 'number' ? `（旧端口 ${oldPort}）` : ''}…\n`
-            }],
-            false
-        );
-        try {
-            const newPort = await relay.restart();
-            Logger.info(`Relay 已自愈重启，新端口=${newPort}`);
-            void appendAssistantSegments(
-                [{
-                    kind: 'markdown',
-                    text: `\n> 本地中转 HTTP 服务已启动：http://127.0.0.1:${newPort}\n`
-                }],
-                false
-            );
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            Logger.error(`Relay 自愈重启失败：${message}`);
-            void appendAssistantSegments(
-                [{ kind: 'error', text: `\n本地中转 HTTP 服务重启失败：${message}\n` }],
-                false
-            );
-            throw err;
+/** 单例控制器；所有恢复统一消耗五档额度。 */
+export const requestRecoveryController = new RequestRecoveryController({
+    now: () => Date.now(),
+    setTimer: (callback, delay) => setTimeout(callback, delay),
+    clearTimer: timer => clearTimeout(timer as ReturnType<typeof setTimeout>),
+    recover: async (context, signal) => {
+        if (!actions) throw new Error('Recovery runtime not configured');
+        if (context.lastFailure?.stage === 'cli_to_relay') {
+            const healthy = await probeRelayHealth();
+            signal.throwIfAborted();
+            await actions.recoverCli(context, signal, !healthy);
+            signal.throwIfAborted();
         }
+        await actions.submit(context, signal);
+        signal.throwIfAborted();
+    },
+    notify: state => {
+        Logger.info(`[request-recovery] state=${state.state} turn=${state.turnId} generation=${state.generation} attempt=${state.attemptsUsed} next=${state.nextRetryAt ?? '-'}`);
+        if (state.state === 'awaiting_request') {
+            clearHttpExpectation('awaiting_request');
+            const identity = { ...state };
+            expectation = setTimeout(() => { expectation = undefined; void onHttpExpectationTimeout(identity); }, 120000);
+        } else clearHttpExpectation(`state:${state.state}`);
+        void postRecoveryState();
+        if (state.state === 'succeeded') actions?.onSucceeded?.();
     }
-    void appendAssistantSegments(
-        [{ kind: 'markdown', text: '\n> 正在重启 Claude CLI 子进程…\n' }],
-        false
-    );
-    try {
-        Logger.warn('自愈：准备重启 Claude CLI');
-        await restartChatCli({ silent: true });
-        Logger.info('自愈：Claude CLI 已重启完成');
-        void appendAssistantSegments(
-            [{ kind: 'markdown', text: '\n> Claude CLI 已重启完成\n' }],
-            false
-        );
-    } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        Logger.error(`CLI 自愈重启失败：${message}`);
-        void appendAssistantSegments(
-            [{ kind: 'error', text: `\nClaude CLI 重启失败：${message}\n` }],
-            false
-        );
-        throw err;
-    }
-    scheduleHealResend(prompt);
+});
+
+/** 推送当前内存状态，排除原始提交和错误正文。 */
+export async function postRecoveryState(): Promise<void> {
+    const snapshot = requestRecoveryController.getSnapshot();
+    if (!snapshot) { await getChatViewHost()?.postMessage({ type: 'request/recovery', state: null }); return; }
+    const { originalPrompt: _prompt, lastFailure: _failure, ...state } = snapshot;
+    await getChatViewHost()?.postMessage({ type: 'request/recovery', state });
 }
 
-/**
- * 安排自愈重启后的延时内部重发。
- *
- * 给 CLI 充足启动时间（默认 60 秒），到期后调用 {@link armHttpExpectation} 重新
- * 计时并发送上次 prompt。重发成功（无论命中与否，看门狗都会重新负责）或重发
- * 异常都会释放 {@link isHealingRelayAndCli} 互斥锁。
- *
- * 用户在等待期间触发取消/会话清空时会通过 {@link cancelPendingResend} 清掉本
- * 计时器，避免再发出过期消息。
- *
- * @param prompt 需要内部重发的 prompt 文本。
- */
-export function scheduleHealResend(prompt: string): void {
-    cancelPendingResend('rearm');
-    Logger.info(`已安排自愈重发：delay=${HEAL_RESEND_DELAY_MS}ms`);
-    pendingResendTimer = setTimeout(async () => {
-        pendingResendTimer = undefined;
-        try {
-            Logger.info('自愈重启完成，开始内部重发最近一次用户消息');
-            armHttpExpectation(prompt);
-            await sendUserMessageToCli(prompt);
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            Logger.error(`自愈重发失败：${message}`);
-            await appendAssistantSegments(
-                [{ kind: 'error', text: `\n自动恢复后重发失败：${message}\n` }],
-                true
-            );
-        } finally {
-            isHealingRelayAndCli = false;
-        }
-    }, HEAL_RESEND_DELAY_MS);
+/** 装配动作，不在模块导入时启动进程或模型请求。 */
+export function configureRecoveryRuntime(value: RecoveryRuntimeActions): void { actions = value; }
+
+/** 提交入口统一登记，内部恢复不得重新登记回合。 */
+export function beginRecoveryTurn(input: Pick<RecoveryContext, 'sessionId' | 'cliInstanceId' | 'route' | 'originalPrompt' | 'deliveryState'>): RecoveryIdentity {
+    clearHttpExpectation('new_turn');
+    requestIdentities.clear();
+    const identity = requestRecoveryController.beginTurn({ ...input, turnId: randomUUID() });
+    return identity;
 }
 
-/**
- * 取消尚未触发的自愈重发计时器，并释放自愈互斥锁。
- *
- * 用户取消、会话清空、CLI 退出、扩展 deactivate 时调用，防止过期消息被自动
- * 重发出去。
- *
- * @param reason 触发取消的原因，仅用于日志诊断。
- */
+/** 兼容旧调用；计时统一移至实际发送入口，不能重复登记 prompt。 */
+export function armHttpExpectation(_prompt: string): void {}
+
+/** 清除观测计时，不清除逻辑回合与恢复额度。 */
+export function clearHttpExpectation(_reason: string): void {
+    if (expectation !== undefined) clearTimeout(expectation);
+    expectation = undefined;
+}
+
+/** 取消计时和所有迟到恢复，保留聊天历史。 */
 export function cancelPendingResend(reason: string): void {
-    if (pendingResendTimer) {
-        clearTimeout(pendingResendTimer);
-        pendingResendTimer = undefined;
-        isHealingRelayAndCli = false;
-        Logger.info(`自愈重发已取消：reason=${reason}`);
-    }
+    clearHttpExpectation(reason);
+    requestIdentities.clear();
+    requestRecoveryController.cancelRecovery(reason);
+}
+
+/** 只读健康探测，不调用模型接口，不产生 relay hit。 */
+export async function probeRelayHealth(): Promise<boolean> {
+    const port = getRelayServer()?.getActualPort();
+    if (!port) return false;
+    return new Promise(resolve => {
+        const req = http.get({ hostname: '127.0.0.1', port, path: '/_lls/health', timeout: 3000 }, res => {
+            res.resume();
+            resolve(res.statusCode === 204);
+        });
+        req.on('timeout', () => { req.destroy(); resolve(false); });
+        req.on('error', () => resolve(false));
+    });
+}
+
+/** 未命中不等于 CLI 已终止；未完成安全中断装配前仅记录停滞证据。 */
+export async function onHttpExpectationTimeout(identity?: RecoveryIdentity): Promise<void> {
+    const current = requestRecoveryController.getSnapshot();
+    if (!identity || !current || current.generation !== identity.generation || current.cycle !== identity.cycle) return;
+    if (current.state !== 'awaiting_request') return;
+    const healthy = await probeRelayHealth();
+    const latest = requestRecoveryController.getSnapshot();
+    if (latest?.generation !== identity.generation || latest.state !== 'awaiting_request') return;
+    Logger.warn(`[request-recovery] CLI 未命中网关，恢复时先终止旧进程：healthy=${healthy}`);
+    requestRecoveryController.onExpectedRequestTimeout(identity);
+}
+
+/** 只有同一会话的请求才解除等待；未知身份拒绝猜配。 */
+export function observeRecoveryRequestStart(info: RelayUpstreamRequestInfo): void {
+    const c = requestRecoveryController.getSnapshot();
+    const usage = info.usageContext;
+    if (!c || !usage?.sessionId || c.sessionId !== usage.sessionId || usage.compactCommandTriggered) return;
+    clearHttpExpectation('matched_relay_request');
+    requestIdentities.set(usage.requestId, c);
+    requestRecoveryController.onRelayRequestStarted(c, usage.requestId);
+}
+
+/** 按请求入口保存的身份上报结果，而非结束时活动会话。 */
+export function observeRecoveryRequestOutcome(result: RelayRequestOutcome): void {
+    const requestId = result.context?.requestId;
+    const identity = requestId && requestIdentities.get(requestId);
+    if (!requestId || !identity) return;
+    requestIdentities.delete(requestId);
+    requestRecoveryController.onRelayRequestFinished(identity, requestId, result.status === 'error' ? {
+        stage: result.stage, status: result.upstreamStatus && result.upstreamStatus >= 400 ? result.upstreamStatus : result.mappedStatus,
+        code: result.code, retryAfter: result.retryAfter
+    } : undefined);
 }

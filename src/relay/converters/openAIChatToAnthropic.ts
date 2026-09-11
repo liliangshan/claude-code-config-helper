@@ -37,6 +37,8 @@ export interface AnthropicMessageResponse {
         output_tokens: number;
         /** 命中缓存的输入 token 数；上游未返回该字段时不下发。 */
         cache_read_input_tokens?: number;
+        /** OpenAI 输入已包含所有非缓存读取 token，无额外缓存写入项。 */
+        cache_creation_input_tokens?: number;
     };
 }
 
@@ -273,7 +275,7 @@ export class OpenAIChatToAnthropicStreamConverter {
                     output_tokens: 0,
                     ...(this.state.cacheReadTokens === undefined
                         ? {}
-                        : { cache_read_input_tokens: this.state.cacheReadTokens })
+                        : { cache_read_input_tokens: this.state.cacheReadTokens, cache_creation_input_tokens: 0 })
                 }
             }
         });
@@ -497,7 +499,7 @@ export class OpenAIChatToAnthropicStreamConverter {
                 output_tokens: this.state.completionTokens,
                 ...(this.state.cacheReadTokens === undefined
                     ? {}
-                    : { cache_read_input_tokens: this.state.cacheReadTokens })
+                    : { cache_read_input_tokens: this.state.cacheReadTokens, cache_creation_input_tokens: 0 })
             }
         });
         out += formatAnthropicSse('message_stop', { type: 'message_stop' });
@@ -581,7 +583,7 @@ export function convertOpenAIChatJsonToAnthropic(
                 // OpenAI 的 prompt_tokens 含缓存命中部分，Anthropic 的 input_tokens 不含。
                 input_tokens: readNumber(usage?.prompt_tokens) - (cachedTokens ?? 0),
                 output_tokens: readNumber(usage?.completion_tokens),
-                ...(cachedTokens === undefined ? {} : { cache_read_input_tokens: cachedTokens })
+                ...(cachedTokens === undefined ? {} : { cache_read_input_tokens: cachedTokens, cache_creation_input_tokens: 0 })
             }
         },
         warnings

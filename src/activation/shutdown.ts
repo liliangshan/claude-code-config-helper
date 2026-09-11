@@ -12,7 +12,7 @@ import { Logger } from '../logger';
 import { disposeCliLifecycleServices } from '../chatRuntime/cliLifecycle';
 import type { ChatRoute } from '../chat/protocol';
 import { routes } from '../chatRuntime/routeState';
-import { cancelPendingResend, clearHttpExpectation } from '../chatRuntime/selfHealing';
+import { cancelPendingResend, clearHttpExpectation, requestRecoveryController } from '../chatRuntime/selfHealing';
 import * as runtime from '../runtime';
 import { getAutoContinueScheduler, setAutoContinueScheduler } from '../taskFlow/taskFlowCommands';
 import { getWakeupScheduler, setWakeupScheduler } from '../wakeup/wakeupWiring';
@@ -51,6 +51,8 @@ function disposeRouteProcesses(): void {
  * @returns 全部释放动作完成后 resolve。
  */
 export async function shutdownExtension(): Promise<void> {
+    cancelPendingResend('deactivate');
+    requestRecoveryController.dispose();
     await flushPersistedChatSession().catch((err: unknown) => {
         Logger.warn(`停用时会话落盘失败：${err instanceof Error ? err.message : String(err)}`);
     });

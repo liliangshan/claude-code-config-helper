@@ -2,6 +2,42 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.59] - 2026-09-09
+
+### Fixed
+
+- Threshold auto-compaction now queues its command until the CLI emits a full-turn `result`, rather than sending it after an individual upstream response. This prevents CLI 2.1.260 from consuming `/compact` as an `absorbed_mid_turn` prompt while leaving the extension waiting for a compaction that never started.
+- Result-derived events carry an explicit turn-finished flag, distinct from tool-response completion and `message_stop`. Pending commands are consumed once per session, and an actual external compaction request cancels the pending automatic command.
+- Added regression coverage for deferred dispatch, session isolation and duplicate completion notifications.
+
+## [3.2.58] - 2026-09-09
+
+### Fixed
+
+- Task status updates that change nothing now return an explicit no-change message with continuation guidance, rather than repeating `Workflow status updated` with unchanged progress.
+- The task-flow service remembers the latest valid task ID and status in memory. Consecutive identical no-op updates strengthen the next continuation prompt with the next actionable task's ID, title and status, discouraging repeated tool calls without actual work. Real status transitions remain allowed, unfinished tasks are not skipped, and workflow creation or clearing resets the record.
+- Added regression coverage for repeated updates, next-task guidance, legitimate status transitions and workflow recreation.
+
+## [3.2.57] - 2026-09-09
+
+### Fixed
+
+- Automatic compaction no longer announces a started state before sending `/compact`. Queued commands retain the in-flight guard, while the UI starts showing compaction only after a CLI start event or a relay-detected summary request.
+- Compaction state resets now emit a failure event to both waiting senders and the UI, preventing the composer from remaining disabled after the backend marker is cleared.
+- Existing 30-minute stale-marker and 60-minute send-wait limits are unchanged.
+
+## [3.2.56] - 2026-09-09
+
+### Changed
+
+- **Sends wait for compaction as long as it is actually running.** The 3-minute fixed wait was too short: the CLI queues `/compact` behind the current turn, and slow compaction models can take several minutes to produce the summary, so a queued task-flow continuation was released while the summary request was still in flight. The send path now waits in 60-second rounds, re-checking the in-flight marker after each round, and only proceeds when compaction finishes, fails, the marker is reset, or a 60-minute safety cap is reached. The stale-marker window grows from 5 to 30 minutes, and a new compaction clears the previous outcome/error so old `in-flight marker stale` records no longer linger in `token-count.json`.
+
+## [3.2.55] - 2026-09-08
+
+### Fixed
+
+- **New requests no longer fire while a compaction is in flight.** The in-flight state only disabled the composer in the webview; the extension-side send path never checked it, so task-flow auto-continuation, watchdog self-healing resends and upstream-timeout Continues were still sent during compaction and ran concurrently with the summary request. `sendUserMessageToCli` now waits for the session's in-flight compaction to finish (up to 3 minutes, then proceeds) before sending. The `/compact` command itself is exempt, visible messages re-arm the relay watchdog after the wait, and an in-flight marker older than 5 minutes is treated as stale and reset so the send path can never be blocked permanently.
+
 ## [3.2.54] - 2026-09-08
 
 ### Changed

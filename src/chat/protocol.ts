@@ -1,4 +1,6 @@
 /** @file 内置 Chat Webview 与扩展宿主之间的基础消息协议。 */
+import type { RequestUsageSummary } from '../relay/requestUsage';
+export type { RequestUsageSummary } from '../relay/requestUsage';
 
 /**
  * Chat 消息路由来源。
@@ -13,6 +15,14 @@ export type ChatRole = 'user' | 'assistant' | 'system' | 'tool';
 
 /** Chat 消息片段。 */
 export interface ChatSegment {
+    /** 可靠绑定的上游请求 ID；无法关联时留空。 */
+    /** CLI 原样携带的响应 ID，不使用本地生成的消息 ID。 */
+    responseMessageId?: string;
+    /** 上游工具调用 ID，供工具结果精确关联。 */
+    responseCallId?: string;
+    requestId?: string;
+    /** 随消息历史保存的请求统计。 */
+    requestUsage?: RequestUsageSummary;
     /**
      * 片段稳定 ID。用于在流式过程中按 ID 复用同一个 segment（典型场景：工具
      * 卡片在 `tool_use` 启动、`input_json_delta` 累积、`tool_result` 回填等
@@ -248,6 +258,9 @@ export interface AskUserQuestionItem {
 /** Chat Webview 当前支持的界面语言。 */
 export type ChatUiLanguage = 'en' | 'zh-cn' | 'zh-tw' | 'ko' | 'ja' | 'fr' | 'de';
 
+/** 恢复 UI 仅接收身份和状态，不传原始 prompt。 */
+export type RequestRecoveryViewState = Omit<import('../chatRuntime/requestRecovery').RecoveryContext, 'originalPrompt' | 'lastFailure'>;
+
 /** 扩展宿主发送给 Webview 的消息。 */
 export type ExtensionToWebview =
     | {
@@ -267,6 +280,8 @@ export type ExtensionToWebview =
     | { type: 'session/init'; messages: ChatMessage[]; cliPath: string }
     | { type: 'session/title'; title: string; sessionId: string }
     | { type: 'sessions/list/result'; sessions: SessionListItem[] }
+    | { type: 'request/recovery'; state: RequestRecoveryViewState | null }
+    | { type: 'request/usage'; summary: RequestUsageSummary }
     | { type: 'message/append'; message: ChatMessage }
     | { type: 'message/patch'; id: string; segments: ChatSegment[]; pending?: boolean; append?: boolean }
     | {
@@ -510,6 +525,7 @@ export interface LlsTaskSnapshotPayload {
 /** Webview 发送给扩展宿主的消息。 */
 export type WebviewToExtension =
     | { type: 'webview/ready' }
+    | { type: 'request/retry'; identity: import('../chatRuntime/requestRecovery').RecoveryIdentity }
     | { type: 'user/send'; text: string; attachments?: ChatComposerAttachment[] }
     | { type: 'user/cancel' }
     | {
@@ -587,6 +603,7 @@ export type WebviewToExtension =
           /** 打开 LLS CCAI / CC 任务流菜单，用于替代原状态栏中的 CC 任务流按钮。 */
           type: 'taskFlow/open';
       }
+    | { type: 'taskFlow/retryCreate' }
     | {
           /** 请求开启 chat.tools.global.autoApprove，免去每次「Open Browser Page?」确认。 */
           type: 'browser/enableAutoApprove';

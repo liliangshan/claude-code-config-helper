@@ -57,6 +57,9 @@ beforeEach(() => {
     const scheduler = makeScheduler(new FakeTaskService());
     scheduler.cancel('测试前复位');
     scheduler.notifyRequestStarted();
+    AutoContinueScheduler.setRecoveryGuard(undefined);
+    AutoContinueScheduler.setBeforeSubmit(undefined);
+    AutoContinueScheduler.setSubmitter(undefined);
     scheduler.resetMissingToolCounter('测试前复位');
 });
 
@@ -127,4 +130,42 @@ test('disposeAll 清空看门狗、定时器与熔断计数，下一轮从零开
     assert.equal(AutoContinueScheduler.hasPendingWork(), true);
     scheduler.schedule();
     assert.equal(AutoContinueScheduler.hasPendingWork(), false);
+});
+
+/** 多次恢复暂停合并为一次续推且不消耗缺失工具额度。 */
+test('recovery blocks all scheduling paths and merges resume', () => {
+    const scheduler = makeScheduler(new FakeTaskService());
+    let blocked = true;
+    AutoContinueScheduler.setRecoveryGuard(() => blocked);
+    for (let i = 0; i < 6; i++) scheduler.schedule();
+    scheduler.scheduleAfterWorkflowTool(); scheduler.armIdleWatchdog();
+    assert.equal(AutoContinueScheduler.hasPendingWork(), false);
+    scheduler.resumeAfterRecovery();
+    assert.equal(AutoContinueScheduler.hasPendingWork(), false);
+    blocked = false;
+    scheduler.resumeAfterRecovery();
+    const timer = (AutoContinueScheduler as any).timer;
+    scheduler.resumeAfterRecovery();
+    assert.equal((AutoContinueScheduler as any).timer, timer);
+    assert.ok(timer);
+    scheduler.cancel('cleanup'); scheduler.schedule();
+    assert.equal(AutoContinueScheduler.hasPendingWork(), true);
+    scheduler.disposeAll();
+});
+
+/** beforeSubmit 等待期间恢复占用或用户取消均禁止迟到提交。 */
+test('recheck after async beforeSubmit prevents stale sends', async () => {
+    for (const cancel of [false, true]) {
+        const scheduler = makeScheduler(new FakeTaskService());
+        let release!: () => void; let sent = 0; let blocked = false;
+        AutoContinueScheduler.setRecoveryGuard(() => blocked);
+        AutoContinueScheduler.setSubmitter(async () => { sent++; });
+        AutoContinueScheduler.setBeforeSubmit(() => new Promise<void>(resolve => { release = resolve; }));
+        const version = (AutoContinueScheduler as any).version;
+        const run = (scheduler as any).runIfCurrent(version);
+        if (cancel) scheduler.cancel('user_cancel'); else blocked = true;
+        release(); await run;
+        assert.equal(sent, 0);
+        scheduler.disposeAll();
+    }
 });

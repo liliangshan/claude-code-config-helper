@@ -105,6 +105,31 @@ test('集成：触达阈值不再自动压缩，compactNow 才发送原生 /comp
     assert.equal(bucket.compact.triggerCount, 0);
 });
 
+/** 阈值命中只排队，整轮完成信号才能消费一次压缩命令。 */
+test('自动压缩等待 CLI 整轮完成，不在工具响应后发送', async () => {
+    const sent: string[] = [];
+    const service: any = new TokenBudgetService({
+        configManager: makeConfigManager() as any,
+        commandSender: async (command: string) => { sent.push(command); }
+    });
+    service.store = new TokenCountStore();
+    service.loaded = true;
+    service.isAutoCompactEnabled = () => true;
+    service.afterRecv({
+        sessionId: 'queued-auto', providerId: 'p1', modelId: 'm',
+        usage: { inputTokens: 60000 }, requestBodyAtSend: ''
+    });
+    await flushAsync();
+    assert.deepEqual(sent, []);
+    assert.equal(service.isCompactionInFlight('queued-auto'), true);
+    await service.flushPendingAutoCompaction('other-session');
+    assert.deepEqual(sent, []);
+    await service.flushPendingAutoCompaction('queued-auto');
+    await service.flushPendingAutoCompaction('queued-auto');
+    assert.deepEqual(sent, [CLAUDE_COMPACT_COMMAND]);
+    service.dispose();
+});
+
 test('集成：压缩在途时重复 afterRecv 不会产生任何 /compact', async () => {
     const sentCommands: string[] = [];
     const service: any = new TokenBudgetService({

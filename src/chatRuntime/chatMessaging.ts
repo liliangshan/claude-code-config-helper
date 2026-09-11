@@ -17,6 +17,11 @@ import type { ChatComposerAttachment, ChatRoute, ChatSegment, WebviewToExtension
 import { Logger } from '../logger';
 import { getChatViewHost } from '../runtime';
 import { ensureChatCliStarted } from './cliLifecycle';
+import { beginRecoveryTurn, bindRecoveryAdapter } from './selfHealing';
+import type { RecoveryContext } from './requestRecovery';
+import { randomUUID } from 'node:crypto';
+/** 为适配器实例分配稳定身份，重建后自动隔离。 */
+const recoveryAdapterIds = new WeakMap<object, string>();
 import {
     appendAssistantSegments,
     appendLocalChatMessage,
@@ -24,8 +29,12 @@ import {
     createActiveAssistantMessage,
     extractPlainTextFromSegments,
     finishActiveAssistantMessage,
+    getTokenBudgetServiceRef,
+    pruneChatRequestUsage,
     schedulePersistChatSession
 } from './chatSession';
+import { CLAUDE_COMPACT_COMMAND } from '../relay/tokenBudget/service';
+import { getSessionIdForRoute } from './routeState';
 import { cancelRouteProcess, chatCliCancelState, chatRouteState, getStreamAdapterForRoute, hiddenCliResponseTurnsByRoute, isRouteBusy } from './routeState';
 import type { UpstreamTimeoutKind } from '../relay/upstreamTimeouts';
 
@@ -458,6 +467,45 @@ export function isPathInside(target: string, root: string): boolean {
     return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+/** 发送前等待在途压缩的单轮等待时长；每轮到期后重新检查在途状态再决定是否继续等。 */
+const SEND_WAIT_COMPACTION_ROUND_MS = 60_000;
+
+/** 发送前等待在途压缩的总时长兜底；慢模型压缩很久也不放行，只防止彻底卡死。 */
+const SEND_WAIT_COMPACTION_MAX_MS = 60 * 60_000;
+
+/**
+ * 发送新消息前，若当前会话有压缩在途则一直等待其结束。
+ *
+ * 只要压缩没有明确失败就持续等待：每轮等 {@link SEND_WAIT_COMPACTION_ROUND_MS}，
+ * 到期后重新检查在途标记（其中包含失真复位逻辑），仍在途则继续下一轮，
+ * 直到收到 finished / failed、标记被复位或累计超过 {@link SEND_WAIT_COMPACTION_MAX_MS}。
+ * 这样 CLI 排队、慢模型生成摘要都不会被单轮超时误判放行。
+ *
+ * `/compact` 指令本身不等待（它就是压缩流程的一部分）。等待期间压缩摘要请求
+ * 命中 Relay 会清掉调用方先前登记的看门狗，因此可见消息在等待结束后重新登记一次。
+ *
+ * @param text 即将发送的文本，用于识别压缩指令与重新登记看门狗。
+ * @param hidden 是否为隐藏内部消息；隐藏消息不登记看门狗。
+ */
+async function waitForCompactionBeforeSend(text: string, hidden: boolean): Promise<void> {
+    if (text.trim() === CLAUDE_COMPACT_COMMAND) return;
+    const service = getTokenBudgetServiceRef();
+    if (!service) return;
+    const sessionId = getSessionIdForRoute('normal');
+    if (!sessionId || !service.isCompactionInFlight(sessionId)) return;
+    const startedAt = Date.now();
+    Logger.info(`[compact] 压缩在途，暂缓发送新消息：session=${sessionId}`);
+    let result: 'success' | 'failed' | 'timeout' | 'skipped' = 'timeout';
+    while (Date.now() - startedAt < SEND_WAIT_COMPACTION_MAX_MS) {
+        result = await service.waitForCompactionSettled(sessionId, SEND_WAIT_COMPACTION_ROUND_MS);
+        if (result !== 'timeout') break;
+        if (!service.isCompactionInFlight(sessionId)) { result = 'skipped'; break; }
+        Logger.info(`[compact] 压缩仍在进行，继续等待：session=${sessionId}, elapsed=${Math.round((Date.now() - startedAt) / 1000)}s`);
+    }
+    Logger.info(`[compact] 压缩等待结束（${result}，耗时 ${Math.round((Date.now() - startedAt) / 1000)}s），继续发送新消息`);
+    if (!hidden) requireDeps().armHttpExpectation(text);
+}
+
 /**
  * 通过 stream-json CLI 适配器发送用户消息。
  *
@@ -466,7 +514,12 @@ export function isPathInside(target: string, root: string): boolean {
  *
  * @param text 用户输入文本。
  */
-export async function sendUserMessageToCli(text: string, options: { hidden?: boolean; suppressResponse?: boolean; forceRoute?: ChatRoute } = {}): Promise<void> {
+export async function sendUserMessageToCli(text: string, options: { hidden?: boolean; suppressResponse?: boolean; forceRoute?: ChatRoute; recovery?: Readonly<RecoveryContext>; signal?: AbortSignal } = {}): Promise<void> {
+    // 压缩在途时先等它结束再发：任务流续推、自愈重发、超时 Continue 都走这里，
+    // 若不拦截，新请求会与压缩摘要请求并发，压缩结果也可能被新一轮覆盖。
+    await waitForCompactionBeforeSend(text, options.hidden === true);
+    options.signal?.throwIfAborted();
+    if (options.recovery && getSessionIdForRoute('normal') !== options.recovery.sessionId) throw new Error('Recovery session changed');
     chatCliCancelState.requested = false;
     chatSessionState.activeAssistantMessageId = undefined;
 
@@ -495,6 +548,14 @@ export async function sendUserMessageToCli(text: string, options: { hidden?: boo
             throw new Error(`${cliRoute} Chat CLI adapter 未就绪`);
         }
         Logger.info(`发送消息到 ${route} Chat CLI：length=${outgoingText.length}, hidden=${hidden}, forceRoute=${options.forceRoute ?? ''}`);
+        options.signal?.throwIfAborted();
+        if (options.recovery && getSessionIdForRoute('normal') !== options.recovery.sessionId) throw new Error('Recovery session changed');
+        if (!options.recovery && text.trim() !== CLAUDE_COMPACT_COMMAND) {
+            let cliInstanceId = recoveryAdapterIds.get(adapter);
+            if (!cliInstanceId) { cliInstanceId = randomUUID(); recoveryAdapterIds.set(adapter, cliInstanceId); }
+            const identity = beginRecoveryTurn({ sessionId: getSessionIdForRoute(cliRoute), cliInstanceId, route, originalPrompt: outgoingText, deliveryState: 'unknown' });
+            bindRecoveryAdapter(adapter, identity);
+        } else if (options.recovery) bindRecoveryAdapter(adapter, options.recovery);
         await adapter.sendUserMessage(outgoingText);
     } catch (err) {
         if (suppressResponse) hiddenCliResponseTurnsByRoute[cliRoute] = Math.max(0, hiddenCliResponseTurnsByRoute[cliRoute] - 1);
@@ -504,6 +565,14 @@ export async function sendUserMessageToCli(text: string, options: { hidden?: boo
         }
         throw err;
     }
+}
+
+/** 在原会话继续，禁止复用会截断历史的用户重发路径。 */
+export async function submitRecoveryMessage(context: Readonly<RecoveryContext>, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    if (!context.sessionId || getSessionIdForRoute('normal') !== context.sessionId) throw new Error('Original recovery session unavailable');
+    const text = context.deliveryState === 'not_sent' ? context.originalPrompt : 'Continue from the interrupted request using existing tool results. Do not repeat completed operations.';
+    await sendUserMessageToCli(text, { recovery: context, signal });
 }
 
 /**
@@ -548,22 +617,13 @@ export async function fillBuiltInChatComposer(text: string, focus: boolean): Pro
 }
 
 /**
- * 上游首字节或流空闲超时后，结束当前 pending 气泡并自动发送英文 Continue。
+ * 上游超时仅记录诊断；请求级故障证据由 Relay outcome 上报，等待 CLI 最终状态。
+ * 不立即发送 Continue，避免与原生重试并发。
  *
  * @param kind 超时类型。
  */
 export async function handleUpstreamTimeoutAutoContinue(kind: UpstreamTimeoutKind): Promise<void> {
-    const now = Date.now();
-    if (now - messagingState.lastUpstreamTimeoutContinueAt < UPSTREAM_TIMEOUT_CONTINUE_COOLDOWN_MS) {
-        Logger.warn(`上游超时自动 Continue 已在冷却中，忽略：kind=${kind}`);
-        return;
-    }
-    messagingState.lastUpstreamTimeoutContinueAt = now;
-    Logger.warn(`检测到上游${kind === 'first_byte' ? '首字节' : '流空闲'}超时，自动发送 Continue`);
-    requireDeps().clearHttpExpectation(`upstream_${kind}_timeout`);
-    await finishActiveAssistantMessage();
-    requireDeps().armHttpExpectation(UPSTREAM_TIMEOUT_CONTINUE_PROMPT);
-    await appendUserMessageAndSend(UPSTREAM_TIMEOUT_CONTINUE_PROMPT);
+    Logger.info(`[request-recovery] 上游超时，等待 CLI 原生重试结束：kind=${kind}`);
 }
 
 /**
@@ -625,6 +685,7 @@ export async function handleUserResend(id: string, editedText?: string): Promise
 
     // 截断：连同目标 user 消息一起删除。
     chatSessionState.messages = chatSessionState.messages.slice(0, index);
+    pruneChatRequestUsage();
     chatSessionState.activeAssistantMessageId = undefined;
     schedulePersistChatSession();
     // 走"局部截断"通知前端只移除该消息及其之后的 DOM 节点，避免

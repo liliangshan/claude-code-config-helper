@@ -16,6 +16,7 @@ import { appendAssistantSegments, configureChatSession, finishActiveAssistantMes
 import {
     appendUserMessageAndSend,
     configureChatMessaging,
+    submitRecoveryMessage,
     postActiveEditorAttachmentToChat
 } from '../chatRuntime/chatMessaging';
 import {
@@ -24,10 +25,12 @@ import {
     handleParsedCliEvent,
     notifyPermissionDeniedToUser
 } from '../chatRuntime/cliEventHandlers';
-import { configureCliLifecycle } from '../chatRuntime/cliLifecycle';
+import { configureCliLifecycle, recoverCliForRequest } from '../chatRuntime/cliLifecycle';
 import { applyTaskFlowModelForContinue, configureModelSelection, getModelLabelForRoute } from '../chatRuntime/modelSelection';
 import {
     armHttpExpectation,
+    configureRecoveryRuntime,
+    requestRecoveryController,
     cancelPendingResend,
     clearHttpExpectation
 } from '../chatRuntime/selfHealing';
@@ -105,7 +108,13 @@ export function configureRuntimeModules(): void {
         postModelsSnapshot,
         showChatToast
     });
-    configureCliEventHandlers({ showChatToast });
+    configureCliEventHandlers({ showChatToast, recoveryController: requestRecoveryController });
+    AutoContinueScheduler.setRecoveryGuard(() => requestRecoveryController.hasPendingRecovery());
+    configureRecoveryRuntime({
+        onSucceeded: () => getAutoContinueScheduler()?.resumeAfterRecovery(),
+        submit: submitRecoveryMessage,
+        recoverCli: recoverCliForRequest
+    });
     configureTaskFlowCommands({ pasteTaskFlowToExternalClaudeCode });
     configureCliLifecycle({
         ensureRelayServerStarted,

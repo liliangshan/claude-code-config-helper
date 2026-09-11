@@ -8,6 +8,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { createRequestUsageContext, normalizeRequestUsage } from '../../requestUsage';
 
 import {
     OpenAIChatToAnthropicStreamConverter,
@@ -160,8 +161,8 @@ test('Responses JSON 与 response.completed 对同一缓存读 usage 映射一�
     assert.equal(deltaUsage.input_tokens, json.input_tokens);
     assert.equal(deltaUsage.output_tokens, json.output_tokens);
     assert.equal(deltaUsage.cache_read_input_tokens, json.cache_read_input_tokens);
-    assert.equal('cache_creation_input_tokens' in json, false);
-    assert.equal('cache_creation_input_tokens' in deltaUsage, false);
+    assert.equal(json.cache_creation_input_tokens, 0);
+    assert.equal(deltaUsage.cache_creation_input_tokens, 0);
 
     const invalid = convertResponsesJsonToAnthropic({
         id: 'resp_invalid', model: 'gpt-x', status: 'completed', output: [],
@@ -202,4 +203,36 @@ test('Responses 流式：response.completed 的 usage 出现在 message_delta �
     assert.equal(messageDelta.usage.input_tokens, 94);
     assert.equal(messageDelta.usage.output_tokens, 30);
     assert.equal(messageDelta.usage.cache_read_input_tokens, 0);
+});
+
+/** 复现标题有缓存读取却缺少命中率，覆盖两种 OpenAI 协议的 JSON/SSE 输出。 */
+test('OpenAI JSON/SSE 用量可计算截图中的 99.5% 命中率，缺少读取仍保持未知', () => {
+    const context = createRequestUsageContext({}, 'normal', 'p', 'gpt-x');
+    for (const cached of [19712, 0, undefined]) {
+        const chatUsage = { prompt_tokens: 19812, completion_tokens: 14,
+            ...(cached === undefined ? {} : { prompt_tokens_details: { cached_tokens: cached } }) };
+        const response = { id: 'resp_hit', model: 'gpt-x', status: 'completed', output: [],
+            usage: { input_tokens: 19812, output_tokens: 14,
+                ...(cached === undefined ? {} : { input_tokens_details: { cached_tokens: cached } }) } };
+        const chat = new OpenAIChatToAnthropicStreamConverter();
+        const responses = new OpenAIResponsesToAnthropicStreamConverter();
+        const streams = [
+            chat.feed(sse({ id: 'chat_hit', choices: [], usage: chatUsage })) + chat.end(),
+            responses.feed(sse({ type: 'response.completed', response })) + responses.end()
+        ];
+        const usages = [convertOpenAIChatJsonToAnthropic(makeChatJson(chatUsage)).body.usage,
+            convertResponsesJsonToAnthropic(response).body.usage,
+            ...streams.map(stream => stream.split('\n').filter(line => line.startsWith('data: '))
+                .map(line => JSON.parse(line.slice(6))).find(event => event.type === 'message_delta').usage)];
+        for (const usage of usages) {
+            const summary = normalizeRequestUsage(context, {
+                inputTokens: usage.input_tokens, outputTokens: usage.output_tokens,
+                cacheReadInputTokens: usage.cache_read_input_tokens,
+                cacheCreationInputTokens: usage.cache_creation_input_tokens
+            }, 'completed');
+            assert.equal(summary.cacheHitRate, cached === undefined ? undefined : cached === 0 ? 0 : 99.5);
+            assert.equal(summary.totalInputTokens, cached === undefined ? undefined : 19812);
+            assert.equal(summary.cacheCreationInputTokens, cached === undefined ? undefined : 0);
+        }
+    }
 });

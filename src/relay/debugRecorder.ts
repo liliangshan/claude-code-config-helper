@@ -33,6 +33,8 @@ const TMP_FALLBACK_DIR_NAME = 'claude-code-relay-llsoai';
  * 单次转发要落盘的请求/响应快照。
  */
 export interface DebugRecordEntry {
+    /** 请求所属 CLI 会话 ID。 */
+    sessionId?: string;
     /** 提供商 ID，用于文件名分组。 */
     providerId: string;
     /** 目标 modelId。 */
@@ -174,7 +176,43 @@ export class DebugRecorder {
     }
 
     /**
-    * 兼容旧调用的空实现：不再保存单次转发的请求阶段快照。
+     * 将完整协议转换快照写入 `.LLSOAI/chat/yyyy-MM-dd/`。
+     *
+     * @param entry 单次转发请求及响应快照。
+     */
+    public async recordChatSnapshot(entry: DebugRecordEntry): Promise<void> {
+        try {
+            const dateText = this.formatDate(entry.startedAt);
+            const dir = path.join(await this.resolveDir(), 'chat', dateText);
+            await fs.mkdir(dir, { recursive: true });
+            const sessionId = entry.sessionId || this.readSessionId(entry.requestBody) || 'unknown-session';
+            const safeSessionId = sessionId.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const isCompaction = /"(?:command|input)"\s*:\s*"?\/?compact\b/i.test(entry.requestBody);
+            const timeSuffix = this.formatTime(entry.startedAt);
+            const protocol = entry.upstreamUrl.includes('/responses') ? 'responses' : entry.upstreamUrl.includes('/chat/completions') ? 'chat' : 'anthropic';
+            const payload = { requestId: entry.requestHeaders['x-request-id'], sessionId, protocol, startedAt: new Date(entry.startedAt).toISOString(), endedAt: new Date(entry.endedAt).toISOString(), providerId: entry.providerId, modelId: entry.modelId, upstreamUrl: entry.upstreamUrl, method: entry.method, requestHeaders: entry.requestHeaders, requestBody: entry.requestBody, upstreamRequestHeaders: entry.upstreamRequestHeaders, upstreamRequestBody: entry.upstreamRequestBody, responseStatus: entry.responseStatus, responseHeaders: entry.responseHeaders, responseBody: entry.responseBody, upstreamResponseBody: entry.upstreamResponseBody, error: entry.error };
+            const fileName = isCompaction ? `${safeSessionId}-${timeSuffix}.txt` : `${safeSessionId}.json`;
+            await fs.writeFile(path.join(dir, fileName), `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
+        } catch (err) {
+            Logger.warn(`写入 Chat 协议转换快照失败：${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+
+    /** 从请求体读取会话 ID，用于按会话聚合审计文件。 */
+    private readSessionId(body: string): string {
+        try {
+            const value = JSON.parse(body) as { metadata?: { session_id?: unknown; user_id?: unknown } };
+            if (typeof value.metadata?.session_id === 'string' && value.metadata.session_id) return value.metadata.session_id;
+            if (typeof value.metadata?.user_id === 'string') {
+                const nested = JSON.parse(value.metadata.user_id) as { session_id?: unknown };
+                return typeof nested.session_id === 'string' ? nested.session_id : '';
+            }
+            return '';
+        } catch { return ''; }
+    }
+
+    /**
+     * 兼容旧调用的空实现：不再保存单次转发的请求阶段快照。
     *
     * 为避免落盘完整 request body，现在只保留 {@link record} 的 messages 聚合文件。
      *
@@ -244,6 +282,13 @@ export class DebugRecorder {
         const d = new Date(time);
         const pad = (n: number, len = 2): string => String(n).padStart(len, '0');
         return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+
+    /** 将时间格式化为文件名使用的时分秒。 */
+    private formatTime(time: number): string {
+        const d = new Date(time);
+        const pad = (n: number): string => String(n).padStart(2, '0');
+        return `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
     }
 
     /**

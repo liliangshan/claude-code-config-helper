@@ -9,12 +9,14 @@
  * 仍留在 extension.ts 的函数通过 {@link configureWebviewMessages} 注入，
  * 避免反向 import 造成循环依赖。
  */
+import { requestRecoveryController, postRecoveryState } from './selfHealing';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { promises as fs } from 'fs';
 
 import { COMMANDS, CONFIG_NAMESPACE, type ChatCacheTtl } from '../constants';
 import type { ChatMessage, ChatModelOption, LlsTaskSnapshotPayload, ChatQuickPermissionMode, ChatRoute, ChatRoutedModelSelection, ChatUiLanguage, SessionListItem, WebviewToExtension } from '../chat/protocol';
+import { requestUsageRegistry } from './requestUsage';
 import { Logger } from '../logger';
 import { getChatViewHost, getConfigManager, getLlsTaskService } from '../runtime';
 import {
@@ -38,6 +40,7 @@ import {
     writeSessionCustomTitle
 } from './chatSession';
 import {
+    appendUserMessageAndSend,
     buildPromptWithAttachments,
     buildUserDisplaySegments,
     handleUserResend,
@@ -123,6 +126,10 @@ export async function switchChatRoute(route: ChatRoute, reason: string): Promise
  * @param message WebviewToExtension 协议消息。
  */
 export function handleChatWebviewMessage(message: WebviewToExtension): Promise<void> {
+    // 在入队前取消恢复，避免旧恢复趁附件读取或会话切换排队期间发送。
+    if (['user/send', 'user/resend', 'user/cancel', 'session/clear', 'session/resume', 'model/select'].includes(message.type)) {
+        requireDeps().cancelPendingResend(`webview:${message.type}`);
+    }
     if (message.type === 'user/cancel' || message.type === 'askUser/answers' || message.type === 'log') {
         return dispatchChatWebviewMessage(message);
     }
@@ -139,6 +146,9 @@ export function handleChatWebviewMessage(message: WebviewToExtension): Promise<v
  */
 async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<void> {
     switch (message.type) {
+        case 'request/retry':
+            if (message.identity && typeof message.identity === 'object') requestRecoveryController.retryManually(message.identity);
+            return;
         case 'webview/ready':
             await postChatUiLanguage();
             await getChatViewHost()?.postMessage({
@@ -146,6 +156,7 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
                 messages: chatSessionState.messages,
                 cliPath: getChatCliConfigService()!.getConfig().cliPath ?? ''
             });
+            await postRecoveryState();
             await postChatModelOptions();
             await postChatTaskFlowModelOptions();
             await postModelsSnapshot();
@@ -194,6 +205,17 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
         case 'config/open':
             await vscode.commands.executeCommand(COMMANDS.openConfigPanel);
             return;
+        case 'taskFlow/retryCreate': {
+            const service = getLlsTaskService();
+            const prompt = service?.retryWorkflowCreation();
+            if (!prompt) return;
+            try {
+                await appendUserMessageAndSend(prompt, { forceRoute: 'taskFlow' });
+            } catch (error) {
+                service?.failWorkflowCreationRetry(error instanceof Error ? error.message : String(error));
+            }
+            return;
+        }
         case 'taskFlow/open':
             await requireDeps().openLlsCcaiTaskMenu();
             return;
@@ -235,6 +257,7 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
             await handleUserResend(message.id, message.text);
             return;
         case 'session/clear':
+            requestUsageRegistry.clearRequestUsageBindings();
             chatSessionState.messages = [];
             chatSessionState.activeAssistantMessageId = undefined;
             requireDeps().clearHttpExpectation('session_clear');
@@ -290,6 +313,7 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
         case 'session/resume': {
             const targetSessionId = message.sessionId;
             Logger.info(`[session/resume] 切换到历史会话：sessionId=${targetSessionId}`);
+            requestUsageRegistry.clearRequestUsageBindings();
             chatSessionState.messages = [];
             chatSessionState.activeAssistantMessageId = undefined;
             requireDeps().clearHttpExpectation('session_resume');
