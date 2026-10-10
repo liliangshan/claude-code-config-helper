@@ -6,7 +6,7 @@
  */
 
 /** OpenAI reasoning effort 档位。 */
-export type ReasoningEffort = 'low' | 'medium' | 'high';
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 
 /**
  * 把 Anthropic thinking.budget_tokens 映射为 OpenAI reasoning effort 档位。

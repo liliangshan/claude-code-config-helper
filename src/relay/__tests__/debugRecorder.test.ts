@@ -25,6 +25,12 @@ const { DebugRecorder } = require('../debugRecorder') as typeof import('../debug
 /** 调试目录路径。 */
 const DEBUG_DIR = path.join(WORKSPACE_ROOT, '.LLSOAI');
 
+/** 聊天记录根目录路径。 */
+const CHAT_DIR = path.join(DEBUG_DIR, 'chat');
+
+/** 错误快照根目录路径。 */
+const ERROR_DIR = path.join(DEBUG_DIR, 'error');
+
 /**
  * 构造一条最小可用的转发快照。
  *
@@ -48,13 +54,18 @@ function makeEntry(body: string): Parameters<InstanceType<typeof DebugRecorder>[
 }
 
 /**
- * 列出调试目录下的 jsonl 文件。
+ * 列出聊天日期子目录下的 jsonl 文件。
  *
- * @returns 文件名数组；目录不存在时为空数组。
+ * @returns 相对聊天根目录的文件路径数组；目录不存在时为空数组。
  */
 async function listJsonl(): Promise<string[]> {
     try {
-        return (await fs.readdir(DEBUG_DIR)).filter((name) => name.endsWith('.jsonl'));
+        const dates = await fs.readdir(CHAT_DIR);
+        return (await Promise.all(dates.map(async (date) =>
+            (await fs.readdir(path.join(CHAT_DIR, date)))
+                .filter((name) => name.endsWith('.jsonl'))
+                .map((name) => path.join(date, name))
+        ))).flat();
     } catch {
         return [];
     }
@@ -75,7 +86,9 @@ test('开关开启时同一 messages 重复写只追加一行', async () => {
 
     const files = await listJsonl();
     assert.equal(files.length, 1);
-    const text = await fs.readFile(path.join(DEBUG_DIR, files[0]), 'utf-8');
+    assert.match(files[0], /^\d{4}-\d{2}-\d{2}[/\\]\d{4}-\d{2}-\d{2}\.jsonl$/);
+    assert.deepEqual(await fs.readdir(DEBUG_DIR), ['chat']);
+    const text = await fs.readFile(path.join(CHAT_DIR, files[0]), 'utf-8');
     const lines = text.split('\n').filter((line) => line.trim());
     assert.equal(lines.length, 1);
     assert.equal((JSON.parse(lines[0]) as { message: { content: string } }).message.content, '重复内容');
@@ -92,7 +105,7 @@ test('image block 被替换为体积占位，不写入 base64 原文', async () 
     })));
 
     const files = await listJsonl();
-    const text = await fs.readFile(path.join(DEBUG_DIR, files[0]), 'utf-8');
+    const text = await fs.readFile(path.join(CHAT_DIR, files[0]), 'utf-8');
     assert.equal(text.includes(base64), false);
     assert.equal(text.includes('"omitted":true'), true);
     assert.equal(text.includes(`"bytes":${base64.length}`), true);
@@ -107,14 +120,28 @@ test('recordUpstreamError: 连写 25 次后目录内最多保留 20 个快照，
         tools: [{ name: 'Read' }, { name: 'Write' }],
         messages: Array.from({ length: 10 }, (_, i) => ({ role: 'user', content: `msg-${i}` }))
     });
+    // 跨日期的历史错误也应计入全局 20 个上限。
+    const oldDir = path.join(ERROR_DIR, '2000-01-01');
+    await fs.mkdir(oldDir, { recursive: true });
+    await fs.writeFile(path.join(oldDir, 'error-400-1-old.json'), '{}');
+    const unrelatedFile = path.join(oldDir, 'keep.txt');
+    await fs.writeFile(unrelatedFile, 'keep');
     for (let i = 0; i < 25; i += 1) {
         await recorder.recordUpstreamError(400, bigBody, 'upstream error');
     }
 
-    const names = (await fs.readdir(DEBUG_DIR)).filter((name) => name.startsWith('error-'));
+    const dates = await fs.readdir(ERROR_DIR);
+    const names = (await Promise.all(dates.map(async (date) =>
+        (await fs.readdir(path.join(ERROR_DIR, date)))
+            .filter((name) => name.startsWith('error-'))
+            .map((name) => path.join(date, name))
+    ))).flat();
     assert.equal(names.length, 20);
+    assert.ok(names.every((name) => /^\d{4}-\d{2}-\d{2}[/\\]error-400-/.test(name)));
+    assert.equal(await fs.readFile(unrelatedFile, 'utf-8'), 'keep');
+    assert.deepEqual((await fs.readdir(DEBUG_DIR)).sort(), ['chat', 'error']);
 
-    const snapshot = JSON.parse(await fs.readFile(path.join(DEBUG_DIR, names[0]), 'utf-8')) as {
+    const snapshot = JSON.parse(await fs.readFile(path.join(ERROR_DIR, names[0]), 'utf-8')) as {
         request: { model: string; tools: string[]; messages: unknown[] };
     };
     assert.equal(snapshot.request.model, 'm1');

@@ -162,6 +162,7 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
             await postModelsSnapshot();
             await getChatViewHost()?.postMessage({ type: 'route/changed', route: chatRouteState.active });
             await postChatPermissionMode();
+            await postChatReasoningEffort();
             await postChatCacheTtl();
             await postChatSubagentsEnabled();
             await postChatAutoCompactEnabled();
@@ -195,6 +196,9 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
             return;
         case 'autoCompact/select':
             await selectChatAutoCompactEnabled(message.enabled);
+            return;
+        case 'reasoningEffort/select':
+            await selectChatReasoningEffort(message.effort);
             return;
         case 'cacheTtl/select':
             await selectChatCacheTtl(message.ttl);
@@ -657,6 +661,40 @@ export async function selectChatAutoCompactEnabled(enabled: boolean): Promise<vo
         await showChatToast('error', `自动压缩开关保存失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
         await postChatAutoCompactEnabled();
+    }
+}
+
+/** 推送当前工作区思考等级，初始化及保存失败时以真实配置回填。 */
+export async function postChatReasoningEffort(): Promise<void> {
+    const manager = getConfigManager();
+    if (!manager) return;
+    await getChatViewHost()?.postMessage({ type: 'reasoningEffort/current', effort: manager.getChatReasoningEffort() });
+}
+
+/**
+ * 保存工作区思考等级，下一次请求立即生效，不重启 CLI。
+ * @param effort 用户选择的思考等级。
+ * @returns 保存及界面回填完成。
+ */
+export async function selectChatReasoningEffort(effort: string): Promise<void> {
+    const manager = getConfigManager();
+    if (!manager) throw new Error('配置管理器尚未初始化');
+    try {
+        await manager.setChatReasoningEffort(effort);
+    } catch (error) {
+        const messages: Record<string, string> = {
+            en: 'Failed to save reasoning effort',
+            'zh-cn': '思考等级保存失败',
+            'zh-tw': '思考等級儲存失敗',
+            ko: '추론 수준 저장 실패',
+            ja: '推論レベルの保存に失敗しました',
+            fr: 'Échec de l’enregistrement du niveau de raisonnement',
+            de: 'Denktiefe konnte nicht gespeichert werden'
+        };
+        const label = messages[manager.getResolvedUiLanguage()] ?? messages.en;
+        await showChatToast('error', `${label}: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+        await postChatReasoningEffort();
     }
 }
 

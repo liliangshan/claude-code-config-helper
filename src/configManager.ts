@@ -209,7 +209,7 @@ export class ConfigManager implements vscode.Disposable {
      *
      * 默认关闭：开启后每次转发都要做一次内容去重与追加写盘，属于纯排障开销。
      *
-     * @returns true 表示允许 DebugRecorder 写 .LLSOAI/yyyy-MM-dd.jsonl。
+     * @returns true 表示允许 DebugRecorder 写 .LLSOAI/chat/yyyy-MM-dd/yyyy-MM-dd.jsonl。
      */
     public getRelayDebugRecordEnabled(): boolean {
         return vscode.workspace
@@ -270,6 +270,26 @@ export class ConfigManager implements vscode.Disposable {
     public async setChatCacheTtl(ttl: ChatCacheTtl): Promise<void> {
         const normalized: ChatCacheTtl = ttl === '5m' || ttl === '1h' || ttl === 'default' ? ttl : CHAT_CACHE_TTL_DEFAULT;
         await this.context.globalState.update(CHAT_CACHE_TTL_STATE_KEY, normalized);
+    }
+
+    /**
+     * 实时读取工作区思考等级；auto 表示不额外下发思考等级参数。
+     * @returns 经校验的思考等级。
+     */
+    public getChatReasoningEffort(): 'auto' | 'low' | 'medium' | 'high' | 'xhigh' {
+        const value = vscode.workspace.getConfiguration(CCAI_NAMESPACE).get<string>('chat.reasoningEffort', 'auto');
+        return value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh' ? value : 'auto';
+    }
+
+    /**
+     * 保存思考等级到工作区配置，不重启 CLI。
+     * @param effort 用户选择的思考等级。
+     * @returns 配置持久化完成。
+     */
+    public async setChatReasoningEffort(effort: string): Promise<void> {
+        if (!['auto', 'low', 'medium', 'high', 'xhigh'].includes(effort)) throw new Error('无效的思考等级');
+        if (!vscode.workspace.workspaceFolders?.length) throw new Error('请先打开工作区再保存思考等级');
+        await vscode.workspace.getConfiguration(CCAI_NAMESPACE).update('chat.reasoningEffort', effort, vscode.ConfigurationTarget.Workspace);
     }
 
     /** 读取当前工作区的子智能体开关，默认关闭，不继承旧的全局选择。 */

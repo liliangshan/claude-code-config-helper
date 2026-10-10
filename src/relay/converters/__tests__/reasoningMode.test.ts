@@ -121,6 +121,23 @@ test('Responses passthrough：thinking.type=disabled 时不下发', () => {
     assert.equal('reasoning' in body, false);
 });
 
+test('工作区显式思考等级：覆盖客户端预算及模型 off 策略', () => {
+    for (const effort of ['low', 'medium', 'high', 'xhigh'] as const) {
+        const source = makeAnthropicBody({ type: 'enabled', budget_tokens: 32000 });
+        const original = JSON.stringify(source);
+        for (const reasoningMode of ['off', 'passthrough'] as const) {
+            assert.equal(convertAnthropicToOpenAIChat(source, { reasoningMode, reasoningEffort: effort }).body.reasoning_effort, effort);
+            assert.deepEqual(convertAnthropicToOpenAIResponses(source, { reasoningMode, reasoningEffort: effort }).body.reasoning, { effort });
+        }
+        assert.equal(JSON.stringify(source), original);
+    }
+});
+
+test('auto 不额外注入参数，无客户端 thinking 时两个协议均不下发等级', () => {
+    assert.equal('reasoning_effort' in convertAnthropicToOpenAIChat(makeAnthropicBody(), { reasoningMode: 'passthrough', reasoningEffort: undefined }).body, false);
+    assert.equal('reasoning' in convertAnthropicToOpenAIResponses(makeAnthropicBody(), { reasoningMode: 'passthrough', reasoningEffort: undefined }).body, false);
+});
+
 // ===== 方案 B-1：Chat 响应侧读回 thinking block =====
 
 test('B-1 红线：off（默认构造）喂含非空 reasoning_content 的流，输出与不带 reasoning 字段时逐字节相同', () => {

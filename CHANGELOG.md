@@ -2,6 +2,20 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.65] - 2026-10-10
+
+### Added
+
+- Added a reasoning-effort selector beside the task-flow model in the chat composer: Auto, Low, Medium, High and XHigh. Labels, tooltips, accessibility text and save-failure notifications support all seven interface languages.
+- Selections are saved to workspace settings as `claudeCodeConfigHelper.chat.reasoningEffort`. Auto adds no override and preserves existing client/model reasoning handling. Explicit selections take effect on the next request without restarting the CLI; requests already in flight are unchanged.
+- OpenAI Chat uses `reasoning_effort`, Responses uses `reasoning.effort`, and Anthropic uses `output_config.effort`, mapping XHigh to `max`. Explicit workspace selections take priority over model-level reasoning settings; upstream model support is required.
+- Added regression coverage for workspace persistence, validation, live request selection and explicit reasoning overrides.
+
+### Changed
+
+- Compaction request snapshots and optional daily message logs now use `.LLSOAI/chat/YYYY-MM-DD/`; upstream error snapshots use `.LLSOAI/error/YYYY-MM-DD/`. Date directories use local time and are created automatically.
+- Error snapshots remain capped at 20 files in total across date directories. Existing root-level files are not migrated or removed; session/configuration file locations are unchanged.
+
 ## [3.2.59] - 2026-09-09
 
 ### Fixed

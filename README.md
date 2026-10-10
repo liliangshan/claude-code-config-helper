@@ -1,8 +1,15 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.59
+**Version:** 3.2.65
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
+
+## What's New in 3.2.65
+
+- **Workspace reasoning effort, without CLI restarts.** A selector beside the task-flow model offers Auto, Low, Medium, High and XHigh. It saves `claudeCodeConfigHelper.chat.reasoningEffort` to workspace settings and is read on each request. Auto adds no override, preserving existing client/model handling; explicit selections apply to subsequent requests only and take priority over the model-level reasoning policy.
+- **Protocol-aware parameters.** OpenAI Chat sends `reasoning_effort`; Responses sends `reasoning.effort`; Anthropic sends `output_config.effort`, with XHigh mapped to `max`. The selected level must be supported by the upstream model or the upstream may reject the request.
+- **Seven-language controls.** Options, tooltips, accessibility labels and save-failure notifications follow English, Simplified Chinese, Traditional Chinese, Korean, Japanese, French or German. Protocol values remain `auto`, `low`, `medium`, `high` and `xhigh` regardless of display language.
+- **Date-organized debug records.** Compaction request snapshots and optional daily message logs are written to `.LLSOAI/chat/YYYY-MM-DD/`; upstream error snapshots go to `.LLSOAI/error/YYYY-MM-DD/`. Directories are created automatically using the local date. The error snapshot limit remains 20 files across all date directories. Existing files are not migrated, and session/configuration files stay in their original locations.
 
 ## What's New in 3.2.59
 

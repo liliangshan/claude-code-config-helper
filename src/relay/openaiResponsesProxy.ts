@@ -140,6 +140,7 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
         const converted = convertAnthropicToOpenAIResponses(anthropicBody, {
             cacheMode: resolveModelCacheMode(provider, modelId),
             reasoningMode: resolveReasoningMode(provider, modelId),
+            reasoningEffort: ctx.reasoningEffort,
             explicitCache,
             cacheSessionId: explicitCache ? extractExplicitCacheSessionId(anthropicBody) : undefined
         });

@@ -1,4 +1,5 @@
 {
+    "configuration.chat.reasoningEffort.description": "Reasoning effort. Auto adds no override; other levels apply to the next request without restarting the CLI.",
     "extension.displayName": "Claude Code Config Helper",
     "extension.description": "Use a built-in Chat Webview backed by the local Claude CLI, with task flows, shared prompts, diagnostics, and provider/model settings.",
     "command.openConfigPanel.title": "Open LLS CCAI Setting",

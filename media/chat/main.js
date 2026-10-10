@@ -36,6 +36,15 @@
     };
 
 
+    /** 思考等级标签及说明随界面语言实时切换，协议值保持不变。 */
+    Object.assign(chatTranslations.en, { reasoningTitle: 'Reasoning effort: saved to workspace; applies to the next request without restarting', reasoningAria: 'Reasoning effort', reasoningAuto: 'Reasoning: Auto', reasoningLow: 'Reasoning: Low', reasoningMedium: 'Reasoning: Medium', reasoningHigh: 'Reasoning: High', reasoningXHigh: 'Reasoning: XHigh' });
+    Object.assign(chatTranslations['zh-cn'], { reasoningTitle: '思考等级：保存到工作区，下次请求生效，无需重启', reasoningAria: '思考等级', reasoningAuto: '思考：自动', reasoningLow: '思考：低', reasoningMedium: '思考：中', reasoningHigh: '思考：高', reasoningXHigh: '思考：极高' });
+    Object.assign(chatTranslations['zh-tw'], { reasoningTitle: '思考等級：儲存至工作區，下次請求生效，無需重新啟動', reasoningAria: '思考等級', reasoningAuto: '思考：自動', reasoningLow: '思考：低', reasoningMedium: '思考：中', reasoningHigh: '思考：高', reasoningXHigh: '思考：極高' });
+    Object.assign(chatTranslations.ko, { reasoningTitle: '추론 수준: 작업 영역에 저장되며 재시작 없이 다음 요청부터 적용', reasoningAria: '추론 수준', reasoningAuto: '추론: 자동', reasoningLow: '추론: 낮음', reasoningMedium: '추론: 중간', reasoningHigh: '추론: 높음', reasoningXHigh: '추론: 매우 높음' });
+    Object.assign(chatTranslations.ja, { reasoningTitle: '推論レベル：ワークスペースに保存し、再起動せず次のリクエストから適用', reasoningAria: '推論レベル', reasoningAuto: '推論：自動', reasoningLow: '推論：低', reasoningMedium: '推論：中', reasoningHigh: '推論：高', reasoningXHigh: '推論：最高' });
+    Object.assign(chatTranslations.fr, { reasoningTitle: 'Niveau de raisonnement : enregistré dans l’espace de travail, appliqué à la prochaine requête sans redémarrage', reasoningAria: 'Niveau de raisonnement', reasoningAuto: 'Raisonnement : Auto', reasoningLow: 'Raisonnement : Faible', reasoningMedium: 'Raisonnement : Moyen', reasoningHigh: 'Raisonnement : Élevé', reasoningXHigh: 'Raisonnement : Très élevé' });
+    Object.assign(chatTranslations.de, { reasoningTitle: 'Denktiefe: im Arbeitsbereich gespeichert; gilt ohne Neustart ab der nächsten Anfrage', reasoningAria: 'Denktiefe', reasoningAuto: 'Denken: Auto', reasoningLow: 'Denken: Niedrig', reasoningMedium: 'Denken: Mittel', reasoningHigh: 'Denken: Hoch', reasoningXHigh: 'Denken: Sehr hoch' });
+
     /** 子智能体开关名称和提示随聊天界面语言切换。 */
     Object.assign(chatTranslations.en, { subagentsLabel: 'Subagents', subagentsTitle: 'Provide Agent, SendMessage and ListAgents tools to the model; takes effect on the next request' });
     Object.assign(chatTranslations['zh-cn'], { subagentsLabel: '子智能体', subagentsTitle: '是否向模型提供 Agent、SendMessage、ListAgents 工具；下一次请求生效' });
@@ -518,6 +527,7 @@
     const composerTaskflowChipEl = document.querySelector('[data-role="composer-taskflow-chip"]');
     const composerNormalChipNameEl = document.querySelector('[data-role="composer-normal-chip-name"]');
     const composerTaskflowChipNameEl = document.querySelector('[data-role="composer-taskflow-chip-name"]');
+    const reasoningEffortSelectEl = document.querySelector('[data-role="reasoning-effort-select"]');
     const permissionModeSelectEl = document.querySelector('[data-role="permission-mode-select"]');
     const tokenMeterEl = document.querySelector('[data-role="token-meter"]');
     const tokenMeterWrapEl = document.querySelector('[data-role="token-meter-wrap"]');
@@ -5506,6 +5516,12 @@
                 // legacy noop：按需专家方案已退役 route/changed 协议，旧版缓存的 webview
                 // 仍��能订阅此消息，这里显式吞掉，避免控制台报 warn。
                 break;
+            case 'reasoningEffort/current':
+                if (reasoningEffortSelectEl instanceof HTMLSelectElement) {
+                    reasoningEffortSelectEl.value = ['low', 'medium', 'high', 'xhigh'].includes(message.effort) ? message.effort : 'auto';
+                    reasoningEffortSelectEl.disabled = false;
+                }
+                break;
             case 'permissionMode/current':
                 composerState.permissionMode = message.mode === 'bypassPermissions' ? 'bypassPermissions' : 'acceptEdits';
                 renderPermissionModeSelect();
@@ -5945,6 +5961,13 @@
             closeModelPicker();
         });
     }
+    /** 保存思考等级期间禁止重复选择，等待宿主回填，不触发 CLI 重启。 */
+    reasoningEffortSelectEl?.addEventListener('change', () => {
+        if (!(reasoningEffortSelectEl instanceof HTMLSelectElement)) return;
+        const effort = reasoningEffortSelectEl.value;
+        reasoningEffortSelectEl.disabled = true;
+        post({ type: 'reasoningEffort/select', effort });
+    });
     permissionModeSelectEl?.addEventListener('change', () => {
         if (!(permissionModeSelectEl instanceof HTMLSelectElement)) return;
         const mode = permissionModeSelectEl.value === 'bypassPermissions' ? 'bypassPermissions' : 'acceptEdits';

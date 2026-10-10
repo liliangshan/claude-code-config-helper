@@ -141,6 +141,7 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
         const converted = convertAnthropicToOpenAIChat(anthropicBody, {
             cacheMode: resolveModelCacheMode(provider, modelId),
             reasoningMode,
+            reasoningEffort: ctx.reasoningEffort,
             explicitCache,
             cacheSessionId: explicitCache ? extractExplicitCacheSessionId(anthropicBody) : undefined
         });

@@ -130,6 +130,8 @@ export interface AnthropicToOpenAIChatResult {
 export interface AnthropicConversionOptions {
     /** 模型级缓存策略；缺省按 `'auto'` 处理，即丢弃 `cache_control` 断点。 */
     cacheMode?: ModelCacheMode;
+    /** 工作区显式选择的思考等级，优先于模型策略及客户端预算映射。 */
+    reasoningEffort?: ReasoningEffort;
     /** 模型级思考策略；缺省按 `'off'` 处理，即不下发任何 reasoning 参数。 */
     reasoningMode?: ModelReasoningMode;
     /** 是否生成网关显式缓存字段。 */
@@ -178,7 +180,9 @@ export function convertAnthropicToOpenAIChat(
     }
     // passthrough 时把 Anthropic 顶层 thinking.budget_tokens 映射为 OpenAI
     // reasoning_effort，让上游真正开启思考；off 模式下该分支整体短路，输出不变。
-    if (options?.reasoningMode === 'passthrough') {
+    if (options?.reasoningEffort) {
+        body.reasoning_effort = options.reasoningEffort;
+    } else if (options?.reasoningMode === 'passthrough') {
         const effort = readThinkingEffort(source.thinking);
         if (effort) body.reasoning_effort = effort;
     }

@@ -70,6 +70,13 @@
                             <span class="composer-model-chip__label" data-i18n="modelsBarTaskFlow">Task flow:</span>
                             <span class="composer-model-chip__name" data-role="composer-taskflow-chip-name">—</span>
                         </button>
+                        <select class="model-select" data-role="reasoning-effort-select" data-i18n-title="reasoningTitle" data-i18n-aria-label="reasoningAria" title="Reasoning effort: saved to workspace; applies to the next request without restarting" aria-label="Reasoning effort">
+                            <option value="auto" data-i18n="reasoningAuto">Reasoning: Auto</option>
+                            <option value="low" data-i18n="reasoningLow">Reasoning: Low</option>
+                            <option value="medium" data-i18n="reasoningMedium">Reasoning: Medium</option>
+                            <option value="high" data-i18n="reasoningHigh">Reasoning: High</option>
+                            <option value="xhigh" data-i18n="reasoningXHigh">Reasoning: XHigh</option>
+                        </select>
                         <span class="token-meter-wrap" data-role="token-meter-wrap" hidden>
                             <button type="button" class="token-meter" data-role="token-meter" aria-haspopup="dialog" aria-expanded="false" aria-live="polite"></button>
                             <div class="token-meter-popover" data-role="token-meter-popover" role="dialog" aria-hidden="true">

@@ -96,7 +96,9 @@ export interface AnthropicToOpenAIResponsesResult {
 export interface AnthropicConversionOptions {
     /** 模型级缓存策略；缺省按 `'auto'` 处理，即丢弃 `cache_control` 断点。 */
     cacheMode?: ModelCacheMode;
-    /** 模型级思考策略；缺省按 `'off'` 处理，即不下发任何 reasoning 参数。 */
+    /** 工作区显式思考等级，优先于模型策略。 */
+    reasoningEffort?: ReasoningEffort;
+    /** 模型级思考策略；缺省按 off 处理，不映射客户端预算。 */
     reasoningMode?: ModelReasoningMode;
     /** 是否生成 Responses 网关显式缓存字段。 */
     explicitCache?: boolean;
@@ -141,7 +143,9 @@ export function convertAnthropicToOpenAIResponses(
     if (source.stream !== undefined) body.stream = source.stream;
     // passthrough 时把 Anthropic 顶层 thinking.budget_tokens 映射为 Responses
     // reasoning.effort；off 模式下该分支整体短路，输出不变。
-    if (options?.reasoningMode === 'passthrough') {
+    if (options?.reasoningEffort) {
+        body.reasoning = { effort: options.reasoningEffort };
+    } else if (options?.reasoningMode === 'passthrough') {
         const effort = readThinkingEffort(source.thinking);
         if (effort) body.reasoning = { effort };
     }

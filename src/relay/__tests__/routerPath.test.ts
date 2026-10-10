@@ -4,9 +4,17 @@
 
 import * as assert from 'assert';
 import * as http from 'http';
+import * as fs from 'node:fs/promises';
+import { mkdtempSync } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+/** 压缩快照测试使用独立工作区，避免写入真实项目目录。 */
+const WORKSPACE_ROOT = mkdtempSync(path.join(os.tmpdir(), 'ccai-compact-snapshot-'));
 
 import { installVscodeStub } from '../../chat/__tests__/testUtils/vscodeStub';
 installVscodeStub({
+    workspaceFolderFsPath: WORKSPACE_ROOT,
     values: {
         claudeCodeConfigHelper: {
             'chat.compactionMode.project.enabled': true,
@@ -26,6 +34,8 @@ const { isRelayMessagesPath } = require('../server') as typeof import('../server
 const { createRelayRouter, parseLocalCliPath } = require('../router') as typeof import('../router');
 type RelayUpstreamRequestInfo = import('../router').RelayUpstreamRequestInfo;
 type UpstreamAdapter = import('../router').UpstreamAdapter;
+/** 模拟工作区配置实时变化，不重新创建真实 CLI。 */
+let selectedEffort: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' = 'auto';
 type ProviderConfig = import('../../types').ProviderConfig;
 type LlsTaskService = import('../../llsTask/service').LlsTaskService;
 
@@ -70,11 +80,12 @@ async function requestRouter(
             onHandle?.();
             ctx.res.statusCode = 200;
             ctx.res.setHeader('content-type', 'application/json');
-            ctx.res.end(JSON.stringify({ ok: true }));
+            ctx.res.end(JSON.stringify({ ok: true, reasoningEffort: ctx.reasoningEffort }));
         }
     };
     const router = createRelayRouter({
         configManager: {
+            getChatReasoningEffort: () => selectedEffort,
             getCurrentModel: () => ({ providerId: 'p', modelId: 'same-model' }),
             getProviderWithSecret: async () => provider
         } as never,
@@ -204,6 +215,21 @@ const tests: TestCase[] = [
         }
     },
     {
+        name: '思考等级按请求实时读取，auto 不传，切换不依赖 CLI 重启',
+        run: async () => {
+            try {
+                for (const effort of ['auto', 'low', 'medium', 'high', 'xhigh', 'auto'] as const) {
+                    selectedEffort = effort;
+                    const result = await requestRouter('/normal/v1/messages', () => {});
+                    const body = JSON.parse(result.body);
+                    assert.strictEqual(body.reasoningEffort, effort === 'auto' ? undefined : effort);
+                }
+            } finally {
+                selectedEffort = 'auto';
+            }
+        }
+    },
+    {
         name: '/compact 请求应使用压缩专用模型而不是请求体模型',
         run: async () => {
             const starts: RelayUpstreamRequestInfo[] = [];
@@ -216,6 +242,30 @@ const tests: TestCase[] = [
             assert.strictEqual(starts[0].providerId, 'p');
             assert.strictEqual(starts[0].modelId, 'compact-model');
             assert.strictEqual(JSON.parse(result.body).ok, true);
+            const debugDir = path.join(WORKSPACE_ROOT, '.LLSOAI');
+            const chatDir = path.join(debugDir, 'chat');
+            // 快照是异步旁路写入，等待文件完成后再检查目录和内容。
+            let snapshotFiles: string[] = [];
+            for (let attempt = 0; attempt < 100; attempt += 1) {
+                snapshotFiles = await fs.readdir(chatDir, { recursive: true }).catch(() => []);
+                const snapshotFile = snapshotFiles.find((name) => name.endsWith('.json'));
+                if (snapshotFile) {
+                    const text = await fs.readFile(path.join(chatDir, snapshotFile), 'utf8');
+                    if (text.endsWith('\n')) break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+            assert.ok(snapshotFiles.some((name) => name.endsWith('.json')));
+            assert.deepStrictEqual(await fs.readdir(debugDir), ['chat']);
+            const dates = await fs.readdir(chatDir);
+            assert.strictEqual(dates.length, 1);
+            assert.match(dates[0], /^\d{4}-\d{2}-\d{2}$/);
+            const dateDir = path.join(chatDir, dates[0]);
+            const files = await fs.readdir(dateDir);
+            assert.strictEqual(files.length, 1);
+            assert.match(files[0], /^compact-request-.*\.json$/);
+            const snapshot = JSON.parse(await fs.readFile(path.join(dateDir, files[0]), 'utf8'));
+            assert.strictEqual(snapshot.parsedBody.messages[0].content, '/compact');
         }
     },
     {
@@ -293,12 +343,16 @@ const tests: TestCase[] = [
     }
 ];
 
-/** 执行全部测试。 */
+/** 执行全部测试，结束后清理独立快照工作区。 */
 async function main(): Promise<void> {
-    for (const test of tests) {
-        await test.run();
-        // eslint-disable-next-line no-console
-        console.log(`✓ ${test.name}`);
+    try {
+        for (const test of tests) {
+            await test.run();
+            // eslint-disable-next-line no-console
+            console.log(`✓ ${test.name}`);
+        }
+    } finally {
+        await fs.rm(WORKSPACE_ROOT, { recursive: true, force: true });
     }
 }
 

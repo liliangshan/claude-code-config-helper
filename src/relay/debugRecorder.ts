@@ -101,7 +101,7 @@ export class DebugRecorder {
 
     /**
      * 上游返回非 2xx 时，把「实际发出的请求体 + 上游响应」成对落盘到
-     * `.LLSOAI/error-<状态码>-<时间戳>.json`，用于定位 400（如缓存断点 ttl 混用）
+     * `.LLSOAI/error/yyyy-MM-dd/error-<状态码>-<时间戳>.json`，用于定位 400（如缓存断点 ttl 混用）
      * 等错误对应的确切出站请求，避免被后续请求覆盖、且不依赖二次复现。
      *
      * 排障必需，因此**不受** `relay.debugRecord` 开关控制；改为两条硬约束防止无限膨胀：
@@ -118,9 +118,12 @@ export class DebugRecorder {
         responseBody: string
     ): Promise<void> {
         try {
-            const dir = await this.resolveDir();
-            await this.pruneErrorSnapshots(dir);
-            const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            const now = Date.now();
+            const root = path.join(await this.resolveDir(), 'error');
+            const dir = path.join(root, this.formatDate(now));
+            await fs.mkdir(dir, { recursive: true });
+            await this.pruneErrorSnapshots(root);
+            const stamp = `${now}-${Math.random().toString(36).slice(2, 8)}`;
             const filePath = path.join(dir, `error-${status}-${stamp}.json`);
             const payload = {
                 status,
@@ -135,7 +138,7 @@ export class DebugRecorder {
     }
 
     /**
-     * 把一次转发请求中的 messages 追加写入 `.LLSOAI/yyyy-MM-dd.jsonl`。
+     * 把一次转发请求中的 messages 追加写入 `.LLSOAI/chat/yyyy-MM-dd/yyyy-MM-dd.jsonl`。
      *
      * 三点与旧实现的差异：
      * 1. 受 {@link isEnabled} 开关控制，默认关闭，不再无条件产生磁盘写入；
@@ -153,8 +156,9 @@ export class DebugRecorder {
             if (messages.length === 0) {
                 return;
             }
-            const dir = await this.resolveDir();
             const dateText = this.formatDate(entry.startedAt);
+            const dir = path.join(await this.resolveDir(), 'chat', dateText);
+            await fs.mkdir(dir, { recursive: true });
             const filePath = path.join(dir, `${dateText}.jsonl`);
             const knownKeys = await this.ensureDailyKeys(filePath, dateText);
 
@@ -296,19 +300,25 @@ export class DebugRecorder {
      *
      * 文件名形如 `error-<status>-<epochMs>-<rand>.json`，按其中的时间戳排序即时间序。
      *
-     * @param dir 调试目录。
+     * @param dir 错误快照根目录，扫描其日期子目录并统一限制快照总数。
      */
     private async pruneErrorSnapshots(dir: string): Promise<void> {
         try {
-            const names = (await fs.readdir(dir)).filter(
-                (name) => name.startsWith('error-') && name.endsWith('.json')
+            const dates = (await fs.readdir(dir, { withFileTypes: true })).filter(
+                (entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name)
             );
+            const names = (await Promise.all(dates.map(async (date) => {
+                const dateDir = path.join(dir, date.name);
+                return (await fs.readdir(dateDir)).filter(
+                    (name) => name.startsWith('error-') && name.endsWith('.json')
+                ).map((name) => path.join(dateDir, name));
+            }))).flat();
             // 为即将写入的这一个留出位置，因此上限按 MAX_ERROR_SNAPSHOTS - 1 计算。
             const overflow = names.length - (MAX_ERROR_SNAPSHOTS - 1);
             if (overflow <= 0) return;
-            const stampOf = (name: string): number => Number(name.split('-')[2]) || 0;
+            const stampOf = (name: string): number => Number(path.basename(name).split('-')[2]) || 0;
             const oldest = names.sort((a, b) => stampOf(a) - stampOf(b)).slice(0, overflow);
-            await Promise.all(oldest.map((name) => fs.rm(path.join(dir, name), { force: true })));
+            await Promise.all(oldest.map((name) => fs.rm(name, { force: true })));
         } catch (err) {
             Logger.warn(`清理 Relay 错误快照失败：${err instanceof Error ? err.message : String(err)}`);
         }

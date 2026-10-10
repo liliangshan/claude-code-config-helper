@@ -1,4 +1,5 @@
 {
+    "configuration.chat.reasoningEffort.description": "思考等级。auto 不额外传参；其他等级从下次请求生效，无需重启 CLI。",
     "extension.displayName": "Claude Code Config Helper",
     "extension.description": "提供由本机 Claude CLI 支撑的内置 Chat Webview，并管理任务流、共享提示词、诊断与提供商/模型设置。",
     "command.openConfigPanel.title": "打开 LLS CCAI Setting",

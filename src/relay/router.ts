@@ -47,6 +47,8 @@ const MAX_BODY_BYTES = 10 * 1024 * 1024;
  * 自行负责对上游发起请求并把响应写回到 res。
  */
 export interface UpstreamRequestContext {
+    /** 请求入口实时读取的工作区思考等级；auto 时不覆盖客户端参数。 */
+    reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh';
     /** 三种协议共享的独立故障证据收集器。 */
     outcome?: RequestOutcomeReporter;
     /** 请求入口冻结的统计身份；旧适配器测试可省略，真实路由始终提供。 */
@@ -289,13 +291,21 @@ interface CompactRequestSnapshotInput {
     parsedBody: unknown | null;
 }
 
+/**
+ * 将压缩前的完整请求保存到工作区 `.LLSOAI/chat/yyyy-MM-dd/`。
+ *
+ * @param input 压缩请求及路由信息。
+ * @returns 快照保存完成；IO 错误仅记录日志，不影响压缩流程。
+ */
 async function saveCompactRequestSnapshot(input: CompactRequestSnapshotInput): Promise<void> {
     try {
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
         const workspacePath = workspaceFolder?.fsPath ?? process.cwd();
-        const dir = path.join(workspacePath, '.LLSOAI');
+        const now = new Date();
+        const dateText = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const dir = path.join(workspacePath, '.LLSOAI', 'chat', dateText);
         await fs.mkdir(dir, { recursive: true });
-        const timestamp = new Date().toISOString();
+        const timestamp = now.toISOString();
         const safeStamp = timestamp.replace(/[:.]/g, '-');
         const filename = `compact-request-${safeStamp}-${Math.random().toString(36).slice(2, 8)}.json`;
         const parsed = input.parsedBody && typeof input.parsedBody === 'object'
@@ -477,8 +487,10 @@ export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
         const requestInfo = { route, providerId, modelId, usageContext };
         onUpstreamRequestStart?.(requestInfo);
         const outcome = new RequestOutcomeReporter(usageContext, deps.onUpstreamRequestOutcome);
+        const selectedEffort = configManager.getChatReasoningEffort?.() ?? 'auto';
+        const reasoningEffort = selectedEffort === 'auto' ? undefined : selectedEffort;
         try {
-            await adapter.handle({ req, res, provider, modelId, rawBody, parsedBody, usageContext, outcome, llsTaskCreateTriggered, compactCommandTriggered, onUpstreamTimeout });
+            await adapter.handle({ req, res, provider, modelId, rawBody, parsedBody, reasoningEffort, usageContext, outcome, llsTaskCreateTriggered, compactCommandTriggered, onUpstreamTimeout });
         } catch (error) {
             outcome.fail('upstream_connect', error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined);
             throw error;

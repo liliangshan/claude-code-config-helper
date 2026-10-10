@@ -10,7 +10,7 @@ import { test } from 'node:test';
 
 import { installVscodeStub } from '../chat/__tests__/testUtils/vscodeStub';
 
-installVscodeStub({ values: { claudeCodeConfigHelper: {} } });
+const configStub = installVscodeStub({ values: { claudeCodeConfigHelper: {} } });
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { ConfigManager } = require('../configManager') as typeof import('../configManager');
@@ -65,6 +65,39 @@ function makeManager(models: ModelConfig[]): ConfigManagerType {
     } as unknown as import('vscode').ExtensionContext;
     return new ConfigManager(context);
 }
+
+/** 验证思考等级工作区写入、默认 auto 和运行时读取。 */
+test('思考等级保存到工作区配置且实时读取，非法值回退 auto', async () => {
+    const vscode = require('vscode') as typeof import('vscode');
+    const original = vscode.workspace.getConfiguration;
+    let saved: unknown;
+    const writes: unknown[][] = [];
+    configStub.workspaceFolderFsPath = '/test/effort';
+    vscode.workspace.getConfiguration = (() => ({
+        get: (_key: string, fallback: unknown) => saved ?? fallback,
+        update: async (key: string, value: unknown, target: unknown) => {
+            writes.push([key, value, target]);
+            saved = value;
+        }
+    })) as unknown as typeof original;
+    try {
+        const manager = makeManager([]);
+        assert.equal(manager.getChatReasoningEffort(), 'auto');
+        for (const effort of ['low', 'medium', 'high', 'xhigh', 'auto']) {
+            await manager.setChatReasoningEffort(effort);
+            assert.equal(manager.getChatReasoningEffort(), effort);
+        }
+        assert.ok(writes.every(([key, , target]) => key === 'chat.reasoningEffort' && target === vscode.ConfigurationTarget.Workspace));
+        saved = 'invalid';
+        assert.equal(manager.getChatReasoningEffort(), 'auto');
+        await assert.rejects(manager.setChatReasoningEffort('invalid'), /无效/);
+        configStub.workspaceFolderFsPath = undefined;
+        await assert.rejects(manager.setChatReasoningEffort('low'), /工作区/);
+    } finally {
+        vscode.workspace.getConfiguration = original;
+        configStub.workspaceFolderFsPath = undefined;
+    }
+});
 
 /** 验证默认关闭、工作区隔离、重载保留及旧全局值不继承。 */
 test('子智能体开关默认关闭且仅在当前工作区保持选择', async () => {

@@ -341,7 +341,15 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
             this.taskDeps,
             { createTriggered: ctx.llsTaskCreateTriggered === true, modelName: modelId }
         );
-        const bodyText = injectedRequest.bodyText;
+        let bodyText = injectedRequest.bodyText;
+        if (ctx.reasoningEffort) {
+            const body = JSON.parse(bodyText) as Record<string, unknown>;
+            const outputConfig = body.output_config && typeof body.output_config === 'object' && !Array.isArray(body.output_config)
+                ? body.output_config as Record<string, unknown> : {};
+            // Anthropic 的最高等级名为 max，OpenAI 的 xhigh 不能原样传入。
+            body.output_config = { ...outputConfig, effort: ctx.reasoningEffort === 'xhigh' ? 'max' : ctx.reasoningEffort };
+            bodyText = JSON.stringify(body);
+        }
         // token 预算登记（仅估算 + 登记，不改写 body；阈值触发的压缩走响应侧 afterRecv）
         try {
             const sessionId = extractSessionId(parsedBody);
