@@ -2,6 +2,35 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.68] - 2026-10-11
+
+### Fixed
+
+- Browser tools now reveal the tracked integrated-browser editor before navigating, reading, capturing screenshots, reading console events or executing Playwright. Opening or reusing a page reveals the newly selected page ID as well.
+- Revealing uses the existing `vscode-browser:/<pageId>` resource and the browser editor, without supplying a URL or navigation state. Chat keyboard focus is preserved, and a recognized existing editor group is reused.
+- Editor reveal failures are logged without failing browser automation. Background login-state snapshots do not trigger extra editor switches.
+- Added regression tests for reveal ordering, page switching, editor options, invalid arguments and failure isolation. Actual editor switching still requires a desktop UI smoke test after installation.
+
+## [3.2.67] - 2026-10-11
+
+### Fixed
+
+- All three relay adapters now decode streaming UTF-8 with a per-response `StringDecoder`, preserving Chinese characters and emoji split across network chunks without disabling incremental text output.
+- Responses tool argument snapshots must extend the exact prefix already sent to the CLI. Conflicting final snapshots or arguments arriving after a tool block has closed produce an explicit stream error instead of appending a guessed suffix such as `e}`. Conflict evidence remains available in the dated error snapshots.
+- Added byte-by-byte adapter tests with and without task-flow interception, plus conflicting/repeated final-argument tests. Both reported real response snapshots were replayed through the repaired Responses adapter at 1-, 17- and 1024-byte chunk sizes, reproducing the original arguments exactly.
+
+### Added
+
+- Tool JSON diagnostics retain raw Responses data, emitted parameters, final arguments and request budget information under `.LLSOAI/error/YYYY-MM-DD/`, with bounded recent-response correlation for subsequent CLI parsing failures.
+
+## [3.2.66] - 2026-10-11
+
+### Fixed
+
+- Chat requests across Anthropic, OpenAI Chat and Responses now append the extension name/version to the existing CLI or custom `User-Agent`. Missing User-Agent headers are filled automatically, and repeated processing does not append the same identifier again.
+- Model-list requests and standalone compaction requests also include the extension identifier. The name and version are read from the packaged root `package.json`, replacing the hardcoded `claude-code-config-helper/0.1` used for model discovery.
+- Added six regression tests covering version lookup, header normalization, custom UA handling and actual outbound requests to local test servers.
+
 ## [3.2.65] - 2026-10-10
 
 ### Added

@@ -19,6 +19,7 @@
  */
 
 import { Logger } from './logger';
+import { applyExtensionUserAgent } from './userAgent';
 import type { ApiType, AuthMode, CustomHeader, ModelConfig } from './types';
 
 /**
@@ -84,11 +85,13 @@ function modelsEndpoint(apiType: ApiType): string {
  * 构造请求头。
  *
  * 严格按照 apiType 与 authMode 的组合附加最小鉴权头，避免泄露用户私有头到不期望的协议。
+ * 自定义 UA 保留，并追加由 package.json 生成的扩展标识。
+ * @param input 模型列表请求配置。
+ * @returns 含鉴权、自定义头及扩展 UA 的请求头。
  */
 function buildHeaders(input: FetchModelsInput): Record<string, string> {
     const headers: Record<string, string> = {
-        Accept: 'application/json',
-        'User-Agent': 'claude-code-config-helper/0.1'
+        Accept: 'application/json'
     };
 
     if (input.authMode === 'auth_token' && input.token && input.token.trim()) {
@@ -108,6 +111,7 @@ function buildHeaders(input: FetchModelsInput): Record<string, string> {
             }
         }
     }
+    applyExtensionUserAgent(headers);
     return headers;
 }
 

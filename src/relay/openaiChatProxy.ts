@@ -9,6 +9,7 @@
 import * as http from 'http';
 import * as https from 'https';
 import { URL } from 'url';
+import { StringDecoder } from 'node:string_decoder';
 
 import { Logger } from '../logger';
 import { interceptAnthropicResponse } from '../llsTask/interceptor';
@@ -360,12 +361,22 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
         // 每次响应独立的 usage 抽取器，吃下行 Anthropic SSE。
         const usageReporter = getRequestUsageReporter(ctx, this.usageSink);
         const chunks: string[] = [];
+        const decoder = new StringDecoder('utf8');
+        let decoderEnded = false;
+        /** 刷新跨分片 UTF-8 字节后结束转换，所有终止路径共用一次解码收尾。 */
+        const finishConversion = (): string => {
+            if (decoderEnded) return converter.end();
+            decoderEnded = true;
+            const tail = decoder.end();
+            if (tail) ctx.outcome?.feed(tail);
+            return converter.feed(tail) + converter.end();
+        };
         upstreamRes.setTimeout(UPSTREAM_STREAM_IDLE_TIMEOUT_MS, () => {
             const seconds = Math.round(UPSTREAM_STREAM_IDLE_TIMEOUT_MS / 1000);
             const message = sanitizeErrorMessage(`上游流式响应空闲超时（${seconds}s）`);
             ctx.outcome?.fail('upstream_stream', 'stream_idle_timeout');
             ctx.onUpstreamTimeout?.('stream_idle');
-            const out = converter.end() + formatAnthropicSseError('timeout', message);
+            const out = finishConversion() + formatAnthropicSseError('timeout', message);
             chunks.push(out);
             if (!ctx.res.writableEnded) {
                 ctx.res.write(out);
@@ -377,8 +388,10 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
             resolve();
         });
         upstreamRes.on('data', (chunk: Buffer | string) => {
-            ctx.outcome?.feed(Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : String(chunk));
-            const converted = converter.feed(Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : String(chunk));
+            if (decoderEnded) return;
+            const text = decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, 'utf-8'));
+            ctx.outcome?.feed(text);
+            const converted = converter.feed(text);
             if (!converted) return;
             const out = interceptor ? interceptor.feed(converted) : converted;
             chunks.push(out);
@@ -386,7 +399,7 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
             ctx.res.write(out);
         });
         upstreamRes.on('end', () => {
-            const tail = converter.end();
+            const tail = finishConversion();
             const out = interceptor ? interceptor.feed(tail) + interceptor.end() : tail;
             chunks.push(out);
             if (out) {
@@ -401,7 +414,7 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
         upstreamRes.on('error', (err) => {
                     ctx.outcome?.fail('upstream_stream', (err as NodeJS.ErrnoException).code);
             const message = sanitizeErrorMessage(`上游响应流中断：${err.message}`);
-            const out = converter.end() + formatAnthropicSseError('api_error', message);
+            const out = finishConversion() + formatAnthropicSseError('api_error', message);
             chunks.push(out);
             if (!ctx.res.writableEnded) {
                 ctx.res.write(out);

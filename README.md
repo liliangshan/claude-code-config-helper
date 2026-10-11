@@ -1,8 +1,31 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.65
+**Version:** 3.2.68
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
+
+## Tool JSON error diagnostics
+
+When the Responses stream converter detects malformed tool arguments, it automatically writes `.LLSOAI/error/YYYY-MM-DD/error-tooljson-<timestamp>-<random>.json`, even when `relay.debugRecord` is off. Each file preserves the entire upstream SSE received for that request, the converted response, tool argument diagnostics, HTTP completion flags, end reason and the actual output-budget/reasoning parameters. A truncated stream can only preserve bytes received before it stopped; it cannot recover data the upstream never sent. Invalid UTF-8 additionally includes a Base64 copy of the original bytes.
+
+Files share the existing 20-snapshot error retention limit across date directories. Detection compares the upstream final arguments with the actual emitted argument fragments, including `__unparsedToolInput` wrappers and late fragments. The recorder also retains up to eight recent tool responses in memory (64 MiB total) to correlate a subsequent CLI `InputValidationError` by call ID. If the original response has expired or the extension was reloaded, the fallback file explicitly marks `originalResponseUnavailable`; it never substitutes an unrelated response.
+
+Request bodies, URLs and authentication headers are not included in these diagnostics, but **raw model responses and tool arguments can contain sensitive content**; review them before sharing. Token limits remain unchanged, and arguments are never repaired by guessing missing JSON characters.
+
+## What's New in 3.2.68
+
+- **Browser automation reveals its target tab.** Page tools bring the tracked browser page into view in the editor area before running, while preserving chat keyboard focus. Opening or reusing a page also reveals that page's tab. This does not navigate or reload the page just to display it.
+- **Best-effort compatibility.** The reveal path targets VS Code's integrated-browser editor by page ID. If that editor is unavailable, the automation still runs and a warning is logged. Background login-state saves do not switch tabs again.
+
+## What's New in 3.2.67
+
+- **UTF-8-safe streaming.** Anthropic, OpenAI Chat and Responses now preserve multibyte characters across network chunks. Chinese text and emoji no longer become replacement characters in tool arguments; the typewriter effect remains enabled.
+- **Validated argument suffixes.** Responses only appends the untransmitted suffix when a final argument snapshot matches the exact prefix already sent. Conflicting snapshots and post-close argument fragments fail explicitly and retain diagnostic evidence instead of corrupting JSON with extra trailing characters.
+
+## What's New in 3.2.66
+
+- **Extension identity on upstream requests.** Chat, model-list and standalone compaction requests now include `claude-code-config-helper/3.2.66` in `User-Agent`. Existing CLI or custom UA values are retained, with the extension identifier appended once; requests without a UA receive the extension identifier alone.
+- **Version follows the installed package.** The identifier reads its name/version from the root `package.json`, including inside the VSIX. Future version bumps no longer require a separate UA change.
 
 ## What's New in 3.2.65
 

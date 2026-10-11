@@ -3,6 +3,7 @@
 import type * as vscode from 'vscode';
 
 import { Logger } from '../logger';
+import { revealBrowserPage } from './revealBrowserPage';
 import { EXPORT_SCRIPT, buildImportScript, parseExportResult } from './sessionBridge';
 import { toOrigin, isExpired, type BrowserSessionStore } from './sessionStore';
 import { LM_BROWSER_TOOLS, isBrowserToolName, type BrowserToolName } from './tools';
@@ -80,6 +81,8 @@ export interface BrowserToolHostOptions {
     env?: BrowserEnvironment;
     /** 创建一次性 cancellation token。 */
     createCancellation?: () => DisposableToken;
+    /** 显示 pageId 对应的编辑器标签；测试可注入无副作用实现。 */
+    revealPage?: (pageId: string) => Promise<void>;
     /** 登录态快照存储；缺省时整套持久化静默禁用。 */
     sessionStore?: BrowserSessionStore;
 }
@@ -95,6 +98,9 @@ export class BrowserToolHost implements BrowserToolExecutor {
     /** 创建一次性 cancellation token。 */
     private readonly createCancellation: () => DisposableToken;
 
+    /** 页面显示器，失败不阻止浏览器工具实际执行。 */
+    private readonly revealPage: (pageId: string) => Promise<void>;
+
     /** 当前跟踪的浏览器页面 id（最近一次 open 的结果）。 */
     private currentPageId?: string;
 
@@ -104,12 +110,16 @@ export class BrowserToolHost implements BrowserToolExecutor {
     /** 当前页 origin，用于搭车快照时校验状态是否落定。 */
     private currentOrigin?: string;
 
-    /** 创建 BrowserToolHost。 */
+    /**
+     * 创建浏览器工具宿主。
+     * @param options LM 调用器、页面显示器及可选登录态存储。
+     */
     public constructor(options: BrowserToolHostOptions = {}) {
         this.lm = options.lm ?? loadVscodeLm();
         this.env = options.env ?? loadVscodeEnv();
         this.createCancellation = options.createCancellation ?? loadVscodeCancellation();
         this.sessionStore = options.sessionStore;
+        this.revealPage = options.revealPage ?? revealBrowserPage;
     }
 
     /** 按浏览器工具名分派到底层 VS Code 内置 LM 浏览器工具。 */
@@ -163,6 +173,8 @@ export class BrowserToolHost implements BrowserToolExecutor {
      *
      * 因此复用分支必须由本方法补一次 navigate，否则表现为「打开总是卡在 about:blank」。
      * 另外注入过登录态时也要重新导航，让 cookie 先于目标页首屏请求生效。
+     * @param args 目标 URL 与可选强制新开标志。
+     * @returns 打开或复用页面后的工具结果。
      */
     private async runOpen(args: Record<string, unknown>): Promise<BrowserToolResult> {
         const url = typeof args.url === 'string' ? args.url.trim() : '';
@@ -179,6 +191,7 @@ export class BrowserToolHost implements BrowserToolExecutor {
         const pageId = openedPageId ?? reusedPageId;
         if (pageId) {
             this.currentPageId = pageId;
+            await this.safeRevealPage(pageId);
         }
         this.currentOrigin = toOrigin(url);
 
@@ -194,6 +207,11 @@ export class BrowserToolHost implements BrowserToolExecutor {
         return { content: [{ type: 'text', text: navigated }] };
     }
 
+    /**
+     * 显示当前浏览器标签并导航。
+     * @param args 目标 URL。
+     * @returns 导航结果或参数错误。
+     */
     private async runNavigate(args: Record<string, unknown>): Promise<BrowserToolResult> {
         const url = typeof args.url === 'string' ? args.url.trim() : '';
         if (!url) {
@@ -203,33 +221,40 @@ export class BrowserToolHost implements BrowserToolExecutor {
         if (!pageId) {
             return this.error(NO_PAGE_MESSAGE);
         }
+        await this.safeRevealPage(pageId);
         const text = await this.invokeText(LM_BROWSER_TOOLS.navigate, { pageId, type: 'url', url });
         return { content: [{ type: 'text', text }] };
     }
 
+    /** 显示并读取当前页面；@returns 页面文本快照或未打开页面错误。 */
     private async runReadPage(): Promise<BrowserToolResult> {
         const pageId = this.requirePageId();
         if (!pageId) {
             return this.error(NO_PAGE_MESSAGE);
         }
+        await this.safeRevealPage(pageId);
         const text = await this.invokeText(LM_BROWSER_TOOLS.read, { pageId });
         return { content: [{ type: 'text', text }] };
     }
 
+    /** 显示当前页面并提取控制台事件；@returns 控制台文本或未打开页面错误。 */
     private async runConsole(): Promise<BrowserToolResult> {
         const pageId = this.requirePageId();
         if (!pageId) {
             return this.error(NO_PAGE_MESSAGE);
         }
+        await this.safeRevealPage(pageId);
         const text = await this.invokeText(LM_BROWSER_TOOLS.read, { pageId });
         return { content: [{ type: 'text', text: extractRecentEvents(text) }] };
     }
 
+    /** 显示当前页面并截图；@returns 图片内容或截图失败说明。 */
     private async runScreenshot(): Promise<BrowserToolResult> {
         const pageId = this.requirePageId();
         if (!pageId) {
             return this.error(NO_PAGE_MESSAGE);
         }
+        await this.safeRevealPage(pageId);
         const raw = await this.invoke(LM_BROWSER_TOOLS.screenshot, { pageId });
         const image = extractImage(raw);
         if (image) {
@@ -239,6 +264,11 @@ export class BrowserToolHost implements BrowserToolExecutor {
         return this.error(text || 'Screenshot returned no image data.');
     }
 
+    /**
+     * 在当前页面执行 Playwright 脚本前显示对应标签。
+     * @param args 待执行脚本。
+     * @returns 脚本结果或参数错误。
+     */
     private async runEval(args: Record<string, unknown>): Promise<BrowserToolResult> {
         const code = typeof args.script === 'string' ? args.script.trim() : '';
         if (!code) {
@@ -248,8 +278,22 @@ export class BrowserToolHost implements BrowserToolExecutor {
         if (!pageId) {
             return this.error(NO_PAGE_MESSAGE);
         }
+        await this.safeRevealPage(pageId);
         const text = await this.invokeText(LM_BROWSER_TOOLS.eval, { pageId, code });
         return { content: [{ type: 'text', text }] };
+    }
+
+    /**
+     * 在页面工具调用前显示目标标签；后台登录态导入导出不额外抢占标签。
+     * @param pageId 本次实际操作的页面 ID。
+     * @returns 尝试显示完成；显示失败仅记录日志。
+     */
+    private async safeRevealPage(pageId: string): Promise<void> {
+        try {
+            await this.revealPage(pageId);
+        } catch (err) {
+            Logger.warn(`显示浏览器标签失败，继续执行工具：${pageId}`, err);
+        }
     }
 
     /** 返回当前 pageId，不存在时返回 undefined。 */

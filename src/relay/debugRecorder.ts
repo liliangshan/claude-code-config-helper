@@ -67,6 +67,47 @@ export interface DebugRecordEntry {
     error?: string;
 }
 
+/** 工具参数 JSON 异常的单次流式响应证据；响应正文不截断、不修复。 */
+export interface ToolJsonErrorSnapshot {
+    /** 实际上游协议。 */
+    protocol: 'responses';
+    /** 扩展生成的请求关联 ID。 */
+    requestId?: string;
+    /** CLI 会话 ID。 */
+    sessionId?: string;
+    /** 提供商及模型标识，不含 URL、密钥或请求头。 */
+    providerId: string;
+    modelId: string;
+    /** 本次上游请求起止时间（毫秒）。 */
+    startedAt: number;
+    endedAt: number;
+    /** 结束来源，例如 http_end、http_error 或 stream_idle_timeout。 */
+    reason: string;
+    /** HTTP 状态及传输层结束状态；不代表模型已正常完成。 */
+    httpStatus?: number;
+    httpComplete: boolean;
+    readableEnded: boolean;
+    destroyed: boolean;
+    /** 实际发送的输出预算和思考参数，不保存请求正文或鉴权信息。 */
+    requestParameters: Record<string, unknown>;
+    /** 上游响应累计字节数。 */
+    upstreamResponseBytes: number;
+    /** 本次实际收到的全部上游 SSE 文本，断流时仅包含已收到部分。 */
+    upstreamResponseBody: string;
+    /** 仅当响应字节无法无损解码为 UTF-8 时附加原始字节。 */
+    upstreamResponseBase64?: string;
+    /** 已转换、准备发送给 CLI 的完整响应。 */
+    responseBody: string;
+    /** 工具名、call_id、原始参数及解析错误的现有诊断信息。 */
+    diagnostics: string[];
+    /** CLI 下轮报告的解析失败原文，用于迟到的错误关联。 */
+    cliToolErrors?: Array<{ toolUseId: string; message: string }>;
+    /** 关联不到原响应时记录明确诊断，不用当前响应冒充失败响应。 */
+    originalResponseUnavailable?: boolean;
+    /** 流式转换警告，包括缺少终止事件。 */
+    warnings: Array<{ path: string; code: string; message: string }>;
+}
+
 /**
  * 转发调试记录器。
  *
@@ -135,6 +176,114 @@ export class DebugRecorder {
             const message = err instanceof Error ? err.message : String(err);
             Logger.warn(`写入 Relay 上游错误快照失败：${message}`);
         }
+    }
+
+    /** 工具 JSON 错误快照串行落盘，避免并发请求绕过保留数量限制。 */
+    private toolJsonWriteQueue: Promise<void> = Promise.resolve();
+
+    /** 最近工具响应的完整证据，仅在内存保留，等待下一轮 CLI 解析结果。 */
+    private readonly recentToolResponses: Array<{ key: string; ids: Set<string>; entry: ToolJsonErrorSnapshot; bytes: number }> = [];
+
+    /** 已记录的 CLI 错误 ID；重放历史消息时避免重复写盘。 */
+    private readonly recordedCliErrors = new Set<string>();
+
+    /**
+     * 短暂保留含工具调用的完整响应；最多 8 轮、64 MiB，超限淘汰最早记录。
+     * @param entry 本轮响应快照。
+     * @param toolCallIds 实际发给 CLI 的调用 ID。
+     * @returns 无返回值；不产生正常请求的错误文件。
+     */
+    public rememberToolResponse(entry: ToolJsonErrorSnapshot, toolCallIds: string[]): void {
+        if (toolCallIds.length === 0) return;
+        const bytes = Buffer.byteLength(entry.upstreamResponseBody) + Buffer.byteLength(entry.responseBody)
+            + Buffer.byteLength(entry.upstreamResponseBase64 ?? '');
+        const key = `${entry.providerId}:${entry.modelId}:${entry.sessionId ?? ''}`;
+        this.recentToolResponses.push({ key, ids: new Set(toolCallIds), entry, bytes });
+        let total = this.recentToolResponses.reduce((sum, value) => sum + value.bytes, 0);
+        while (this.recentToolResponses.length > 8 || total > 64 * 1024 * 1024) {
+            total -= this.recentToolResponses.shift()!.bytes;
+        }
+    }
+
+    /**
+     * 从 CLI 下一轮工具结果识别参数解析失败，把对应原响应转存到错误目录。
+     *
+     * 只检查最新一组 user 工具结果，忽略历史错误及普通工具执行失败。
+     * 缓存已过期或扩展刚重载时，只保存错误反馈并明确标记原响应不可用。
+     * @param parsedBody CLI 原始 Anthropic 请求体。
+     * @param identity 当前请求的提供商、模型及会话身份。
+     * @returns 错误证据保存完成；失败不影响转发。
+     */
+    public async recordCliToolJsonErrors(parsedBody: unknown, identity: { providerId: string; modelId: string; sessionId?: string }): Promise<void> {
+        if (!parsedBody || typeof parsedBody !== 'object') return;
+        const messages = (parsedBody as { messages?: unknown }).messages;
+        if (!Array.isArray(messages)) return;
+        const errors: Array<{ toolUseId: string; message: string }> = [];
+        for (let i = messages.length - 1; i >= 0; i -= 1) {
+            const message = messages[i] as { role?: string; content?: unknown } | null;
+            if (message?.role === 'system') continue;
+            if (message?.role !== 'user' || !Array.isArray(message.content)) break;
+            for (const item of message.content) {
+                if (!item || item.type !== 'tool_result' || item.is_error !== true || typeof item.tool_use_id !== 'string') continue;
+                const text = typeof item.content === 'string' ? item.content
+                    : Array.isArray(item.content) ? item.content.filter((part: { type?: string }) => part?.type === 'text').map((part: { text?: string }) => part.text ?? '').join('\n') : '';
+                if (text.includes('InputValidationError') && text.includes('could not be parsed as JSON')) errors.push({ toolUseId: item.tool_use_id, message: text });
+            }
+        }
+        const key = `${identity.providerId}:${identity.modelId}:${identity.sessionId ?? ''}`;
+        const matched = new Map<ToolJsonErrorSnapshot, Array<{ toolUseId: string; message: string }>>();
+        for (const error of errors) {
+            const id = `${key}:${error.toolUseId}`;
+            if (this.recordedCliErrors.has(id)) continue;
+            this.recordedCliErrors.add(id);
+            if (this.recordedCliErrors.size > 512) this.recordedCliErrors.delete(this.recordedCliErrors.values().next().value!);
+            const cached = [...this.recentToolResponses].reverse().find(item => item.key === key && item.ids.has(error.toolUseId));
+            if (cached) {
+                if (cached.entry.diagnostics.length > 0) continue;
+                const group = matched.get(cached.entry) ?? [];
+                group.push(error);
+                matched.set(cached.entry, group);
+            } else {
+                await this.recordToolJsonError({
+                    protocol: 'responses', ...identity, startedAt: Date.now(), endedAt: Date.now(), reason: 'cli_tool_json_error_original_unavailable',
+                    httpComplete: false, readableEnded: false, destroyed: false, requestParameters: {}, upstreamResponseBytes: 0,
+                    upstreamResponseBody: '', responseBody: '', diagnostics: [error.message], cliToolErrors: [error], originalResponseUnavailable: true, warnings: []
+                });
+            }
+        }
+        for (const [entry, cliToolErrors] of matched) {
+            const diagnostics = cliToolErrors.map(error => `CLI rejected tool arguments: ${error.toolUseId}`);
+            await this.recordToolJsonError({ ...entry, diagnostics, cliToolErrors });
+            entry.diagnostics.push(...diagnostics);
+        }
+    }
+
+    /**
+     * 将工具 JSON 异常的完整响应保存到 `.LLSOAI/error/yyyy-MM-dd/`。
+     *
+     * 不受 debugRecord 开关控制；只保留最近 20 份错误快照，IO 失败仅记录日志。
+     * 请求仅保存输出预算等诊断参数，响应保留原文，可能包含模型生成的敏感内容。
+     * @param entry 本次已接收响应和流式诊断证据。
+     * @returns 快照写入完成，不向主请求抛出 IO 错误。
+     */
+    public async recordToolJsonError(entry: ToolJsonErrorSnapshot): Promise<void> {
+        const save = async (): Promise<void> => {
+            try {
+                const now = Date.now();
+                const root = path.join(await this.resolveDir(), 'error');
+                const dir = path.join(root, this.formatDate(now));
+                await fs.mkdir(dir, { recursive: true });
+                await this.pruneErrorSnapshots(root);
+                const stamp = `${now}-${Math.random().toString(36).slice(2, 10)}`;
+                const filePath = path.join(dir, `error-tooljson-${stamp}.json`);
+                await fs.writeFile(filePath, `${JSON.stringify({ kind: 'tool_json_error', ...entry }, null, 2)}\n`, { encoding: 'utf-8', flag: 'wx', mode: 0o600 });
+                Logger.warn(`[tool-json] 已保存异常响应：${filePath}`);
+            } catch (err) {
+                Logger.warn(`保存工具 JSON 异常响应失败：${err instanceof Error ? err.message : String(err)}`);
+            }
+        };
+        this.toolJsonWriteQueue = this.toolJsonWriteQueue.then(save, save);
+        await this.toolJsonWriteQueue;
     }
 
     /**

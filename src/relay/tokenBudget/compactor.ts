@@ -20,6 +20,7 @@ import * as https from 'https';
 import { URL } from 'url';
 
 import { Logger } from '../../logger';
+import { applyExtensionUserAgent } from '../../userAgent';
 import type { ProviderConfig } from '../../types';
 import { convertAnthropicToOpenAIResponses } from '../converters/anthropicToOpenAIResponses';
 import { convertResponsesJsonToAnthropic } from '../converters/openAIResponsesToAnthropic';
@@ -317,7 +318,7 @@ export class CompactionClient {
     }
 
     /**
-     * 真正发起一次 HTTP 请求并聚合响应体。
+     * 真正发起一次 HTTP 请求并聚合响应体，发送前统一补齐扩展 UA。
      *
      * @param url     上游 URL。
      * @param headers 请求头。
@@ -329,6 +330,7 @@ export class CompactionClient {
         headers: Record<string, string>,
         body: string
     ): Promise<{ status: number; body: string }> {
+        applyExtensionUserAgent(headers);
         return new Promise((resolve, reject) => {
             const transport = url.protocol === 'http:' ? http : https;
             const options: http.RequestOptions = {

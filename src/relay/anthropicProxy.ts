@@ -16,8 +16,10 @@
 import * as http from 'http';
 import * as https from 'https';
 import { URL } from 'url';
+import { StringDecoder } from 'node:string_decoder';
 
 import { Logger } from '../logger';
+import { applyExtensionUserAgent } from '../userAgent';
 import { interceptAnthropicResponse } from '../llsTask/interceptor';
 import { LlsTaskStreamingInterceptor } from '../llsTask/streamingInterceptor';
 import type { ApiType, ProviderConfig } from '../types';
@@ -333,6 +335,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
         const headers = buildForwardHeaders(req.headers);
         applyCustomHeaders(headers, provider);
         applyAuthHeaders(headers, provider);
+        applyExtensionUserAgent(headers);
         // 始终发 JSON；上游响应类型由上游决定（可能为 SSE）。
         headers['content-type'] = headers['content-type'] || 'application/json; charset=utf-8';
 
@@ -451,6 +454,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                         finish();
                     });
                 }
+                const streamDecoder = new StringDecoder('utf8');
                 const streamInterceptor = isStream && this.taskDeps
                     ? new LlsTaskStreamingInterceptor({
                         service: this.taskDeps.llsTaskService,
@@ -474,16 +478,17 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                 upstreamRes.on('data', (chunk: Buffer | string) => {
                     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
                     responseChunks.push(buf);
-                    if (isStream) ctx.outcome?.feed(buf.toString('utf-8'));
-                    if (isStream && !res.writableEnded) {
-                        const out = streamInterceptor ? streamInterceptor.feed(buf.toString('utf-8')) : buf;
-                        if (typeof out === 'string') {
-                            streamedOutputChunks.push(out);
-                            usageReporter.feed(out);
-                        } else if (Buffer.isBuffer(out)) {
-                            usageReporter.feed(out.toString('utf-8'));
+                    if (isStream) {
+                        const text = streamDecoder.write(buf);
+                        ctx.outcome?.feed(text);
+                        if (!res.writableEnded) {
+                            const out = streamInterceptor ? streamInterceptor.feed(text) : text;
+                            if (out) {
+                                streamedOutputChunks.push(out);
+                                usageReporter.feed(out);
+                                res.write(out);
+                            }
                         }
-                        if (out) res.write(out);
                     }
                 });
                 upstreamRes.on('error', (err) => {
@@ -505,7 +510,9 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                             void this.recorder.recordUpstreamError(responseStatus, bodyText, rawResponseBody);
                         }
                         if (isStream) {
-                            const tail = streamInterceptor?.end() ?? '';
+                            const decodedTail = streamDecoder.end();
+                            if (decodedTail) ctx.outcome?.feed(decodedTail);
+                            const tail = streamInterceptor ? streamInterceptor.feed(decodedTail) + streamInterceptor.end() : decodedTail;
                             if (tail) {
                                 streamedOutputChunks.push(tail);
                                 usageReporter.feed(tail);

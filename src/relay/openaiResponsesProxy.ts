@@ -9,6 +9,7 @@
 import * as http from 'http';
 import * as https from 'https';
 import { URL } from 'url';
+import { StringDecoder } from 'node:string_decoder';
 
 import { Logger } from '../logger';
 import { interceptAnthropicResponse } from '../llsTask/interceptor';
@@ -18,7 +19,7 @@ import type { ApiType } from '../types';
 import { convertAnthropicToOpenAIResponses } from './converters/anthropicToOpenAIResponses';
 import { buildAnthropicErrorFromUpstream, formatAnthropicSseError, sanitizeErrorMessage } from './converters/openAIErrorToAnthropic';
 import { convertResponsesJsonToAnthropic, OpenAIResponsesToAnthropicStreamConverter } from './converters/openAIResponsesToAnthropic';
-import type { DebugRecorder } from './debugRecorder';
+import type { DebugRecorder, ToolJsonErrorSnapshot } from './debugRecorder';
 import { extractExplicitCacheSessionId } from './explicitPromptCache';
 import { buildForwardHeaders, redactHeaders } from './forwardHeadersCommon';
 import { buildOpenAIForwardHeaders, describeOpenAIAuthHeaders } from './openAIHeaders';
@@ -104,6 +105,13 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
     public async handle(ctx: UpstreamRequestContext): Promise<void> {
         const startedAt = Date.now();
         const { req, res, provider, modelId, rawBody, parsedBody } = ctx;
+        if (this.recorder) {
+            try {
+                await this.recorder.recordCliToolJsonErrors(parsedBody, { providerId: provider.id, modelId, sessionId: ctx.usageContext?.sessionId || this.extractSessionId(parsedBody) });
+            } catch (error) {
+                Logger.warn(`[tool-json] 保存 CLI 错误反馈失败：${error instanceof Error ? error.message : String(error)}`);
+            }
+        }
         let upstreamUrl: URL;
         try {
             upstreamUrl = joinUpstreamUrl(provider.baseUrl, OPENAI_RESPONSES_PATH);
@@ -183,6 +191,7 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
         let responseHeaders: Record<string, string | string[] | undefined> = {};
         let responseBody = '';
         let upstreamResponseBody = '';
+        let streamRecording: Promise<void> | undefined;
         let errorMessage: string | undefined;
         const requestUsage = getRequestUsageReporter(ctx, this.usageSink);
 
@@ -241,7 +250,7 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
                     return;
                 }
                 if (isStream) {
-                    this.handleStreamResponse(ctx, upstreamRes, (body) => { responseBody = body; }, (body) => { upstreamResponseBody = body; }, finish);
+                    streamRecording = this.handleStreamResponse(ctx, upstreamRes, (body) => { responseBody = body; }, (body) => { upstreamResponseBody = body; }, finish, startedAt, upstreamBodyText);
                     return;
                 }
                 upstreamRes.on('data', (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))));
@@ -276,6 +285,7 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
             upstreamReq.end();
         });
 
+        await streamRecording;
         await this.safeRecord(
             ctx,
             startedAt,
@@ -397,60 +407,115 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
      * @param captureBody 捕获转换后响应体的回调。
      * @param captureUpstreamBody 捕获上游原始 SSE 的回调。
      * @param resolve 完成回调。
+     * @param startedAt 本次请求开始时间。
+     * @param upstreamBodyText 实际出站请求，仅抽取输出预算和思考配置用于诊断。
+     * @returns 流结束后的异常响应快照写入任务。
      */
     private handleStreamResponse(
         ctx: UpstreamRequestContext,
         upstreamRes: http.IncomingMessage,
         captureBody: (body: string) => void,
         captureUpstreamBody: (body: string) => void,
-        resolve: () => void
-    ): void {
+        resolve: () => void,
+        startedAt: number,
+        upstreamBodyText: string
+    ): Promise<void> {
         ctx.res.statusCode = upstreamRes.statusCode ?? 200;
         this.copyResponseHeaders(ctx.res, upstreamRes.headers, 'text/event-stream; charset=utf-8');
-        let invalidToolJson = false;
+        const diagnostics: string[] = [];
         const converter = new OpenAIResponsesToAnthropicStreamConverter((message) => {
-            invalidToolJson = true;
+            diagnostics.push(message);
             Logger.warn(message);
         });
         const interceptor = this.taskDeps ? new LlsTaskStreamingInterceptor(this.toInterceptorDeps()) : undefined;
         // 每次响应独立的 usage 抽取器，吃下行 Anthropic SSE。
         const usageReporter = getRequestUsageReporter(ctx, this.usageSink);
         const chunks: string[] = [];
-        const upstreamChunks: string[] = [];
-        /** 参数非法时完整记录本次上游 SSE，保留 call_id、delta、终止事件及断流原因。 */
-        const logToolJsonStream = (reason: string): void => {
-            if (!invalidToolJson) return;
-            Logger.warn(`[tool-json-stream] ${JSON.stringify({
-                reason,
-                httpStatus: upstreamRes.statusCode,
-                httpComplete: upstreamRes.complete,
-                readableEnded: upstreamRes.readableEnded,
-                destroyed: upstreamRes.destroyed,
-                rawSse: upstreamChunks.join('')
-            })}`);
+        const upstreamChunks: Buffer[] = [];
+        const decoder = new StringDecoder('utf8');
+        let decoderEnded = false;
+        /** 流结束或中断时只刷新一次残留字节，并交给同一转换器处理。 */
+        const finishConversion = (): string => {
+            if (decoderEnded) return converter.end();
+            decoderEnded = true;
+            const tail = decoder.end();
+            if (tail) ctx.outcome?.feed(tail);
+            return converter.feed(tail) + converter.end();
         };
+        let recorded = false;
+        let finishRecording!: () => void;
+        const recording = new Promise<void>((done) => { finishRecording = done; });
+        /** 所有结束路径只保存一次；保留原始字节，避免 UTF-8 跨 chunk 的诊断内容损坏。 */
+        const recordToolJsonStream = (reason: string): void => {
+            if (recorded) return;
+            recorded = true;
+            ctx.res.off('close', onClientClose);
+            const raw = Buffer.concat(upstreamChunks);
+            const rawSse = raw.toString('utf-8');
+            captureBody(chunks.join(''));
+            captureUpstreamBody(rawSse);
+            if (converter.getWarnings().some(warning => warning.code === 'tool_arguments_conflict')) {
+                ctx.outcome?.fail('upstream_stream', 'tool_arguments_conflict');
+                usageReporter.end('error');
+            }
+            if (!this.recorder) {
+                finishRecording();
+                return;
+            }
+            const requestParameters: Record<string, unknown> = {};
+            try {
+                const body = JSON.parse(upstreamBodyText) as Record<string, unknown>;
+                for (const key of ['max_tokens', 'max_output_tokens', 'max_completion_tokens', 'reasoning', 'thinking', 'output_config', 'stream']) {
+                    if (body[key] !== undefined) requestParameters[key] = body[key];
+                }
+            } catch { /* 请求参数无法解析不影响保存响应证据。 */ }
+            const evidence: ToolJsonErrorSnapshot = {
+                protocol: 'responses', requestId: ctx.usageContext?.requestId,
+                sessionId: ctx.usageContext?.sessionId || this.extractSessionId(ctx.parsedBody), providerId: ctx.provider.id, modelId: ctx.modelId,
+                startedAt, endedAt: Date.now(), reason, httpStatus: upstreamRes.statusCode,
+                httpComplete: upstreamRes.complete, readableEnded: upstreamRes.readableEnded, destroyed: upstreamRes.destroyed,
+                requestParameters, upstreamResponseBytes: raw.length, upstreamResponseBody: rawSse,
+                upstreamResponseBase64: Buffer.from(rawSse, 'utf-8').equals(raw) ? undefined : raw.toString('base64'),
+                responseBody: chunks.join(''), diagnostics: [...diagnostics], warnings: converter.getWarnings()
+            };
+            this.recorder.rememberToolResponse(evidence, converter.getToolCallIds());
+            if (diagnostics.length === 0) {
+                finishRecording();
+                return;
+            }
+            void this.recorder.recordToolJsonError(evidence).catch((error) => {
+                Logger.warn(`[tool-json] 保存异常响应失败：${error instanceof Error ? error.message : String(error)}`);
+            }).finally(finishRecording);
+        };
+        /** 客户端中断时也检查已经收到的工具参数，不向已关闭的连接补写响应。 */
+        const onClientClose = (): void => {
+            if (recorded) return;
+            finishConversion();
+            recordToolJsonStream('client_closed');
+        };
+        ctx.res.once('close', onClientClose);
         upstreamRes.setTimeout(UPSTREAM_STREAM_IDLE_TIMEOUT_MS, () => {
             const seconds = Math.round(UPSTREAM_STREAM_IDLE_TIMEOUT_MS / 1000);
             const message = sanitizeErrorMessage(`上游流式响应空闲超时（${seconds}s）`);
             ctx.outcome?.fail('upstream_stream', 'stream_idle_timeout');
             ctx.onUpstreamTimeout?.('stream_idle');
-            const out = converter.end() + formatAnthropicSseError('timeout', message);
-            logToolJsonStream('stream_idle_timeout');
+            const out = finishConversion() + formatAnthropicSseError('timeout', message);
             chunks.push(out);
+            recordToolJsonStream('stream_idle_timeout');
             if (!ctx.res.writableEnded) {
                 ctx.res.write(out);
                 ctx.res.end();
             }
-            captureBody(chunks.join(''));
-            captureUpstreamBody(upstreamChunks.join(''));
             usageReporter.end('timeout');
             upstreamRes.destroy(new Error(message));
             resolve();
         });
         upstreamRes.on('data', (chunk: Buffer | string) => {
-            ctx.outcome?.feed(Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : String(chunk));
-            const text = Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : String(chunk);
-            upstreamChunks.push(text);
+            if (decoderEnded) return;
+            const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, 'utf-8');
+            upstreamChunks.push(bytes);
+            const text = decoder.write(bytes);
+            ctx.outcome?.feed(text);
             const converted = converter.feed(text);
             if (!converted) return;
             const out = interceptor ? interceptor.feed(converted) : converted;
@@ -459,35 +524,39 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
             ctx.res.write(out);
         });
         upstreamRes.on('end', () => {
-            const tail = converter.end();
-            logToolJsonStream('http_end');
+            const tail = finishConversion();
             const out = interceptor ? interceptor.feed(tail) + interceptor.end() : tail;
             chunks.push(out);
+            recordToolJsonStream('http_end');
             if (out) {
                 usageReporter.feed(out);
                 ctx.res.write(out);
             }
             usageReporter.end();
             if (!ctx.res.writableEnded) ctx.res.end();
-            captureBody(chunks.join(''));
-            captureUpstreamBody(upstreamChunks.join(''));
             resolve();
         });
         upstreamRes.on('error', (err) => {
                     ctx.outcome?.fail('upstream_stream', (err as NodeJS.ErrnoException).code);
             const message = sanitizeErrorMessage(`上游响应流中断：${err.message}`);
-            const out = converter.end() + formatAnthropicSseError('api_error', message);
-            logToolJsonStream(`http_error: ${err.message}`);
+            const out = finishConversion() + formatAnthropicSseError('api_error', message);
             chunks.push(out);
+            recordToolJsonStream(`http_error: ${err.message}`);
             if (!ctx.res.writableEnded) {
                 ctx.res.write(out);
                 ctx.res.end();
             }
-            captureBody(chunks.join(''));
-            captureUpstreamBody(upstreamChunks.join(''));
             usageReporter.end('error');
             resolve();
         });
+        upstreamRes.once('close', () => {
+            if (recorded) return;
+            const tail = finishConversion();
+            if (tail) chunks.push(tail);
+            recordToolJsonStream('upstream_closed');
+            resolve();
+        });
+        return recording;
     }
 
     /**

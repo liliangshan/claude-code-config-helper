@@ -42,6 +42,7 @@ function makeHost(options: {
     results?: Partial<Record<string, unknown>>;
     invokeTool?: LmToolInvoker['invokeTool'];
     sessionStore?: import('../sessionStore').BrowserSessionStore;
+    revealPage?: (pageId: string) => Promise<void>;
 } = {}): { host: BrowserToolHostInstance; calls: ToolCall[] } {
     const calls: ToolCall[] = [];
     const defaults: Record<string, unknown> = {
@@ -62,7 +63,8 @@ function makeHost(options: {
         lm: options.invokeTool ? { invokeTool: options.invokeTool } : lm,
         env: { uiKind: (options.uiKind ?? 1) as import('vscode').UIKind },
         createCancellation: () => ({ token: {}, dispose() { /* noop */ } }),
-        sessionStore: options.sessionStore
+        sessionStore: options.sessionStore,
+        revealPage: options.revealPage ?? (async () => {})
     });
     return { host, calls };
 }
@@ -107,6 +109,67 @@ async function driveServer(
     server.dispose();
     return collected;
 }
+
+test('页面工具执行前显示对应标签，显示失败不阻止工具执行', async () => {
+    const order: string[] = [];
+    let failReveal = false;
+    const { host } = makeHost({
+        revealPage: async pageId => {
+            order.push(`reveal:${pageId}`);
+            if (failReveal) throw new Error('editor unavailable');
+        },
+        invokeTool: async (name, options) => {
+            order.push(`tool:${name}:${options.input.pageId ?? ''}`);
+            if (name === LM_BROWSER_TOOLS.open) return textResult(`Page ID: ${PAGE_ID}`);
+            if (name === LM_BROWSER_TOOLS.screenshot) return { content: [{ mimeType: 'image/png', data: new Uint8Array([1]) }] };
+            return textResult('ok');
+        }
+    });
+    await host.execute('browser_open', { url: 'https://example.com' });
+    assert.deepEqual(order, [`tool:${LM_BROWSER_TOOLS.open}:`, `reveal:${PAGE_ID}`]);
+    for (const [tool, args, internal] of [
+        ['browser_navigate', { url: 'https://example.com/next' }, LM_BROWSER_TOOLS.navigate],
+        ['browser_get_content', {}, LM_BROWSER_TOOLS.read],
+        ['browser_console', {}, LM_BROWSER_TOOLS.read],
+        ['browser_screenshot', {}, LM_BROWSER_TOOLS.screenshot],
+        ['browser_eval', { script: 'return page.title()' }, LM_BROWSER_TOOLS.eval]
+    ] as const) {
+        order.length = 0;
+        const result = await host.execute(tool, args);
+        assert.equal(result.isError, undefined);
+        assert.deepEqual(order, [`reveal:${PAGE_ID}`, `tool:${internal}:${PAGE_ID}`]);
+    }
+    failReveal = true;
+    order.length = 0;
+    assert.equal((await host.execute('browser_get_content')).isError, undefined);
+    assert.deepEqual(order, [`reveal:${PAGE_ID}`, `tool:${LM_BROWSER_TOOLS.read}:${PAGE_ID}`]);
+});
+
+test('复用或切换浏览器页面时按本次 pageId 显示，不再次打开 URL', async () => {
+    const nextPageId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const revealed: string[] = [];
+    let count = 0;
+    const { host } = makeHost({
+        revealPage: async id => { revealed.push(id); },
+        invokeTool: async name => name === LM_BROWSER_TOOLS.open
+            ? textResult(++count === 1 ? `Page ID: ${PAGE_ID}` : `At least one similar page is already open:\n  - [${nextPageId}] Existing page (https://example.com)`)
+            : textResult('ok')
+    });
+    await host.execute('browser_open', { url: 'https://example.com' });
+    await host.execute('browser_open', { url: 'https://example.com/next' });
+    await host.execute('browser_get_content');
+    assert.deepEqual(revealed, [PAGE_ID, nextPageId, nextPageId]);
+    assert.equal(count, 2);
+});
+
+test('参数无效或未打开页面时不显示浏览器标签', async () => {
+    const revealed: string[] = [];
+    const { host } = makeHost({ revealPage: async id => { revealed.push(id); } });
+    await host.execute('browser_get_content');
+    await host.execute('browser_open', { url: '' });
+    await host.execute('browser_eval', { script: '' });
+    assert.deepEqual(revealed, []);
+});
 
 test('tools/list: 暴露 browser_* 工具全集', async () => {
     const { host } = makeHost();

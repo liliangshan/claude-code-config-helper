@@ -66,6 +66,12 @@ interface ResponsesOutputItemState {
     argumentsJson: string;
     /** 已经向 Anthropic 发送过的 arguments 字符数。 */
     emittedArgumentsLength: number;
+    /** 实际发出的 partial_json 拼接结果；不随上游 done 快照替换。 */
+    emittedArgumentsJson: string;
+    /** 最近一次上游 done 事件给出的完整参数，长度变短时也保留用于诊断。 */
+    finalArgumentsJson?: string;
+    /** 上一次已报告异常的完整证据，避免多个终止事件重复报告。 */
+    lastArgumentsDiagnostic?: string;
     /** 对应 Anthropic content_block index。 */
     anthropicBlockIndex?: number;
     /** 是否已经输出 content_block_start。 */
@@ -137,24 +143,48 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         finished: false
     };
 
-    /** 在工具块结束时检查参数 JSON，异常时完整记录原始参数及解析错误，便于本地排查。 */
+    /**
+     * 对比上游最终参数与实际下发给 CLI 的分片，检测解析错误及错误包装。
+     *
+     * 只追加诊断，不修改参数或工具执行语义。
+     * @param state 单个工具输出项状态。
+     * @param source 当前校验触发来源。
+     * @returns 无返回值。
+     */
     private logInvalidToolArguments(state: ResponsesOutputItemState, source: string): void {
-        try {
-            JSON.parse(state.argumentsJson);
-        } catch (error) {
-            this.onInvalidToolArguments?.(
-                `[tool-json] invalid JSON: ${JSON.stringify({
-                    tool: state.name,
-                    callId: state.callId || state.id,
-                    outputIndex: state.outputIndex,
-                    source,
-                    chars: state.argumentsJson.length,
-                    emittedChars: state.emittedArgumentsLength,
-                    error: error instanceof Error ? error.message : String(error),
-                    argumentsRaw: state.argumentsJson
-                })}`
-            );
+        const errors: string[] = [];
+        const candidates: Array<[string, string]> = [['upstream', state.finalArgumentsJson ?? state.argumentsJson]];
+        if (state.started) candidates.push(['emitted', state.emittedArgumentsJson]);
+        for (const [label, raw] of candidates) {
+            try {
+                const value: unknown = JSON.parse(raw);
+                if (isRecord(value) && Object.prototype.hasOwnProperty.call(value, '__unparsedToolInput')) {
+                    errors.push(`${label}: contains __unparsedToolInput error wrapper`);
+                }
+            } catch (error) {
+                errors.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+            }
         }
+        if (state.started && state.emittedArgumentsJson !== (state.finalArgumentsJson ?? state.argumentsJson)) {
+            errors.push('emitted arguments differ from upstream final arguments');
+        }
+        if (source === 'delta_after_tool_stop') errors.push('received arguments delta after tool block closed');
+        if (errors.length === 0) return;
+        const detail = {
+            tool: state.name,
+            callId: state.callId || state.id,
+            outputIndex: state.outputIndex,
+            chars: state.argumentsJson.length,
+            emittedChars: state.emittedArgumentsLength,
+            error: errors.join('; '),
+            argumentsRaw: state.argumentsJson,
+            emittedArgumentsRaw: state.emittedArgumentsJson,
+            finalArgumentsRaw: state.finalArgumentsJson
+        };
+        const key = JSON.stringify(detail);
+        if (state.lastArgumentsDiagnostic === key) return;
+        state.lastArgumentsDiagnostic = key;
+        this.onInvalidToolArguments?.(`[tool-json] invalid JSON: ${JSON.stringify({ source, ...detail })}`);
     }
 
     /** 注入诊断日志通道，保持转换器不依赖 VS Code。 */
@@ -181,11 +211,20 @@ export class OpenAIResponsesToAnthropicStreamConverter {
      * @returns 剩余应输出的 Anthropic SSE 文本。
      */
     public end(): string {
-        if (this.state.finished) return '';
+        if (this.state.finished) {
+            for (const item of this.state.outputItems.values()) {
+                if (item.started) this.logInvalidToolArguments(item, 'http_end');
+            }
+            return '';
+        }
         const tail = this.buffer.trim();
         this.buffer = '';
         const out = tail ? this.handleOpenAIEvent(tail) : '';
-        return out + this.finishIfNeeded('end');
+        const final = out + this.finishIfNeeded('end');
+        for (const item of this.state.outputItems.values()) {
+            if (item.started) this.logInvalidToolArguments(item, 'http_end');
+        }
+        return final;
     }
 
     /**
@@ -195,6 +234,15 @@ export class OpenAIResponsesToAnthropicStreamConverter {
      */
     public getWarnings(): ResponsesConversionWarning[] {
         return [...this.warnings];
+    }
+
+    /**
+     * 返回实际下发的工具调用 ID，供后续 CLI 错误反馈关联原响应。
+     * @returns 本轮已启动的工具调用 ID，不包含未发给客户端的输出项。
+     */
+    public getToolCallIds(): string[] {
+        return Array.from(this.state.outputItems.values()).filter(item => item.started)
+            .map(item => item.callId || item.id || `toolu_${item.outputIndex}`);
     }
 
     /**
@@ -245,7 +293,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
      * @returns Anthropic SSE 文本。
      */
     private handleEventPayload(eventName: string, payload: unknown): string {
-        if (!isRecord(payload)) return '';
+        if (this.state.finished || !isRecord(payload)) return '';
         const type = typeof payload.type === 'string' ? payload.type : eventName;
         switch (type) {
             case 'response.created':
@@ -316,6 +364,36 @@ export class OpenAIResponsesToAnthropicStreamConverter {
     }
 
     /**
+     * 接受完整参数快照前校验已下发前缀；不能回滚的参数冲突按流错误结束。
+     * @param state 工具输出项状态。
+     * @param value 上游完整参数或新增项的初始参数。
+     * @param source SSE 事件来源。
+     * @returns 冲突时的 SSE 错误；undefined 表示可以继续处理。
+     */
+    private acceptFunctionArguments(state: ResponsesOutputItemState, value: unknown, source: string): string | undefined {
+        if (typeof value !== 'string') return undefined;
+        state.finalArgumentsJson = value;
+        if (!value.startsWith(state.emittedArgumentsJson) || (state.closed && value !== state.emittedArgumentsJson)) {
+            return this.failFunctionArguments(state, source);
+        }
+        state.argumentsJson = value;
+        return undefined;
+    }
+
+    /**
+     * 参数冲突时保留证据并发送错误，不再补发无法验证的后缀或成功结束标记。
+     * @param state 冲突的工具输出项。
+     * @param source 触发冲突的 SSE 事件来源。
+     * @returns Anthropic SSE 错误事件。
+     */
+    private failFunctionArguments(state: ResponsesOutputItemState, source: string): string {
+        this.logInvalidToolArguments(state, source);
+        this.state.finished = true;
+        this.warnings.push({ path: `output[${state.outputIndex}].arguments`, code: 'tool_arguments_conflict', message: '工具参数与已发送内容不一致，已中止响应，未拼接猜测后缀。' });
+        return formatAnthropicSseError('api_error', 'Upstream tool arguments changed after streaming; request aborted to avoid corrupted tool input.');
+    }
+
+    /**
      * 处理 response.output_item.added 事件。
      *
      * @param payload Responses 事件 payload。
@@ -330,7 +408,10 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         if (typeof item.id === 'string') state.id = item.id;
         if (typeof item.call_id === 'string') state.callId = item.call_id;
         if (typeof item.name === 'string') state.name = item.name;
-        if (typeof item.arguments === 'string') state.argumentsJson = item.arguments;
+        if (typeof item.arguments === 'string' && item.arguments.length > 0) {
+            const conflict = this.acceptFunctionArguments(state, item.arguments, 'output_item.added');
+            if (conflict !== undefined) return conflict;
+        }
         return this.ensureMessageStart() + this.maybeStartFunctionCall(state) + this.emitPendingFunctionArgumentsDelta(state);
     }
 
@@ -353,9 +434,8 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         if (typeof item.id === 'string') state.id = item.id;
         if (typeof item.call_id === 'string') state.callId = item.call_id;
         if (typeof item.name === 'string') state.name = item.name;
-        if (typeof item.arguments === 'string' && item.arguments.length >= state.argumentsJson.length) {
-            state.argumentsJson = item.arguments;
-        }
+        const conflict = this.acceptFunctionArguments(state, item.arguments, 'output_item.done');
+        if (conflict !== undefined) return conflict;
         let out = this.ensureMessageStart() + this.maybeStartFunctionCall(state) + this.emitPendingFunctionArgumentsDelta(state);
         if (state.started && !state.closed && state.anthropicBlockIndex !== undefined) {
             this.logInvalidToolArguments(state, 'output_item.done');
@@ -456,7 +536,9 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         if (outputIndex === undefined) return '';
         const state = this.getOutputItemState(outputIndex);
         state.type = state.type ?? 'function_call';
-        state.argumentsJson += typeof payload.delta === 'string' ? payload.delta : '';
+        const delta = typeof payload.delta === 'string' ? payload.delta : '';
+        state.argumentsJson += delta;
+        if (state.closed && delta) return this.failFunctionArguments(state, 'delta_after_tool_stop');
         return this.ensureMessageStart() + this.maybeStartFunctionCall(state) + this.emitPendingFunctionArgumentsDelta(state);
     }
 
@@ -471,9 +553,8 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         if (outputIndex === undefined) return '';
         const state = this.getOutputItemState(outputIndex);
         state.type = state.type ?? 'function_call';
-        if (typeof payload.arguments === 'string' && payload.arguments.length >= state.argumentsJson.length) {
-            state.argumentsJson = payload.arguments;
-        }
+        const conflict = this.acceptFunctionArguments(state, payload.arguments, 'function_call_arguments.done');
+        if (conflict !== undefined) return conflict;
         return this.ensureMessageStart() + this.maybeStartFunctionCall(state) + this.emitPendingFunctionArgumentsDelta(state);
     }
 
@@ -577,6 +658,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
             outputIndex,
             argumentsJson: '',
             emittedArgumentsLength: 0,
+            emittedArgumentsJson: '',
             started: false,
             closed: false
         };
@@ -669,10 +751,12 @@ export class OpenAIResponsesToAnthropicStreamConverter {
      * @returns Anthropic input_json_delta SSE 文本。
      */
     private emitPendingFunctionArgumentsDelta(state: ResponsesOutputItemState): string {
-        if (!state.started || state.anthropicBlockIndex === undefined) return '';
+        if (!state.started || state.closed || state.anthropicBlockIndex === undefined) return '';
+        if (!state.argumentsJson.startsWith(state.emittedArgumentsJson)) return this.failFunctionArguments(state, 'emit_arguments');
         const delta = state.argumentsJson.slice(state.emittedArgumentsLength);
         if (!delta) return '';
         state.emittedArgumentsLength += delta.length;
+        state.emittedArgumentsJson += delta;
         return formatAnthropicSse('content_block_delta', {
             type: 'content_block_delta',
             index: state.anthropicBlockIndex,

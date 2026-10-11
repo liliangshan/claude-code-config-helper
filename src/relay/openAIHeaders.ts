@@ -9,6 +9,7 @@ import * as http from 'http';
 
 import type { ProviderConfig } from '../types';
 import { buildForwardHeaders, isBlockedForwardHeader } from './forwardHeadersCommon';
+import { applyExtensionUserAgent } from '../userAgent';
 
 /** OpenAI 风格请求默认 Content-Type。 */
 const DEFAULT_JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
@@ -38,6 +39,7 @@ export interface OpenAIAuthHeaderDiagnostics {
  *
  * 会过滤 hop-by-hop、敏感鉴权和 Anthropic 专属头，随后应用 provider.customHeaders
  * 与 OpenAI 风格鉴权。customHeaders 可显式覆盖 Authorization，便于接入特殊供应商。
+ * 最后在 CLI 或自定义 UA 后追加当前扩展标识，无 UA 时自动补齐。
  *
  * @param provider provider 配置。
  * @param incomingHeaders Claude Code 发来的原始请求头。
@@ -56,6 +58,7 @@ export function buildOpenAIForwardHeaders(
     applyOpenAICustomHeaders(headers, provider);
     applyOpenAIAuthHeaders(headers, provider);
     headers['content-type'] = headers['content-type'] || DEFAULT_JSON_CONTENT_TYPE;
+    applyExtensionUserAgent(headers);
     return headers;
 }
 
