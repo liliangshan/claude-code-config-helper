@@ -2,7 +2,7 @@
     "name": "claude-code-config-helper",
     "displayName": "%extension.displayName%",
     "description": "%extension.description%",
-    "version": "3.2.68",
+    "version": "3.2.70",
     "publisher": "liliangshan",
     "license": "MIT",
     "repository": {
@@ -375,6 +375,12 @@
                     "default": true,
                     "description": "%configuration.chat.browserTools.enabled.description%",
                     "scope": "resource"
+                },
+                "claudeCodeConfigHelper.editor.codePreview.enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "%configuration.editor.codePreview.enabled.description%",
+                    "scope": "window"
                 },
                 "claudeCodeConfigHelper.editor.autoOpenReadWriteFiles": {
                     "type": "boolean",

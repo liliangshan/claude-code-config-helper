@@ -1,6 +1,6 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.68
+**Version:** 3.2.70
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
 
@@ -11,6 +11,18 @@ When the Responses stream converter detects malformed tool arguments, it automat
 Files share the existing 20-snapshot error retention limit across date directories. Detection compares the upstream final arguments with the actual emitted argument fragments, including `__unparsedToolInput` wrappers and late fragments. The recorder also retains up to eight recent tool responses in memory (64 MiB total) to correlate a subsequent CLI `InputValidationError` by call ID. If the original response has expired or the extension was reloaded, the fallback file explicitly marks `originalResponseUnavailable`; it never substitutes an unrelated response.
 
 Request bodies, URLs and authentication headers are not included in these diagnostics, but **raw model responses and tool arguments can contain sensitive content**; review them before sharing. Token limits remain unchanged, and arguments are never repaired by guessing missing JSON characters.
+
+## What's New in 3.2.70
+
+- **Workspace Code preview switch.** The switch sits after Auto compact, defaults to off, and supports all seven interface languages. It writes `claudeCodeConfigHelper.editor.codePreview.enabled` to workspace settings and takes effect without restarting the CLI, including while a task is running.
+- **Less editor switching.** Off prevents file tools from automatically displaying non-Markdown files; `.md` / `.markdown` keep their existing behavior. Browser tools still reveal browser tabs, and manual file-link clicks are unchanged. On restores normal automatic file display.
+- **Existing safeguards preserved.** The master `editor.autoOpenReadWriteFiles` setting can still disable all automatic file opening, including Markdown. Only workspace files are eligible; toggling does not close existing tabs or restrict the tools' actual read/write operations.
+
+## What's New in 3.2.69
+
+- **Paste webpage text and images together.** Cmd/Ctrl+V preserves native text insertion and adds image attachments separately. If the clipboard has no image files, HTML `img` sources are imported by the extension host instead of being lost in the plain-text textarea.
+- **Bounded image import.** Supports embedded PNG/JPEG/GIF/WebP/BMP/TIFF data and public HTTP(S) images, with five HTML images per paste, 20 MiB per image and a 15-second download deadline. Duplicate URLs are skipped. Relative URLs need a clipboard source URL or HTML base; `blob:`/local/private images, unsupported formats and login-protected downloads may require copying the image directly or using a screenshot. Downloads do not send browser cookies or authentication headers.
+- **Visible progress and failures.** Image placeholders block sending until ready. Failed imports show warnings in all seven interface languages and are removed from attachments. The Webview CSP remains unchanged.
 
 ## What's New in 3.2.68
 

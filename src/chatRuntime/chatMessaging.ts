@@ -15,6 +15,7 @@ import * as os from 'os';
 
 import type { ChatComposerAttachment, ChatRoute, ChatSegment, WebviewToExtension } from '../chat/protocol';
 import { Logger } from '../logger';
+import { readClipboardImage } from './clipboardImages';
 import { getChatViewHost } from '../runtime';
 import { ensureChatCliStarted } from './cliLifecycle';
 import { beginRecoveryTurn, bindRecoveryAdapter } from './selfHealing';
@@ -136,8 +137,37 @@ export async function saveChatUploadedBlob(message: Extract<WebviewToExtension, 
     } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
         Logger.error(`保存 Chat 上传文件失败：${detail}`);
+        await getChatViewHost()?.postMessage({ type: 'composer/clipboardImagesResult', results: [{ clientId: message.clientId }] });
         await requireDeps().showChatToast('error', `保存粘贴图片失败：${detail}`);
     }
+}
+
+/**
+ * 读取用户粘贴的 HTML 图片并回填附件，不把下载失败留成永久占位。
+ * @param message 本次粘贴图片来源；宿主重新校验数量、来源和图片内容。
+ * @returns 全部图片处理及结果回传完成。
+ */
+export async function importChatClipboardImages(message: Extract<WebviewToExtension, { type: 'file/importClipboardImages' }>): Promise<void> {
+    if (!Array.isArray(message.images)) return;
+    const images = message.images.slice(0, 5);
+    const results: Array<{ clientId: string; attachment?: ChatComposerAttachment }> = [];
+    // 串行下载，避免同一次大批粘贴放大内存与网络占用。
+    for (const item of images) {
+        if (!item || typeof item.clientId !== 'string' || item.clientId.length > 200) continue;
+        try {
+            const image = await readClipboardImage(item.src);
+            const tempRoot = vscode.Uri.file(path.join(os.tmpdir(), CHAT_UPLOAD_TEMP_DIR));
+            await vscode.workspace.fs.createDirectory(tempRoot);
+            const target = vscode.Uri.joinPath(tempRoot, `pasted-web-${randomUUID()}${image.extension}`);
+            await vscode.workspace.fs.writeFile(target, image.bytes);
+            results.push({ clientId: item.clientId, attachment: { path: target.fsPath, name: image.mime.slice(6).toUpperCase() } });
+        } catch {
+            // 不记录带签名的 URL 或响应正文。
+            Logger.warn('网页粘贴图片读取失败：格式、地址、权限或下载限制不满足');
+            results.push({ clientId: item.clientId });
+        }
+    }
+    await getChatViewHost()?.postMessage({ type: 'composer/clipboardImagesResult', results });
 }
 
 /**

@@ -36,6 +36,15 @@
     };
 
 
+    /** 网页图文粘贴提示随界面语言切换，错误不暴露带签名的图片 URL。 */
+    Object.assign(chatTranslations.en, { pasteImageFailed: 'Some webpage images could not be added. Copy the image itself or paste a screenshot instead.', pasteImageLimit: 'Only the first 5 webpage images are added per paste.', pasteImagePending: 'Images are still being added. Wait before sending.' });
+    Object.assign(chatTranslations['zh-cn'], { pasteImageFailed: '部分网页图片无法添加，请单独复制图片或粘贴截图。', pasteImageLimit: '每次粘贴最多添加前 5 张网页图片。', pasteImagePending: '图片正在添加，请完成后再发送。' });
+    Object.assign(chatTranslations['zh-tw'], { pasteImageFailed: '部分網頁圖片無法加入，請單獨複製圖片或貼上截圖。', pasteImageLimit: '每次貼上最多加入前 5 張網頁圖片。', pasteImagePending: '正在加入圖片，請完成後再傳送。' });
+    Object.assign(chatTranslations.ko, { pasteImageFailed: '일부 웹 이미지를 추가할 수 없습니다. 이미지를 직접 복사하거나 스크린샷을 붙여 넣으세요.', pasteImageLimit: '한 번에 처음 5개 웹 이미지만 추가합니다.', pasteImagePending: '이미지를 추가하는 중입니다. 완료 후 보내세요.' });
+    Object.assign(chatTranslations.ja, { pasteImageFailed: '一部の画像を追加できません。画像を直接コピーするか、スクリーンショットを貼り付けてください。', pasteImageLimit: '1 回の貼り付けで追加するウェブ画像は最初の 5 枚までです。', pasteImagePending: '画像を追加中です。完了してから送信してください。' });
+    Object.assign(chatTranslations.fr, { pasteImageFailed: 'Certaines images ne peuvent pas être ajoutées. Copiez directement l’image ou collez une capture d’écran.', pasteImageLimit: 'Seules les 5 premières images sont ajoutées par collage.', pasteImagePending: 'Ajout des images en cours. Veuillez patienter avant d’envoyer.' });
+    Object.assign(chatTranslations.de, { pasteImageFailed: 'Einige Bilder konnten nicht hinzugefügt werden. Kopieren Sie das Bild direkt oder fügen Sie einen Screenshot ein.', pasteImageLimit: 'Pro Einfügen werden höchstens 5 Webseitenbilder hinzugefügt.', pasteImagePending: 'Bilder werden hinzugefügt. Bitte vor dem Senden warten.' });
+
     /** 思考等级标签及说明随界面语言实时切换，协议值保持不变。 */
     Object.assign(chatTranslations.en, { reasoningTitle: 'Reasoning effort: saved to workspace; applies to the next request without restarting', reasoningAria: 'Reasoning effort', reasoningAuto: 'Reasoning: Auto', reasoningLow: 'Reasoning: Low', reasoningMedium: 'Reasoning: Medium', reasoningHigh: 'Reasoning: High', reasoningXHigh: 'Reasoning: XHigh' });
     Object.assign(chatTranslations['zh-cn'], { reasoningTitle: '思考等级：保存到工作区，下次请求生效，无需重启', reasoningAria: '思考等级', reasoningAuto: '思考：自动', reasoningLow: '思考：低', reasoningMedium: '思考：中', reasoningHigh: '思考：高', reasoningXHigh: '思考：极高' });
@@ -60,6 +69,15 @@
     Object.assign(chatTranslations.ja, { autoCompactLabel: '自動圧縮', autoCompactTitle: 'コンテキスト使用量がモデル上限 - 50K トークンに達したら /compact を自動送信' });
     Object.assign(chatTranslations.fr, { autoCompactLabel: 'Compactage auto', autoCompactTitle: 'Envoie /compact automatiquement lorsque le contexte atteint la limite du modèle moins 50K jetons' });
     Object.assign(chatTranslations.de, { autoCompactLabel: 'Auto-Komprimierung', autoCompactTitle: 'Sendet /compact automatisch, wenn der Kontext das Modelllimit minus 50K Token erreicht' });
+
+    /** 代码预览开关标签和提示，跟随聊天界面语言实时更新。 */
+    Object.assign(chatTranslations.en, { codePreviewLabel: 'Code preview', codePreviewTitle: 'Auto-open files used by Read/Edit tools. Off by default, saved to workspace; Markdown and browser tabs are unaffected. No restart needed.' });
+    Object.assign(chatTranslations['zh-cn'], { codePreviewLabel: '代码预览', codePreviewTitle: '自动打开 Read、Edit 等工具操作的文件。默认关闭，保存到工作区；Markdown 和浏览器标签不受影响，无需重启。' });
+    Object.assign(chatTranslations['zh-tw'], { codePreviewLabel: '程式碼預覽', codePreviewTitle: '自動開啟 Read、Edit 等工具操作的檔案。預設關閉，儲存至工作區；Markdown 與瀏覽器分頁不受影響，無需重新啟動。' });
+    Object.assign(chatTranslations.ko, { codePreviewLabel: '코드 미리보기', codePreviewTitle: 'Read/Edit 도구의 파일을 자동으로 엽니다. 기본 꺼짐, 작업 영역에 저장. Markdown과 브라우저 탭은 영향받지 않으며 재시작이 필요 없습니다.' });
+    Object.assign(chatTranslations.ja, { codePreviewLabel: 'コードプレビュー', codePreviewTitle: 'Read/Edit などが扱うファイルを自動表示します。既定はオフ、ワークスペースに保存。Markdown とブラウザータブには影響せず、再起動は不要です。' });
+    Object.assign(chatTranslations.fr, { codePreviewLabel: 'Aperçu du code', codePreviewTitle: 'Ouvrir automatiquement les fichiers utilisés par Read/Edit. Désactivé par défaut, enregistré par espace de travail. Markdown et onglets du navigateur inchangés, sans redémarrage.' });
+    Object.assign(chatTranslations.de, { codePreviewLabel: 'Codevorschau', codePreviewTitle: 'Dateien von Read/Edit automatisch öffnen. Standardmäßig aus, pro Arbeitsbereich gespeichert. Markdown und Browser-Tabs bleiben unverändert; kein Neustart nötig.' });
 
     /** 缓存低命中解决方案文案，动态弹窗打开时按当前语言读取。 */
     Object.assign(chatTranslations.en, { cacheSolutionLink: 'Solution', cacheSolutionTitle: 'Improve prompt cache hits', cacheSolutionSteps: 'Cache hit rate is below 80%. In the provider list, choose View Models, find “{model}”, select Edit, enable Explicit Prompt Cache, and save.', cacheSolutionSettings: 'Open extension settings', cacheSolutionSessionHint: 'The current session_id is used automatically as the cache key; no manual value is needed.', cacheSolutionCaveat: 'The first request warms the cache. A 30-minute expiry, prefix changes, or a short static prefix can still reduce hits; enabling it does not guarantee 80%.', cacheSolutionUnknownModel: 'the model used for this response', cacheSolutionClose: 'Got it' });
@@ -565,6 +583,7 @@
         cacheTtl: 'default',
         subagentsEnabled: false,
         autoCompactEnabled: false,
+        codePreviewEnabled: false,
         defaultAttachmentPaths: new Set(),
         dragDepth: 0,
         chatRunning: false,
@@ -1047,6 +1066,25 @@
         autoCompactText.textContent = t('autoCompactLabel');
         autoCompactLabel.append(autoCompactInput, autoCompactText);
         shortcutBar.appendChild(autoCompactLabel);
+
+        const codePreviewLabel = document.createElement('label');
+        codePreviewLabel.className = 'composer-subagents-toggle';
+        codePreviewLabel.dataset.i18nTitle = 'codePreviewTitle';
+        codePreviewLabel.title = t('codePreviewTitle');
+        const codePreviewInput = document.createElement('input');
+        codePreviewInput.type = 'checkbox';
+        codePreviewInput.dataset.role = 'code-preview-toggle';
+        codePreviewInput.setAttribute('role', 'switch');
+        codePreviewInput.checked = composerState.codePreviewEnabled;
+        codePreviewInput.addEventListener('change', () => {
+            codePreviewInput.disabled = true;
+            post({ type: 'codePreview/select', enabled: codePreviewInput.checked });
+        });
+        const codePreviewText = document.createElement('span');
+        codePreviewText.dataset.i18n = 'codePreviewLabel';
+        codePreviewText.textContent = t('codePreviewLabel');
+        codePreviewLabel.append(codePreviewInput, codePreviewText);
+        shortcutBar.appendChild(codePreviewLabel);
 
         composerBox.insertAdjacentElement('afterend', shortcutBar);
         renderBrowserAutoApproveHint();
@@ -2172,17 +2210,17 @@
     async function uploadBlobFiles(files, source) {
         let index = 0;
         for (const file of files) {
+            const placeholderId = createClientId();
             try {
                 const uploadName = source === 'paste' ? createPastedImageName(file, index) : (file.name || createPastedImageName(file, index));
                 index += 1;
+                composerState.attachments.push({ id: placeholderId, path: '__pending__/' + uploadName, name: source === 'paste' ? pastedImageDisplayName(file) : uploadName, source });
+                renderAttachments();
                 const buffer = await file.arrayBuffer();
                 const bytes = new Uint8Array(buffer);
                 let binary = '';
                 for (let byteIndex = 0; byteIndex < bytes.length; byteIndex += 1) binary += String.fromCharCode(bytes[byteIndex]);
                 const base64 = btoa(binary);
-                const placeholderId = createClientId();
-                composerState.attachments.push({ id: placeholderId, path: '__pending__/' + uploadName, name: source === 'paste' ? pastedImageDisplayName(file) : uploadName, source });
-                renderAttachments();
                 post({
                     type: 'file/uploadBlob',
                     clientId: placeholderId,
@@ -2193,40 +2231,104 @@
                     base64
                 });
             } catch (err) {
+                removeAttachment(placeholderId);
+                showToast('warn', t('pasteImageFailed'));
                 post({ type: 'log', level: 'error', message: '[' + source + '] 读取文件失败：' + (err instanceof Error ? err.message : String(err)) });
             }
         }
     }
 
     /**
-     * 从 paste 事件中收集图片文件，覆盖 Ctrl+V 和右键菜单粘贴两种入口。
+     * 从惰性的 HTML 模板提取图片来源；不把剪贴板 HTML 插入文档或执行脚本。
+     * @param {string} html 剪贴板 text/html。
+     * @returns {{ sources: string[], skipped: boolean, limited: boolean }} 可交宿主读取的图片及省略状态。
+     */
+    function collectPastedHtmlImages(html) {
+        const template = document.createElement('template');
+        template.innerHTML = html;
+        const sourceMatch = /^SourceURL:\s*(https?:\/\/[^\r\n]+)/im.exec(html);
+        const baseHref = template.content.querySelector('base[href]')?.getAttribute('href');
+        let base = sourceMatch?.[1];
+        try {
+            if (baseHref) base = new URL(baseHref, base).href;
+            if (base && !/^https?:/i.test(base)) base = undefined;
+        } catch { base = undefined; }
+        const sources = [];
+        const seen = new Set();
+        let skipped = false;
+        let limited = false;
+        for (const image of template.content.querySelectorAll('img')) {
+            const src = (image.getAttribute('src') || '').trim();
+            const lazy = (image.getAttribute('data-src') || image.getAttribute('data-original') || '').trim();
+            const candidate = (!src || /^(?:about:blank|data:image\/gif)/i.test(src)) && lazy ? lazy : src || lazy;
+            if (!candidate) { skipped = true; continue; }
+            let url;
+            try { url = new URL(candidate, base); } catch { skipped = true; continue; }
+            if (!['http:', 'https:', 'data:'].includes(url.protocol) || url.username || url.password) { skipped = true; continue; }
+            if (url.protocol === 'data:' && !/^data:image\/(?:png|jpeg|jpg|gif|webp|bmp|tiff);base64,/i.test(url.href)) { skipped = true; continue; }
+            url.hash = '';
+            if (seen.has(url.href)) continue;
+            seen.add(url.href);
+            if (sources.length >= 5) { limited = true; continue; }
+            sources.push(url.href);
+        }
+        return { sources, skipped, limited };
+    }
+
+    /**
+     * 为 HTML 图片创建上传占位并交宿主下载，绕开 Webview 的 CORS/CSP 限制。
+     * @param {string[]} sources 图片来源，限本次用户粘贴的前五张。
+     * @returns {void}
+     */
+    function importPastedHtmlImages(sources) {
+        const images = sources.map((src) => {
+            const clientId = createClientId();
+            composerState.attachments.push({ id: clientId, path: '__pending__/' + clientId, name: 'IMAGE', source: 'paste' });
+            return { clientId, src };
+        });
+        if (images.length === 0) return;
+        renderAttachments();
+        post({ type: 'file/importClipboardImages', images });
+    }
+
+    /**
+     * 区分聊天输入框中的文本与图片粘贴，支持 Cmd/Ctrl+V 和右键粘贴。
      *
+     * 文字交给 textarea 原生粘贴，保留光标、选区替换和撤销记录；图片单独上传。
+     * items 与 files 是同一剪贴板的两种视图，优先 items，缺失时才回退 files。
+     * 有原生图片文件时优先使用，否则提取 HTML img 并交宿主读取。
      * @param {ClipboardEvent} event 浏览器剪贴板粘贴事件。
+     * @returns {Promise<void>} 当前批次图片读取与上传消息发送完成。
      */
     async function handlePaste(event) {
+        if (event.defaultPrevented || event.target !== composerEl || !(composerEl instanceof HTMLTextAreaElement)) return;
+        if (composerEl.disabled || composerEl.readOnly) return;
         const transfer = event.clipboardData;
         if (!transfer) return;
         const imageFiles = [];
         for (const item of Array.from(transfer.items || [])) {
-            if (item.kind !== 'file' || !String(item.type || '').startsWith('image/')) continue;
+            if (item.kind !== 'file' || !String(item.type || '').toLowerCase().startsWith('image/')) continue;
             const file = item.getAsFile();
-            if (file) imageFiles.push(file);
+            if (file && !imageFiles.includes(file)) imageFiles.push(file);
         }
-        for (const file of Array.from(transfer.files || [])) {
-            if (!String(file.type || '').startsWith('image/')) continue;
-            if (!imageFiles.includes(file)) imageFiles.push(file);
+        if (imageFiles.length === 0) {
+            for (const file of Array.from(transfer.files || [])) {
+                if (!String(file.type || '').toLowerCase().startsWith('image/')) continue;
+                if (!imageFiles.includes(file)) imageFiles.push(file);
+            }
         }
-        if (imageFiles.length === 0) return;
-        const latestImage = imageFiles[imageFiles.length - 1];
-        event.preventDefault();
+        const plainText = transfer.getData('text/plain');
+        const html = transfer.getData('text/html');
+        const htmlImages = imageFiles.length === 0 && html ? collectPastedHtmlImages(html) : { sources: [], skipped: false, limited: false };
+        post({ type: 'log', level: 'info', message: '[paste] textChars=' + plainText.length + ' htmlChars=' + html.length + ' imageFiles=' + imageFiles.length + ' htmlImages=' + htmlImages.sources.length });
+        if (htmlImages.skipped) showToast('warn', t('pasteImageFailed'));
+        if (htmlImages.limited) showToast('warn', t('pasteImageLimit'));
+        if (imageFiles.length === 0 && htmlImages.sources.length === 0) return;
+        // 图文混合时不能阻止默认行为，否则同批文本会被吞掉。
+        if (plainText.length === 0 && !html) event.preventDefault();
         event.stopPropagation();
-        post({
-            type: 'log',
-            level: 'info',
-            message: '[paste] latestImage=' + JSON.stringify({ name: latestImage.name, type: latestImage.type, size: latestImage.size, ignored: imageFiles.length - 1 })
-        });
-        await uploadBlobFiles([latestImage], 'paste');
-        composerEl?.focus();
+        importPastedHtmlImages(htmlImages.sources);
+        await uploadBlobFiles(imageFiles, 'paste');
     }
 
     /** 任务流使用介绍文档地址（GitHub main 分支）。 */
@@ -5253,6 +5355,10 @@
         if (!(composerEl instanceof HTMLTextAreaElement)) return;
         const text = composerEl.value.trim();
         const activeItems = composerState.attachments.filter((item) => item.source !== 'default');
+        if (activeItems.some(item => item.path.startsWith('__pending__/'))) {
+            showToast('info', t('pasteImagePending'));
+            return;
+        }
         const attachments = activeItems.map((item) => ({ path: item.path, name: item.name }));
         if (!text && attachments.length === 0) return;
         scrollAfterNextPendingAssistant = true;
@@ -5478,6 +5584,17 @@
                 addAttachments(message.attachments || [], { source: 'manual' });
                 if (composerEl instanceof HTMLTextAreaElement && message.focus) composerEl.focus();
                 break;
+            case 'composer/clipboardImagesResult': {
+                let failed = false;
+                for (const result of message.results || []) {
+                    // 用户已移除占位或已清空输入框时，不重新添加迟到的附件。
+                    if (!composerState.attachments.some(item => item.id === result.clientId)) continue;
+                    if (result.attachment) replaceAttachment(result.clientId, result.attachment);
+                    else { removeAttachment(result.clientId); failed = true; }
+                }
+                if (failed) showToast('warn', t('pasteImageFailed'));
+                break;
+            }
             case 'composer/replaceAttachment':
                 replaceAttachment(message.clientId, message.attachment);
                 if (composerEl instanceof HTMLTextAreaElement && message.focus) composerEl.focus();
@@ -5536,6 +5653,15 @@
                 const input = document.querySelector('[data-role="subagents-toggle"]');
                 if (input instanceof HTMLInputElement) {
                     input.checked = composerState.subagentsEnabled;
+                    input.disabled = false;
+                }
+                break;
+            }
+            case 'codePreview/current': {
+                composerState.codePreviewEnabled = message.enabled === true;
+                const input = document.querySelector('[data-role="code-preview-toggle"]');
+                if (input instanceof HTMLInputElement) {
+                    input.checked = composerState.codePreviewEnabled;
                     input.disabled = false;
                 }
                 break;

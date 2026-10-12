@@ -18,6 +18,7 @@ import { COMMANDS, CONFIG_NAMESPACE, type ChatCacheTtl } from '../constants';
 import type { ChatMessage, ChatModelOption, LlsTaskSnapshotPayload, ChatQuickPermissionMode, ChatRoute, ChatRoutedModelSelection, ChatUiLanguage, SessionListItem, WebviewToExtension } from '../chat/protocol';
 import { requestUsageRegistry } from './requestUsage';
 import { Logger } from '../logger';
+import { getCodePreviewEnabled, setCodePreviewEnabled } from '../editorAutoOpen';
 import { getChatViewHost, getConfigManager, getLlsTaskService } from '../runtime';
 import {
     currentChatCliSessionIdSync,
@@ -48,6 +49,7 @@ import {
     pickChatContextFiles,
     postActiveEditorAttachmentToChat,
     saveChatUploadedBlob,
+    importChatClipboardImages,
     sendUserMessageToCli
 } from './chatMessaging';
 import { handleAskUserAnswers } from './cliEventHandlers';
@@ -130,7 +132,8 @@ export function handleChatWebviewMessage(message: WebviewToExtension): Promise<v
     if (['user/send', 'user/resend', 'user/cancel', 'session/clear', 'session/resume', 'model/select'].includes(message.type)) {
         requireDeps().cancelPendingResend(`webview:${message.type}`);
     }
-    if (message.type === 'user/cancel' || message.type === 'askUser/answers' || message.type === 'log') {
+    // 代码预览只影响显示，不改变会话；避免被等待压缩或长时间附件处理阻塞。
+    if (message.type === 'user/cancel' || message.type === 'askUser/answers' || message.type === 'log' || message.type === 'codePreview/select') {
         return dispatchChatWebviewMessage(message);
     }
     const run = orderedMessageQueue.then(() => dispatchChatWebviewMessage(message));
@@ -166,6 +169,7 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
             await postChatCacheTtl();
             await postChatSubagentsEnabled();
             await postChatAutoCompactEnabled();
+            await postChatCodePreviewEnabled();
             await postChatTaskFlowStatus();
             await postActiveEditorAttachmentToChat();
             await requireDeps().maybePostTaskFlowRestorePrompt();
@@ -182,6 +186,9 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
         case 'file/pick':
             await pickChatContextFiles();
             return;
+        case 'file/importClipboardImages':
+            await importChatClipboardImages(message);
+            return;
         case 'file/uploadBlob':
             await saveChatUploadedBlob(message);
             return;
@@ -193,6 +200,9 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
             return;
         case 'subagents/select':
             await selectChatSubagentsEnabled(message.enabled);
+            return;
+        case 'codePreview/select':
+            await selectChatCodePreviewEnabled(message.enabled);
             return;
         case 'autoCompact/select':
             await selectChatAutoCompactEnabled(message.enabled);
@@ -631,6 +641,38 @@ export async function selectChatSubagentsEnabled(enabled: boolean): Promise<void
         await showChatToast('error', `子智能体开关保存失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
         await postChatSubagentsEnabled();
+    }
+}
+
+/**
+ * 回填工作区代码预览开关，供初始化、设置变更和保存失败恢复显示使用。
+ * @returns 真实工作区状态推送完成。
+ */
+export async function postChatCodePreviewEnabled(): Promise<void> {
+    await getChatViewHost()?.postMessage({ type: 'codePreview/current', enabled: getCodePreviewEnabled() });
+}
+
+/**
+ * 保存代码预览工作区开关；不重启 CLI，保存失败后恢复真实状态。
+ * @param enabled 用户选择的开关状态。
+ * @returns 保存和回填完成。
+ */
+export async function selectChatCodePreviewEnabled(enabled: boolean): Promise<void> {
+    try {
+        await setCodePreviewEnabled(enabled);
+    } catch {
+        const labels: Record<string, string> = {
+            en: 'Could not save code preview. Open a workspace and check its settings permissions.',
+            'zh-cn': '代码预览设置保存失败，请打开工作区并检查设置文件权限。',
+            'zh-tw': '程式碼預覽設定儲存失敗，請開啟工作區並檢查設定檔權限。',
+            ko: '코드 미리보기 설정을 저장할 수 없습니다. 작업 영역과 설정 파일 권한을 확인하세요.',
+            ja: 'コードプレビュー設定を保存できません。ワークスペースと設定ファイルの権限を確認してください。',
+            fr: 'Impossible d’enregistrer l’aperçu du code. Ouvrez un espace de travail et vérifiez les droits des paramètres.',
+            de: 'Codevorschau konnte nicht gespeichert werden. Öffnen Sie einen Arbeitsbereich und prüfen Sie die Einstellungsberechtigungen.'
+        };
+        await showChatToast('error', labels[getConfigManager()?.getResolvedUiLanguage() ?? 'en'] ?? labels.en);
+    } finally {
+        await postChatCodePreviewEnabled();
     }
 }
 

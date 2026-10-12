@@ -2,6 +2,24 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.70] - 2026-10-12
+
+### Added
+
+- Added a seven-language Code preview switch immediately after Auto compact in the composer footer. It defaults to off and persists only to the current workspace as `claudeCodeConfigHelper.editor.codePreview.enabled`, without inheriting global values or restarting the CLI.
+- When off, Read, Write, Edit, MultiEdit and NotebookEdit no longer auto-open non-Markdown files. `.md` and `.markdown` (case-insensitive) retain the existing auto-open behavior. Browser tool tabs and manually opened file links are unaffected.
+- Enabling the switch restores the previous file-tool display behavior. Existing workspace-path checks, visible-editor deduplication and the master `editor.autoOpenReadWriteFiles` setting remain in effect.
+- Configuration edits refresh the switch, failed writes restore the real state, and asynchronous file-open/retry operations recheck the switch before displaying a document.
+
+## [3.2.69] - 2026-10-12
+
+### Fixed
+
+- Composer paste keeps native text insertion while adding clipboard images separately; pasting into other inputs is no longer intercepted.
+- Webpage selections with images only in `text/html` are now recognized. When no native image files are available, the host imports embedded raster data URLs or downloads up to five public HTTP(S) images, resolving relative URLs only when clipboard source/base information is available.
+- Image downloads are limited to 20 MiB and 15 seconds each, validate redirects/DNS destinations and file signatures, and do not forward browser credentials. Unsupported/private/blob images and download failures produce localized warnings rather than silently disappearing.
+- Pending image attachments block sending until ready; failed HTML imports remove placeholders, and late results do not restore attachments the user removed.
+
 ## [3.2.68] - 2026-10-11
 
 ### Fixed

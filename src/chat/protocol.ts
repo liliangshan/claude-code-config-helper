@@ -325,11 +325,14 @@ export type ExtensionToWebview =
     | { type: 'composer/fill'; text: string; focus?: boolean }
     | { type: 'composer/defaultAttachment'; attachment?: ChatComposerAttachment; path?: string; name?: string }
     | { type: 'composer/addAttachments'; attachments: ChatComposerAttachment[]; focus?: boolean }
+    | { type: 'composer/clipboardImagesResult'; results: Array<{ clientId: string; attachment?: ChatComposerAttachment }> }
     | { type: 'composer/replaceAttachment'; clientId: string; attachment: ChatComposerAttachment; focus?: boolean }
     | { type: 'permissionMode/current'; mode: ChatQuickPermissionMode }
     | { type: 'reasoningEffort/current'; effort: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' }
     | { type: 'cacheTtl/current'; ttl: ChatCacheTtlOption }
     | { type: 'subagents/current'; enabled: boolean }
+    /** 工作区代码预览状态；Markdown 和浏览器标签不受此开关限制。 */
+    | { type: 'codePreview/current'; enabled: boolean }
     /** 阈值自动压缩开关当前状态（对应设置 chat.autoCompact.enabled）。 */
     | { type: 'autoCompact/current'; enabled: boolean }
     | {
@@ -562,12 +565,15 @@ export type WebviewToExtension =
           sessionId: string;
       }
     | { type: 'file/pick' }
+    | { type: 'file/importClipboardImages'; images: Array<{ clientId: string; src: string }> }
     | { type: 'file/uploadBlob'; clientId: string; name: string; displayName?: string; size: number; mime: string; base64: string }
     | { type: 'model/select'; providerId: string; modelId: string }
     | { type: 'permissionMode/select'; mode: ChatQuickPermissionMode }
     | { type: 'reasoningEffort/select'; effort: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' }
     | { type: 'cacheTtl/select'; ttl: ChatCacheTtlOption }
     | { type: 'subagents/select'; enabled: boolean }
+    /** 用户切换工作区代码预览开关。 */
+    | { type: 'codePreview/select'; enabled: boolean }
     /** 用户在输入框下方切换阈值自动压缩开关。 */
     | { type: 'autoCompact/select'; enabled: boolean }
     | {

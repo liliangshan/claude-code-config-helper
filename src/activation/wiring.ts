@@ -39,6 +39,7 @@ import {
     handleChatWebviewMessage,
     postChatModelOptions,
     postChatPermissionMode,
+    postChatCodePreviewEnabled,
     postChatTaskFlowModelOptions,
     postChatUiLanguage,
     postModelsSnapshot,
@@ -46,6 +47,7 @@ import {
     switchChatRoute
 } from '../chatRuntime/webviewMessages';
 import { Logger } from '../logger';
+import { CODE_PREVIEW_SETTING_KEY } from '../editorAutoOpen';
 import { AutoContinueScheduler } from '../llsTask/autoContinue';
 import { getChatViewHost, getConfigManager, getLlsTaskService } from '../runtime';
 import {
@@ -186,6 +188,11 @@ export function subscribeConfigManagerChanges(context: vscode.ExtensionContext):
 export function subscribeVscodeConfigurationChanges(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration((event) => {
+            if (event.affectsConfiguration(`claudeCodeConfigHelper.${CODE_PREVIEW_SETTING_KEY}`)) {
+                void postChatCodePreviewEnabled().catch((err: unknown) => {
+                    Logger.warn(`刷新代码预览开关失败：${err instanceof Error ? err.message : String(err)}`);
+                });
+            }
             if (
                 event.affectsConfiguration('claudeCodeConfigHelper.language') ||
                 event.affectsConfiguration('claudeCodeConfigHelper.chat.cliPath') ||
