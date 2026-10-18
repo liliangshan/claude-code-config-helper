@@ -21,6 +21,8 @@ import {
     VSCODE_TOOLS_GET_ERRORS_ENABLED_KEY
 } from '../../constants';
 import { ConfigManager } from '../../configManager';
+import { AUTO_COMPACT_SETTING_KEY, buildNativeCompactionPolicy, NATIVE_COMPACTION_ENV_KEYS, resolveContextWindow } from '../../nativeCompactionPolicy';
+import { probeCliVersion, probeNativeCompactionConflicts } from './nativeCompactionProbe';
 import { readCompactionConfigFromVscode } from '../../chatRuntime/compactionConfig';
 import { BROWSER_BRIDGE } from '../../browserTools/bridge';
 import { VSCODE_BRIDGE } from '../../vscodeTools/bridge';
@@ -173,11 +175,37 @@ export class ChatCliConfigService {
     public async getConfigWithRelayEnv(relayPort: number): Promise<ChatCliConfig> {
         const config = this.getConfig();
         const relayEnv = this.resolveRelayEnv(relayPort, 'normal');
+        const current = this.configManager?.getCurrentModel();
+        const modelId = current?.modelId || '';
+        const contextLength = current ? this.configManager?.getProviderModel(current.providerId, modelId)?.contextLength : undefined;
+        const inherited = { ...process.env, ...config.cliEnv };
+        const enabled = vscode.workspace.getConfiguration(CONFIG_NAMESPACE).get<boolean>(AUTO_COMPACT_SETTING_KEY, false) === true;
+        const [version, conflicts] = await Promise.all([
+            probeCliVersion(config.cliPath),
+            probeNativeCompactionConflicts(config.cwd, inherited, config.cliArgs, resolveContextWindow(modelId, contextLength).contextLimit)
+        ]);
+        const native = buildNativeCompactionPolicy(modelId, contextLength, enabled, inherited, conflicts, version);
+        const summaryId = config.compactionMode?.enabled ? config.compactionMode.model : '';
+        const separator = summaryId.indexOf('/');
+        if (separator > 0) {
+            const summaryModelId = summaryId.slice(separator + 1);
+            const summaryModel = this.configManager?.getProviderModel(summaryId.slice(0, separator), summaryModelId);
+            const summaryWindow = resolveContextWindow(summaryModelId, summaryModel?.contextLength).contextLimit;
+            if (summaryWindow < native.policy.contextLimit) native.policy.summaryContextLimit = summaryWindow;
+        }
+        const nativeCompactionEnv: Record<string, string> = {};
+        for (const key of NATIVE_COMPACTION_ENV_KEYS) {
+            const value = native.env[key] ?? inherited[key];
+            if (value !== undefined) nativeCompactionEnv[key] = value;
+        }
         return {
             ...config,
+            nativeCompaction: native.policy,
+            nativeCompactionEnv,
             cliEnv: {
                 ...config.cliEnv,
-                ...relayEnv
+                ...relayEnv,
+                ...native.env
             }
         };
     }
@@ -371,27 +399,7 @@ export class ChatCliConfigService {
         const modelId = current?.providerId && current.modelId
             ? this.buildRoutedModelId(current.providerId, current.modelId)
             : undefined;
-        return this.buildRelayEnv(relayPort, modelId, route, this.resolveMaxContextTokens());
-    }
-
-    /**
-     * 读取当前模型在配置面板手填的"上下文长度"，用于同步给 Claude CLI。
-     *
-     * CLI 不认识扩展的 provider 配置，只会用内置默认窗口（200000）推算自动压缩线，
-     * 于是插件按用户配置算的阈值和 CLI 自己的触发线各算各的。未配置时返回
-     * undefined，让 CLI 保持默认行为。
-     *
-     * @returns 上下文 token 上限；未配置或非法时返回 undefined。
-     */
-    private resolveMaxContextTokens(): number | undefined {
-        const current = this.configManager?.getCurrentModel();
-        if (!current?.providerId || !current.modelId) return undefined;
-        const model = this.configManager?.getProviderModel(current.providerId, current.modelId);
-        const contextLength = model?.contextLength;
-        if (typeof contextLength !== 'number' || !Number.isFinite(contextLength) || contextLength <= 0) {
-            return undefined;
-        }
-        return Math.floor(contextLength);
+        return this.buildRelayEnv(relayPort, modelId, route);
     }
 
     /**
@@ -410,14 +418,13 @@ export class ChatCliConfigService {
      *
      * @param relayPort 本地 HTTP 中转服务实际监听端口。
      * @param modelId 当前中转模型 ID，格式为 `providerId/modelId`。
-     * @param maxContextTokens 用户配置的上下文 token 上限；undefined 时不注入。
+     * @param route 当前 CLI 路由。
      * @returns 环境变量字典。
      */
     private buildRelayEnv(
         relayPort: number,
         modelId: string | undefined,
-        route: ChatRoute,
-        maxContextTokens?: number
+        route: ChatRoute
     ): Record<string, string> {
         const env: Record<string, string> = {
             CLAUDE_CODE_SKIP_AUTH_LOGIN: '1',
@@ -428,10 +435,6 @@ export class ChatCliConfigService {
         };
         if (modelId) {
             env.ANTHROPIC_MODEL = modelId;
-        }
-        if (maxContextTokens) {
-            // CLI 按此值推算自动压缩线，和插件 token 计量条共用同一个上限。
-            env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(maxContextTokens);
         }
         return env;
     }

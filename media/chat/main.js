@@ -62,13 +62,23 @@
     Object.assign(chatTranslations.ja, { subagentsLabel: 'サブエージェント', subagentsTitle: 'モデルに Agent、SendMessage、ListAgents ツールを提供するかを設定します。次のリクエストから適用されます' });
     Object.assign(chatTranslations.fr, { subagentsLabel: 'Sous-agents', subagentsTitle: 'Fournir les outils Agent, SendMessage et ListAgents au modèle ; prend effet à la prochaine requête' });
     Object.assign(chatTranslations.de, { subagentsLabel: 'Unteragenten', subagentsTitle: 'Dem Modell die Werkzeuge Agent, SendMessage und ListAgents bereitstellen; gilt ab der nächsten Anfrage' });
-    Object.assign(chatTranslations.en, { autoCompactLabel: 'Auto compact', autoCompactTitle: 'Automatically send /compact when context usage reaches the model context limit minus 50K tokens' });
-    Object.assign(chatTranslations['zh-cn'], { autoCompactLabel: '自动压缩', autoCompactTitle: '上下文用量达到模型上限减 50K token 时自动发送 /compact' });
-    Object.assign(chatTranslations['zh-tw'], { autoCompactLabel: '自動壓縮', autoCompactTitle: '上下文用量達到模型上限減 50K token 時自動發送 /compact' });
-    Object.assign(chatTranslations.ko, { autoCompactLabel: '자동 압축', autoCompactTitle: '컨텍스트 사용량이 모델 한도 - 50K 토큰에 도달하면 /compact 를 자동 전송' });
-    Object.assign(chatTranslations.ja, { autoCompactLabel: '自動圧縮', autoCompactTitle: 'コンテキスト使用量がモデル上限 - 50K トークンに達したら /compact を自動送信' });
-    Object.assign(chatTranslations.fr, { autoCompactLabel: 'Compactage auto', autoCompactTitle: 'Envoie /compact automatiquement lorsque le contexte atteint la limite du modèle moins 50K jetons' });
-    Object.assign(chatTranslations.de, { autoCompactLabel: 'Auto-Komprimierung', autoCompactTitle: 'Sendet /compact automatisch, wenn der Kontext das Modelllimit minus 50K Token erreicht' });
+    /** 原生比例策略与待应用提示；关闭仍保留手动 /compact。 */
+    Object.assign(chatTranslations.en, { autoCompactLabel: 'Auto compact', autoCompactTitle: 'CLI native compaction: ≤200K uses 90%, >200K uses 80%, with additional internal reserves. Off disables automatic compaction only. Changes apply after a safe restart.', autoCompactPending: 'Pending — applies on next safe restart', autoCompactManaged: 'Native policy applied', autoCompactDisabled: 'Automatic compaction disabled; manual /compact available', autoCompactConflict: 'Not managed: native configuration conflict', autoCompactUnsupported: 'Not managed: unsupported CLI version or window', autoCompactUnknown: 'Native policy not confirmed', autoCompactEstimate: 'Estimated trigger (includes CLI reserves): {tokens}; actual trigger unknown', autoCompactWindow: 'Configured capacity: {tokens} ({source}); CLI use ratio: {ratio}%', compactWorking: 'Compacting context…', compactSameSession: 'Native summary; continues in the same session', compactFailed: 'Compaction failed: {error}. The session is preserved; check the summary model and retry manually.' });
+    Object.assign(chatTranslations['zh-cn'], { autoCompactLabel: '自动压缩', autoCompactTitle: 'CLI 原生压缩：≤200K 使用 90%，>200K 使用 80%，另有内部预留。关闭只停用自动压缩，手动 /compact 保留；变更在安全重启后生效。', autoCompactPending: '待应用（下次安全重启生效）', autoCompactManaged: '已应用原生策略', autoCompactDisabled: '自动压缩已关闭，手动 /compact 仍可使用', autoCompactConflict: '未接管：原生配置冲突', autoCompactUnsupported: '未接管：CLI 版本或窗口不支持', autoCompactUnknown: '原生策略尚未确认', autoCompactEstimate: '估算触发点（含 CLI 内部预留）：{tokens}；实际触发点未知', autoCompactWindow: '配置容量：{tokens}（{source}）；CLI 使用比例：{ratio}%', compactWorking: '正在压缩上下文…', compactSameSession: '原生摘要完成后在原会话继续', compactFailed: '压缩失败：{error}。会话已保留，请检查压缩模型后手动重试。' });
+    Object.assign(chatTranslations['zh-tw'], { autoCompactLabel: '自動壓縮', autoCompactTitle: 'CLI 原生壓縮：≤200K 使用 90%，>200K 使用 80%，另有內部預留。關閉僅停用自動壓縮，保留手動 /compact；安全重新啟動後生效。', autoCompactPending: '待套用（下次安全重新啟動生效）', autoCompactManaged: '已套用原生策略', autoCompactDisabled: '自動壓縮已關閉，仍可手動 /compact', autoCompactConflict: '未接管：原生設定衝突', autoCompactUnsupported: '未接管：CLI 版本或視窗不支援', autoCompactUnknown: '原生策略尚未確認', autoCompactEstimate: '估計觸發點（含 CLI 預留）：{tokens}；實際觸發點未知', autoCompactWindow: '設定容量：{tokens}（{source}）；CLI 使用比例：{ratio}%', compactWorking: '正在壓縮上下文…', compactSameSession: '原生摘要完成後在原會話繼續', compactFailed: '壓縮失敗：{error}。會話已保留，請檢查壓縮模型並手動重試。' });
+    Object.assign(chatTranslations.ko, { autoCompactLabel: '자동 압축', autoCompactTitle: 'CLI 기본 압축: ≤200K는 90%, >200K는 80%, 내부 예약 추가. 끄면 자동 압축만 중지하며 안전한 재시작 후 적용됩니다.', autoCompactPending: '대기 — 다음 안전한 재시작에 적용', autoCompactManaged: '기본 정책 적용됨', autoCompactDisabled: '자동 압축 꺼짐; 수동 /compact 사용 가능', autoCompactConflict: '관리되지 않음: 기본 설정 충돌', autoCompactUnsupported: '관리되지 않음: CLI 버전 또는 창 미지원', autoCompactUnknown: '기본 정책 확인되지 않음', autoCompactEstimate: '예상 트리거(CLI 예약 포함): {tokens}; 실제 값 알 수 없음', autoCompactWindow: '설정 용량: {tokens} ({source}); CLI 사용 비율: {ratio}%', compactWorking: '컨텍스트 압축 중…', compactSameSession: '기본 요약 후 같은 세션에서 계속', compactFailed: '압축 실패: {error}. 세션은 보존됩니다. 요약 모델을 확인하고 수동으로 재시도하세요.' });
+    Object.assign(chatTranslations.ja, { autoCompactLabel: '自動圧縮', autoCompactTitle: 'CLI ネイティブ圧縮：≤200K は90%、>200K は80%、内部予約あり。オフは自動圧縮のみ停止。安全な再起動後に適用。', autoCompactPending: '保留（次の安全な再起動で適用）', autoCompactManaged: 'ネイティブポリシー適用済み', autoCompactDisabled: '自動圧縮オフ；手動 /compact は有効', autoCompactConflict: '未管理：ネイティブ設定の競合', autoCompactUnsupported: '未管理：CLI バージョンまたはウィンドウ未対応', autoCompactUnknown: 'ネイティブポリシー未確認', autoCompactEstimate: '推定トリガー（CLI 予約込み）：{tokens}；実際の値は不明', autoCompactWindow: '設定容量：{tokens}（{source}）；CLI 使用率：{ratio}%', compactWorking: 'コンテキストを圧縮中…', compactSameSession: '要約後に同じセッションで続行', compactFailed: '圧縮失敗：{error}。セッションは保持されています。要約モデルを確認して手動で再試行してください。' });
+    Object.assign(chatTranslations.fr, { autoCompactLabel: 'Compactage auto', autoCompactTitle: 'Compactage natif CLI : ≤200K utilise 90 %, >200K 80 %, avec réserves internes. Désactiver ne bloque que le mode automatique. Application après redémarrage sûr.', autoCompactPending: 'En attente — prochain redémarrage sûr', autoCompactManaged: 'Politique native appliquée', autoCompactDisabled: 'Automatique désactivé ; /compact manuel disponible', autoCompactConflict: 'Non géré : conflit de configuration native', autoCompactUnsupported: 'Non géré : version CLI ou fenêtre non prise en charge', autoCompactUnknown: 'Politique native non confirmée', autoCompactEstimate: 'Seuil estimé (réserves CLI incluses) : {tokens} ; seuil réel inconnu', autoCompactWindow: 'Capacité configurée : {tokens} ({source}) ; ratio CLI : {ratio} %', compactWorking: 'Compactage du contexte…', compactSameSession: 'Résumé natif puis reprise dans la même session', compactFailed: 'Échec du compactage : {error}. Session conservée ; vérifiez le modèle de résumé puis réessayez manuellement.' });
+    Object.assign(chatTranslations.de, { autoCompactLabel: 'Auto-Komprimierung', autoCompactTitle: 'Native CLI-Komprimierung: ≤200K nutzt 90 %, >200K 80 %, mit internen Reserven. Aus stoppt nur Automatik. Gilt nach sicherem Neustart.', autoCompactPending: 'Ausstehend — nächster sicherer Neustart', autoCompactManaged: 'Native Richtlinie angewendet', autoCompactDisabled: 'Automatik aus; manuelles /compact verfügbar', autoCompactConflict: 'Nicht verwaltet: nativer Einstellungskonflikt', autoCompactUnsupported: 'Nicht verwaltet: CLI-Version oder Fenster nicht unterstützt', autoCompactUnknown: 'Native Richtlinie nicht bestätigt', autoCompactEstimate: 'Geschätzte Schwelle (inkl. CLI-Reserven): {tokens}; tatsächliche Schwelle unbekannt', autoCompactWindow: 'Konfigurierte Kapazität: {tokens} ({source}); CLI-Nutzungsanteil: {ratio} %', compactWorking: 'Kontext wird komprimiert…', compactSameSession: 'Native Zusammenfassung; Fortsetzung in derselben Sitzung', compactFailed: 'Komprimierung fehlgeschlagen: {error}. Sitzung bleibt erhalten; Zusammenfassungsmodell prüfen und manuell wiederholen.' });
+
+    /** 摘要容量提示不自动切换模型，避免产生未授权费用。 */
+    Object.assign(chatTranslations.en, { compactModelCapacity: 'Summary-model capacity {tokens} is smaller than the main window. Check whether it can accept the full summary input.' });
+    Object.assign(chatTranslations['zh-cn'], { compactModelCapacity: '压缩模型容量 {tokens} 小于主窗口，请确认能接收完整摘要输入。' });
+    Object.assign(chatTranslations['zh-tw'], { compactModelCapacity: '壓縮模型容量 {tokens} 小於主視窗，請確認可接收完整摘要輸入。' });
+    Object.assign(chatTranslations.ko, { compactModelCapacity: '요약 모델 용량 {tokens}이 기본 창보다 작습니다. 전체 요약 입력 지원 여부를 확인하세요.' });
+    Object.assign(chatTranslations.ja, { compactModelCapacity: '要約モデルの容量 {tokens} は主ウィンドウより小さいため、全入力を受け取れるか確認してください。' });
+    Object.assign(chatTranslations.fr, { compactModelCapacity: 'La capacité du modèle de résumé ({tokens}) est inférieure à la fenêtre principale. Vérifiez la taille de l’entrée complète.' });
+    Object.assign(chatTranslations.de, { compactModelCapacity: 'Kapazität des Zusammenfassungsmodells {tokens} ist kleiner als das Hauptfenster. Vollständige Eingabegröße prüfen.' });
 
     /** 代码预览开关标签和提示，跟随聊天界面语言实时更新。 */
     Object.assign(chatTranslations.en, { codePreviewLabel: 'Code preview', codePreviewTitle: 'Auto-open files used by Read/Edit tools. Off by default, saved to workspace; Markdown and browser tabs are unaffected. No restart needed.' });
@@ -583,6 +593,8 @@
         cacheTtl: 'default',
         subagentsEnabled: false,
         autoCompactEnabled: false,
+        autoCompactPending: false,
+        nativeCompactionPolicy: null,
         codePreviewEnabled: false,
         defaultAttachmentPaths: new Set(),
         dragDepth: 0,
@@ -649,6 +661,8 @@
         renderModelOptions();
         renderPermissionModeSelect();
         ensureComposerShortcutBar();
+        renderNativeCompactionState();
+        if (lastTokenMeterInfo) renderTokenMeter(lastTokenMeterInfo);
         renderTaskFlowModelOptions();
         renderModelPickerCompactionList();
         renderClaudeTodoPanel();
@@ -5668,6 +5682,10 @@
             }
             case 'autoCompact/current': {
                 composerState.autoCompactEnabled = message.enabled === true;
+                composerState.autoCompactPending = message.pending === true;
+                composerState.nativeCompactionPolicy = message.policy || null;
+                renderNativeCompactionState();
+                if (lastTokenMeterInfo) renderTokenMeter(lastTokenMeterInfo);
                 const autoCompactToggle = document.querySelector('[data-role="auto-compact-toggle"]');
                 if (autoCompactToggle instanceof HTMLInputElement) {
                     autoCompactToggle.checked = composerState.autoCompactEnabled;
@@ -5704,7 +5722,7 @@
             case 'compaction/started':
                 setComposerCompacting(true);
                 setTokenMeterCompacting(true);
-                showToast('info', '正在压缩上下文…');
+                showToast('info', t('compactWorking'));
                 break;
             case 'compaction/finished':
                 setComposerCompacting(false);
@@ -5722,7 +5740,7 @@
             case 'compaction/failed':
                 setComposerCompacting(false);
                 setTokenMeterCompacting(false);
-                showToast('error', '压缩失败：' + (message.error || t('unknownError')) + '，建议手动清空上下文。');
+                showToast('error', tf('compactFailed', { error: message.error || t('unknownError') }));
                 break;
             case 'sessions/list/result':
                 renderSessionList(message.sessions || []);
@@ -5918,6 +5936,38 @@
     /** 缓存最后一次成功渲染的 usage 快照，用于压缩失败时恢复芯片文本。 */
     let lastTokenMeterInfo = null;
 
+    /** 读取已应用状态文案；待应用不会误标为新策略已经生效。 */
+    function nativeCompactionStatusText() {
+        if (composerState.autoCompactPending) return t('autoCompactPending');
+        var policy = composerState.nativeCompactionPolicy;
+        var labels = { managed: 'autoCompactManaged', disabled: 'autoCompactDisabled', conflict: 'autoCompactConflict', unsupported: 'autoCompactUnsupported' };
+        return t(policy && labels[policy.status] || 'autoCompactUnknown');
+    }
+
+    /** 回填原生状态标签及键名诊断，内容通过 textContent 输出。 */
+    function renderNativeCompactionState() {
+        var input = document.querySelector('[data-role="auto-compact-toggle"]');
+        if (!(input instanceof HTMLInputElement) || !input.parentElement) return;
+        var label = input.parentElement;
+        var status = label.querySelector('[data-role="auto-compact-status"]');
+        if (!status) {
+            status = document.createElement('span');
+            status.dataset.role = 'auto-compact-status';
+            label.appendChild(status);
+        }
+        var policy = composerState.nativeCompactionPolicy;
+        var text = nativeCompactionStatusText();
+        status.textContent = composerState.autoCompactPending || policy && ['conflict', 'unsupported'].includes(policy.status) ? ' · ' + text : '';
+        status.setAttribute('aria-live', 'polite');
+        label.title = t('autoCompactTitle') + '\n' + text + (policy && policy.conflicts.length ? '\n' + policy.conflicts.join(', ') : '');
+        if (policy && policy.summaryContextLimit) {
+            var warning = tf('compactModelCapacity', { tokens: policy.summaryContextLimit.toLocaleString() });
+            label.title += '\n' + warning;
+            if (!status.textContent) status.textContent = ' ⚠';
+        }
+    }
+
+    /** 渲染容量和估算阈值；不把扩展用量等同于 CLI 的精确触发计量。 */
     function renderTokenMeter(info) {
         if (!(tokenMeterEl instanceof HTMLElement) || !(tokenMeterWrapEl instanceof HTMLElement)) return;
         if (!info || !info.limit || info.limit <= 0) {
@@ -5941,9 +5991,16 @@
         tokenMeterEl.classList.remove('is-warn', 'is-danger', 'is-over-threshold', 'is-estimated', 'is-compacting');
         if (pct >= 90) tokenMeterEl.classList.add('is-danger');
         else if (pct >= 70) tokenMeterEl.classList.add('is-warn');
-        if (info.threshold > 0 && used >= info.threshold) tokenMeterEl.classList.add('is-over-threshold');
+        var policy = composerState.nativeCompactionPolicy;
+        var estimatedThreshold = policy ? policy.estimatedThreshold : info.threshold;
+        if (policy && policy.status === 'managed' && estimatedThreshold > 0 && used >= estimatedThreshold) tokenMeterEl.classList.add('is-over-threshold');
         if (info.source === 'estimated') tokenMeterEl.classList.add('is-estimated');
         var hint = used.toLocaleString() + ' / ' + limit.toLocaleString() + ' tokens · ' + pct.toFixed(1) + '%';
+        hint += '\n' + nativeCompactionStatusText();
+        if (policy) {
+            hint += '\n' + tf('autoCompactWindow', { tokens: policy.contextLimit.toLocaleString(), source: policy.source, ratio: policy.percentage });
+            hint += '\n' + tf('autoCompactEstimate', { tokens: estimatedThreshold.toLocaleString() });
+        }
         tokenMeterEl.title = hint;
         if (tokenMeterUsedEl instanceof HTMLElement) {
             var tokensSuffix = currentLanguage && currentLanguage.indexOf('zh') === 0 ? ' 个令牌' : ' tokens';
@@ -5953,8 +6010,8 @@
         var usedPctClamped = Math.max(0, Math.min(100, (used / limit) * 100));
         if (tokenMeterBarUsedEl instanceof HTMLElement) tokenMeterBarUsedEl.style.width = usedPctClamped.toFixed(2) + '%';
         if (tokenMeterBarReservedEl instanceof HTMLElement) {
-            var reservedRaw = (info.threshold && info.threshold > 0)
-                ? Math.max(0, limit - info.threshold)
+            var reservedRaw = policy && policy.status === 'managed' && estimatedThreshold > 0
+                ? Math.max(0, limit - estimatedThreshold)
                 : 0;
             var reservedPct = Math.max(0, Math.min(100 - usedPctClamped, (reservedRaw / limit) * 100));
             tokenMeterBarReservedEl.style.width = reservedPct.toFixed(2) + '%';
@@ -5971,8 +6028,8 @@
         if (compacting) {
             tokenMeterWrapEl.hidden = false;
             tokenMeterEl.classList.add('is-compacting');
-            tokenMeterEl.textContent = '压缩中…';
-            tokenMeterEl.title = '正在压缩上下文，完成后会切换到新会话';
+            tokenMeterEl.textContent = t('compactWorking');
+            tokenMeterEl.title = t('compactSameSession');
             closeTokenMeterPopover();
         } else {
             tokenMeterEl.classList.remove('is-compacting');

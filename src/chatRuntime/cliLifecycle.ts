@@ -16,12 +16,14 @@ import { ChatCliSessionStore } from '../chat/cli/sessionStore';
 import type { ChatCliConfig } from '../chat/cli/types';
 import type { ChatRoute, ChatSegment } from '../chat/protocol';
 import { Logger } from '../logger';
+import { AUTO_COMPACT_SETTING_KEY, type NativeCompactionPolicy } from '../nativeCompactionPolicy';
 import { getLlsCcaiTaskTexts } from '../llsTask/messages';
 import { getChatViewHost, getConfigManager, getLlsTaskService, getRelayServer } from '../runtime';
 import {
     chatCliCancelState,
     chatRouteState,
     getSessionIdForRoute,
+    isAnyRouteBusy,
     pendingAskUserRequests,
     resetAllRouteBusy,
     routes
@@ -49,6 +51,8 @@ export interface CliLifecycleDeps {
     notifyPermissionDeniedToUser: (resultText: string) => void;
     /** 记录三条 MCP 桥的注入状态。 */
     logMcpInjection: (config: ChatCliConfig) => void;
+    /** 读取压缩在途状态和释放旧 CLI 锁，避免反向依赖 chatSession。 */
+    getCompactionService?: () => import('../relay/tokenBudget/service').TokenBudgetService | undefined;
 }
 
 /** 注入的上层依赖，activate 期间必须先调用 {@link configureCliLifecycle} 赋值。 */
@@ -70,6 +74,66 @@ let chatCliSessionStore: ChatCliSessionStore | undefined;
  * 会互相清理刚创建的新进程。队列保证任意时刻只有一个启动流程在改写进程与 adapter。
  */
 let cliStartQueue: Promise<void> = Promise.resolve();
+
+/** 已应用策略与待重启状态；仅当前 CLI 实例生效，配置不强杀活动工具链。 */
+let appliedNativePolicy: NativeCompactionPolicy | undefined;
+let appliedNativeModel = '';
+let pendingNativePolicy = false;
+let nativeRefreshTimer: NodeJS.Timeout | undefined;
+
+/** 回填已应用策略和下次重启状态，不输出用户完整环境。 */
+export async function postNativeCompactionState(): Promise<void> {
+    const enabled = vscode.workspace.getConfiguration('claudeCodeConfigHelper').get<boolean>(AUTO_COMPACT_SETTING_KEY, false) === true;
+    await getChatViewHost()?.postMessage({
+        type: 'autoCompact/current', enabled, pending: pendingNativePolicy, policy: appliedNativePolicy
+    });
+}
+
+/** 判断当前实例能否安全应用环境变更；HTTP 工具间隙不算整轮空闲。 */
+function canApplyNativePolicy(): boolean {
+    const recoveryState = requestRecoveryController.getSnapshot()?.state;
+    return !isAnyRouteBusy() && !pendingAskUserRequests.size
+        && !['native_retry', 'waiting_recovery', 'recovering'].includes(recoveryState || '')
+        && !deps?.getCompactionService?.()?.isCompactionInFlight(getSessionIdForRoute('normal'));
+}
+
+/**
+ * 配置变化后延迟合并刷新；普通模型切换仍复用已有的显式重启流程。
+ * @returns 安排完成，不等待或中止当前任务。
+ */
+export function scheduleNativeCompactionRefresh(): void {
+    if (nativeRefreshTimer) clearTimeout(nativeRefreshTimer);
+    nativeRefreshTimer = setTimeout(() => {
+        nativeRefreshTimer = undefined;
+        void refreshNativeCompactionPolicy().catch(error => Logger.warn(`原生压缩策略应用失败：${String(error)}`));
+    }, 200);
+}
+
+/** 读取新策略，忙碌时待应用，空闲时以原会话重启；不启动尚未运行的 CLI。 */
+async function refreshNativeCompactionPolicy(): Promise<void> {
+    const port = getRelayServer()?.getActualPort();
+    if (!chatCliConfigService || !routes.normal.process?.isRunning() || !port) {
+        await postNativeCompactionState();
+        return;
+    }
+    const config = await chatCliConfigService.getConfigWithRelayEnv(port);
+    pendingNativePolicy = JSON.stringify(config.nativeCompaction) !== JSON.stringify(appliedNativePolicy)
+        || (config.model || '') !== appliedNativeModel;
+    await postNativeCompactionState();
+    await applyPendingNativeCompactionPolicy();
+}
+
+/** 在整轮 result 或恢复结束的安全点应用待重启配置，队列内再次检查忙碌状态。 */
+export async function applyPendingNativeCompactionPolicy(): Promise<void> {
+    if (!pendingNativePolicy || !canApplyNativePolicy()) return;
+    const run = cliStartQueue.then(async () => {
+        if (!pendingNativePolicy || !canApplyNativePolicy()) return;
+        await performStartChatCliPair({ forceRestart: false });
+    });
+    cliStartQueue = run.catch(() => undefined);
+    await run;
+}
+
 
 /** 注入上层依赖；必须在任何其它导出函数之前调用。 */
 export function configureCliLifecycle(value: CliLifecycleDeps): void {
@@ -107,6 +171,11 @@ export function getChatCliSessionStore(): ChatCliSessionStore | undefined {
 
 /** 释放本模块持有的服务引用（deactivate 调用）。 */
 export function disposeCliLifecycleServices(): void {
+    if (nativeRefreshTimer) clearTimeout(nativeRefreshTimer);
+    nativeRefreshTimer = undefined;
+    appliedNativePolicy = undefined;
+    appliedNativeModel = '';
+    pendingNativePolicy = false;
     cliResolver = undefined;
     chatCliConfigService = undefined;
     chatCliSessionStore = undefined;
@@ -135,6 +204,7 @@ export async function restartChatCli(options: { silent?: boolean } = {}): Promis
     deps?.cancelPendingResend('manual_cli_restart');
     if (!routes.normal.process || !chatCliConfigService) return;
     chatCliCancelState.requested = false;
+    resetAllRouteBusy();
     await startChatCliFromCurrentConfig({ forceRestart: true });
     if (!options.silent) {
         await requireDeps().showChatToast('success', 'Chat CLI 长连接已重启。');
@@ -305,7 +375,14 @@ async function performStartChatCliPair(options: { forceRestart?: boolean }): Pro
     await requireDeps().syncClaudeCliModelSettingsSafely();
 
     // ── normal CLI ─────────────────────────────────────────────────────
-    const normalPersistedSessionId = await chatCliSessionStore?.readSessionId(normal.cwd, 'normal');
+    if (!options.forceRestart && routes.normal.process.isRunning() && !canApplyNativePolicy()) {
+        pendingNativePolicy = JSON.stringify(normal.nativeCompaction) !== JSON.stringify(appliedNativePolicy)
+            || (normal.model || '') !== appliedNativeModel;
+        await postNativeCompactionState();
+        return;
+    }
+    const normalPersistedSessionId = getSessionIdForRoute('normal')
+        || await chatCliSessionStore?.readSessionId(normal.cwd, 'normal');
     const normalLaunchConfig = { ...normal, resumeSessionId: normalPersistedSessionId };
     if (!options.forceRestart && routes.normal.process.isRunningWithConfig(normalLaunchConfig)) {
         Logger.info(`复用现有 normal Chat CLI 进程（model=${normalLaunchConfig.model}）`);
@@ -327,9 +404,20 @@ async function performStartChatCliPair(options: { forceRestart?: boolean }): Pro
         }));
         chatCliCancelState.requested = false;
         requireDeps().logMcpInjection(normalLaunchConfig);
+        // await 读取配置/会话期间可能有新任务到达，spawn 前最后检查一次。
+        if (!options.forceRestart && routes.normal.process.isRunning() && !canApplyNativePolicy()) {
+            pendingNativePolicy = true;
+            await postNativeCompactionState();
+            return;
+        }
+        deps?.getCompactionService?.()?.releaseCliCompactions(getSessionIdForRoute('normal'), 'CLI restarted');
         await routes.normal.process.start(normalLaunchConfig);
         rebuildNormalAdapter();
     }
+    appliedNativePolicy = normal.nativeCompaction;
+    appliedNativeModel = normal.model || '';
+    pendingNativePolicy = false;
+    await postNativeCompactionState();
     await getChatViewHost()?.postMessage({ type: 'cli/status', status: 'running', detail: normal.cliPath });
 }
 
@@ -368,7 +456,13 @@ async function performRecoveryCliStart(context: Readonly<RecoveryContext>, signa
     const configs = await service.getRoutedConfigsWithRelayEnv(port);
     signal.throwIfAborted();
     if (getSessionIdForRoute('normal') !== context.sessionId) throw new Error('Recovery session changed');
+    deps?.getCompactionService?.()?.releaseCliCompactions(context.sessionId, 'CLI recovery restart');
+    resetAllRouteBusy();
     await process.start({ ...configs.normal, resumeSessionId: context.sessionId });
+    appliedNativePolicy = configs.normal.nativeCompaction;
+    appliedNativeModel = configs.normal.model || '';
+    pendingNativePolicy = false;
+    await postNativeCompactionState();
     signal.throwIfAborted();
     rebuildNormalAdapter();
 }
@@ -392,6 +486,7 @@ export async function restartChatCliPair(options: { silent?: boolean } = {}): Pr
  */
 export async function stopChatCliPair(): Promise<void> {
     requireDeps().cancelPendingResend('stop_cli');
+    deps?.getCompactionService?.()?.releaseCliCompactions(getSessionIdForRoute('normal'), 'CLI stopped');
     resetAllRouteBusy();
     // CLI 即将停止，等待中的 AskUserQuestion 弹窗请求全部作废，防止残留死等条目。
     pendingAskUserRequests.clear();
@@ -417,6 +512,8 @@ export function rebuildNormalAdapter(): void {
     });
     const adapter = routes.normal.adapter;
     routes.normal.adapterSubscription = adapter.onParsedEvent((event) => {
+        // 旧 adapter 的异步/迟到事件不能复位新进程的压缩状态。
+        if (routes.normal.adapter !== adapter) return;
         let identity = getRecoveryAdapterIdentity(adapter);
         if (identity && event.type === 'session/init' && !identity.sessionId) {
             const bound = requestRecoveryController.bindSession(identity, event.sessionId);
@@ -486,6 +583,8 @@ export async function handleChatCliExit(
     event: { code: number | null; signal: NodeJS.Signals | null },
     source: ChatRoute = 'normal'
 ): Promise<void> {
+    deps?.getCompactionService?.()?.releaseCliCompactions(getSessionIdForRoute(source), 'CLI exited');
+    resetAllRouteBusy();
     const detail = `source=${source}, code=${event.code ?? 'null'}, signal=${event.signal ?? 'null'}`;
     const recoveryIdentity = routes.normal.adapter && getRecoveryAdapterIdentity(routes.normal.adapter);
     requireDeps().clearHttpExpectation(`${source}_cli_exit`);

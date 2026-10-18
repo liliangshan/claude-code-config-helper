@@ -1,19 +1,9 @@
-/**
- * @file TokenBudgetService —— token 预算与自动压缩协调器。
- *
- * 入口职责：
- * 1. `beforeSend`：请求即将发往上游前调用，只做估算与登记，不改写 body；
- * 2. `afterRecv`：UsageReporter sink 触发时调用，用上游 usage 权威值覆盖
- *    current，写盘，并在阈值触达时异步启动"自动压缩 → 切新 session"流程；
- * 3. `getSnapshot` / `onDidChangeUsage` / `onCompactionStateChanged`：暴露给
- *    状态栏 / Webview 的只读视图。
- *
- * 详细设计见 .LLSOAI/token-budget.md（v2，2026-05-25）。
- */
+/** @file 上下文计量与 CLI 原生/手动压缩状态协调；不再排队自动发送 /compact。 */
 
 import * as vscode from 'vscode';
 
 import { Logger } from '../../logger';
+import { estimateCompactionThreshold, resolveContextWindow } from '../../nativeCompactionPolicy';
 import type { ConfigManager } from '../../configManager';
 import type { UsageReport } from '../usageReporter';
 import { estimateAnthropicInputTokens } from './estimator';
@@ -24,34 +14,11 @@ import {
     type UsageHistoryEntry
 } from './store';
 
-/** 默认上下文上限（无配置、无静态表命中时的兜底）。 */
-const DEFAULT_CONTEXT_LIMIT = 166_000;
-
-/** 阈值 = contextLimit - 此常量。 */
-const THRESHOLD_RESERVE = 50_000;
-
-/** 发送给 Claude CLI 的原生上下文压缩指令。 */
+/** 发送给 Claude CLI 的手动上下文压缩指令。 */
 export const CLAUDE_COMPACT_COMMAND = '/compact';
 
-/** 自动压缩开关配置键（claudeCodeConfigHelper.chat.autoCompact.enabled）。 */
-const AUTO_COMPACT_ENABLED_KEY = 'chat.autoCompact.enabled';
-
-/** 同一会话两次自动触发之间的最短间隔，避免压缩失败后连环重发。 */
-const AUTO_COMPACT_DEBOUNCE_MS = 60_000;
-
-/** 压缩在途标记的最长有效期；慢模型压缩可能很久，超过后才视为结果事件丢失并复位。 */
+/** 压缩在途标记的最长有效期，明显属于旧实例的标记立即复位。 */
 const COMPACTION_IN_FLIGHT_STALE_MS = 30 * 60_000;
-const MODEL_CONTEXT_LIMITS: Record<string, number> = {
-    'claude-opus-4-7': 200_000,
-    'claude-sonnet-4-6': 200_000,
-    'claude-haiku-4-5': 200_000,
-    'claude-haiku-4-5-20251001': 200_000,
-    'claude-3-5-sonnet': 200_000,
-    'claude-3-5-haiku': 200_000,
-    'gpt-4o': 128_000,
-    'gpt-4o-mini': 128_000,
-    'gpt-4-turbo': 128_000
-};
 
 /** 请求侧登记的入参。 */
 export interface BeforeSendInput {
@@ -143,11 +110,10 @@ export class TokenBudgetService implements vscode.Disposable {
     /** 压缩状态机事件订阅入口。 */
     public readonly onCompactionStateChanged = this.compactionEmitter.event;
 
-    /** 记录每轮请求最近一次的 anthropicBody。 */
-    private readonly lastRequestBodyBySession = new Map<string, string>();
-
-    /** 每个 session 最近一次请求是否为压缩摘要请求；afterRecv 据此跳过阈值判定。 */
-    private readonly lastRequestCompactBySession = new Map<string, boolean>();
+    /** 本服务实例实际登记的在途会话，不信任磁盘中遗留的布尔标记。 */
+    private readonly activeCompactions = new Set<string>();
+    /** 已收到原生开始事件的会话，去重 status 和 Relay 摘要请求。 */
+    private readonly startedCompactions = new Set<string>();
 
     /**
      * 创建服务实例。
@@ -174,9 +140,9 @@ export class TokenBudgetService implements vscode.Disposable {
             Logger.warn(`[tokenBudget] 手动压缩失败：session=${sessionId} 不存在`);
             return false;
         }
-        if (session.compact.inProgress) {
-            Logger.warn(`[tokenBudget] 手动压缩复位在途状态并重新发送：session=${sessionId}`);
-            this.resetCompactionState(session, 'manual compact retry');
+        if (this.isCompactionInFlight(sessionId)) {
+            Logger.info(`[tokenBudget] 压缩已在途，跳过重复手动请求：session=${sessionId}`);
+            return false;
         }
         if (!this.deps.commandSender) {
             Logger.warn('[tokenBudget] 手动压缩失败：commandSender 未注入');
@@ -195,12 +161,16 @@ export class TokenBudgetService implements vscode.Disposable {
      * @returns 压缩等待结果。
      */
     public compactNowAndWait(sessionId: string, options: { timeoutMs: number }): Promise<CompactionWaitResult> {
-        if (!this.compactNow(sessionId)) return Promise.resolve('skipped');
-        return this.waitForCompactionEvent(sessionId, options.timeoutMs);
+        if (this.isCompactionInFlight(sessionId)) return this.waitForCompactionEvent(sessionId, options.timeoutMs);
+        const waiting = this.waitForCompactionEvent(sessionId, options.timeoutMs);
+        if (!this.compactNow(sessionId)) {
+            this.compactionEmitter.fire({ kind: 'failed', sessionId, error: 'manual compact unavailable' });
+            return Promise.resolve('skipped');
+        }
+        return waiting;
     }
 
-    /**
-     * 判断某 session 是否有压缩在途（含手动 / 阈值 / CLI 原生 / 用户手敲 `/compact`）。
+    /** 判断某 session 是否有本实例实际提交或原生开始的压缩在途。
      *
      * 在途标记超过 {@link COMPACTION_IN_FLIGHT_STALE_MS} 仍未结束时视为状态失真
      * （例如压缩结果事件丢失），复位并返回 false，避免发送链路被永久卡住。
@@ -213,6 +183,10 @@ export class TokenBudgetService implements vscode.Disposable {
         void this.ensureLoaded();
         const session = this.store.getSession(sessionId);
         if (!session || !session.compact.inProgress) return false;
+        if (!this.activeCompactions.has(sessionId)) {
+            this.resetCompactionState(session, 'previous CLI instance ended');
+            return false;
+        }
         const startedAt = session.compact.lastTriggeredAt ? Date.parse(session.compact.lastTriggeredAt) : NaN;
         if (Number.isFinite(startedAt) && Date.now() - startedAt > COMPACTION_IN_FLIGHT_STALE_MS) {
             Logger.warn(`[tokenBudget] 压缩在途标记已超时失真，复位：session=${sessionId}`);
@@ -275,9 +249,9 @@ export class TokenBudgetService implements vscode.Disposable {
     public noteExternalCompaction(sessionId: string): void {
         if (!sessionId) return;
         void this.ensureLoaded();
-        const session = this.store.getSession(sessionId);
+        const session = this.store.getSession(sessionId) || this.ensureMainCompactionSession(sessionId);
         if (!session) return;
-        if (session.compact.inProgress && !this.pendingAutoCompactions.has(sessionId)) return;
+        if (this.startedCompactions.has(sessionId)) return;
         Logger.info(`[tokenBudget] 外部压缩已在途，登记防抖：session=${sessionId}`);
         this.noteCompactionInFlight(session);
     }
@@ -293,28 +267,32 @@ export class TokenBudgetService implements vscode.Disposable {
         if (!sessionId) return;
         void this.ensureLoaded();
         const session = this.store.getSession(sessionId);
-        if (!session) return;
+        if (!session || !this.activeCompactions.delete(sessionId)) return;
+        this.startedCompactions.delete(sessionId);
         session.compact.inProgress = false;
         session.compact.lastOutcome = success ? 'success' : 'failed';
         session.compact.lastError = success ? null : (error || 'compact failed');
-        session.compact.lastAfterTokens = session.current.totalInputForBudget;
+        session.compact.lastAfterTokens = null;
         this.store.saveSession(session);
         this.usageEmitter.fire(session);
-        // 唤醒 compactNowAndWait 等待者：任务流续推前压缩靠这个事件立即续推，
-        // 否则只能等到 timeout 才往下走。
-        this.compactionEmitter.fire(
-            success
-                ? {
-                    kind: 'finished',
-                    sessionId,
-                    oldSessionId: sessionId,
-                    newSessionId: sessionId,
-                    beforeTokens: 0,
-                    afterTokens: session.current.totalInputForBudget,
-                    summary: ''
-                }
-                : { kind: 'failed', sessionId, error: error || 'compact failed' }
-        );
+        // 原生成功事件尚不包含新用量，不用旧输入伪装成压缩后计量。
+        const state: CompactionState = success
+            ? { kind: 'finished', sessionId, oldSessionId: sessionId, newSessionId: sessionId, beforeTokens: 0, afterTokens: 0, summary: '' }
+            : { kind: 'failed', sessionId, error: error || 'compact failed' };
+        this.compactionEmitter.fire(state);
+        this.deps.notifier?.notifyCompactionState(state);
+    }
+
+    /**
+     * 进程退出、取消或重启时释放其在途锁，不清理历史或会话文件。
+     * @param sessionId 原 CLI 会话；空值时释放本实例全部在途会话。
+     * @param reason 失败类别。
+     */
+    public releaseCliCompactions(sessionId: string, reason: string): void {
+        for (const id of sessionId ? [sessionId] : [...this.activeCompactions]) {
+            const session = this.store.getSession(id);
+            if (session?.compact.inProgress) this.resetCompactionState(session, reason);
+        }
     }
 
     /**
@@ -368,6 +346,12 @@ export class TokenBudgetService implements vscode.Disposable {
         void this.ensureLoaded();
         if (!input.sessionId) return;
         try {
+            if (input.compactCommandTriggered) {
+                // 摘要模型的容量和大输入只写独立历史，不污染主会话窗口或计量。
+                const session = this.store.getSession(input.sessionId) || this.ensureMainCompactionSession(input.sessionId);
+                if (session) this.noteCompactionInFlight(session);
+                return;
+            }
             const estimated = estimateAnthropicInputTokens(input.anthropicBody);
             const session = this.ensureSession(input.sessionId, input.providerId, input.modelId);
             const previous = session.current.totalInputForBudget;
@@ -385,13 +369,7 @@ export class TokenBudgetService implements vscode.Disposable {
                 source: 'estimated',
                 deltaInput: Math.max(0, estimated - previous)
             });
-            this.lastRequestBodyBySession.set(input.sessionId, input.anthropicBody);
-            this.lastRequestCompactBySession.set(input.sessionId, input.compactCommandTriggered === true);
             this.usageEmitter.fire(session);
-            if (input.compactCommandTriggered) {
-                // 压缩摘要请求已经在路上：登记在途，让手动/CLI 压缩期间的状态保持一致。
-                this.noteCompactionInFlight(session);
-            }
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             Logger.warn(`[tokenBudget] beforeSend 异常：${message}`);
@@ -401,15 +379,13 @@ export class TokenBudgetService implements vscode.Disposable {
     /**
      * 响应侧入口：用上游 usage 权威值覆盖 current。
      *
-     * 计量完成后，若 `chat.autoCompact.enabled` 开启且本次不是压缩摘要请求，
-     * 则按阈值判断是否自动向 CLI 发送 `/compact`（见 {@link maybeAutoCompact}）。
-     * 开关默认关闭，关闭时仅计量，压缩由用户手动或 CLI 自身触发。
+     * 只登记普通请求用量；自动触发完全交给 CLI，摘要用量不覆盖主窗口。
      *
      * @param input 入参。
      */
     public afterRecv(input: AfterRecvInput): void {
         void this.ensureLoaded();
-        if (!input.sessionId) return;
+        if (!input.sessionId || input.compactCommandTriggered) return;
         try {
             const session = this.ensureSession(input.sessionId, input.providerId, input.modelId);
             this.applyUsage(session, input.usage);
@@ -422,9 +398,6 @@ export class TokenBudgetService implements vscode.Disposable {
                 outputTokens: session.current.outputTokens
             });
             this.usageEmitter.fire(session);
-            const wasCompactRequest = input.compactCommandTriggered === true
-                || this.lastRequestCompactBySession.get(input.sessionId) === true;
-            if (!wasCompactRequest) this.maybeAutoCompact(session);
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             Logger.warn(`[tokenBudget] afterRecv 异常：${message}`);
@@ -482,7 +455,8 @@ export class TokenBudgetService implements vscode.Disposable {
      * @param session 当前会话桶。
      */
     private noteCompactionInFlight(session: SessionUsage): void {
-        this.pendingAutoCompactions.delete(session.sessionId);
+        if (this.startedCompactions.has(session.sessionId)) return;
+        this.startedCompactions.add(session.sessionId);
         this.markCompactionCommandPending(session);
         // CLI 开始事件或 Relay 摘要请求才代表压缩已执行，不能在指令排队时提前显示。
         const state: CompactionState = {
@@ -495,67 +469,13 @@ export class TokenBudgetService implements vscode.Disposable {
     }
 
     /**
-     * 阈值自动压缩判定：满足以下全部条件时向 CLI 发送 `/compact`。
-     *
-     * 1. `chat.autoCompact.enabled` 为 true；
-     * 2. 本次 usage 来自上游权威值（source=api），估算值不触发；
-     * 3. `totalInputForBudget >= threshold`；
-     * 4. 当前没有在途压缩（含 CLI 原生 / 用户手敲的外部压缩）；
-     * 5. 距上次触发超过 {@link AUTO_COMPACT_DEBOUNCE_MS}；
-     * 6. `commandSender` 已注入。
-     *
-     * @param session 当前会话桶。
-     */
-    /** 已达阈值、等待 CLI 整轮 result 后发送的压缩命令（不持久化）。 */
-    private readonly pendingAutoCompactions = new Set<string>();
-
-    /** CLI 整轮结束后消费一次待压缩命令；工具响应结束不调用此入口。 */
-    public async flushPendingAutoCompaction(sessionId: string): Promise<void> {
-        if (!this.pendingAutoCompactions.delete(sessionId)) return;
-        const session = this.store.getSession(sessionId);
-        if (!session || !session.compact.inProgress) return;
-        Logger.info(`[tokenBudget] CLI 整轮结束，发送待执行压缩：session=${sessionId}`);
-        await this.sendCompactionCommand(sessionId);
-    }
-
-    /** 达到阈值时只登记待执行命令，不在工具调用链中途发送。 */
-    private maybeAutoCompact(session: SessionUsage): void {
-        if (!this.isAutoCompactEnabled()) return;
-        if (session.lastSource !== 'api') return;
-        if (session.threshold <= 0 || session.current.totalInputForBudget < session.threshold) return;
-        if (session.compact.inProgress) return;
-        if (!this.deps.commandSender) return;
-        const lastAt = session.compact.lastTriggeredAt ? Date.parse(session.compact.lastTriggeredAt) : NaN;
-        if (Number.isFinite(lastAt) && Date.now() - lastAt < AUTO_COMPACT_DEBOUNCE_MS) return;
-        Logger.info(
-            `[tokenBudget] 达到阈值，自动压缩：session=${session.sessionId} used=${session.current.totalInputForBudget} threshold=${session.threshold}`
-        );
-        this.markCompactionCommandPending(session);
-        session.compact.triggerCount += 1;
-        this.store.saveSession(session);
-        this.pendingAutoCompactions.add(session.sessionId);
-        Logger.info(`[tokenBudget] 压缩指令待执行，等待 CLI 整轮 result：session=${session.sessionId}`);
-    }
-
-    /**
-     * 读取自动压缩开关。
-     *
-     * @returns `chat.autoCompact.enabled` 配置值，未配置时为 false。
-     */
-    private isAutoCompactEnabled(): boolean {
-        try {
-            return vscode.workspace.getConfiguration('claudeCodeConfigHelper').get<boolean>(AUTO_COMPACT_ENABLED_KEY, false) === true;
-        } catch (_err) {
-            return false;
-        }
-    }
-
-    /**
      * 标记压缩指令已经发出，避免阈值阶段重复发送内部命令。
      *
      * @param session 当前会话桶。
      */
     private markCompactionCommandPending(session: SessionUsage): void {
+        if (!this.activeCompactions.has(session.sessionId)) session.compact.triggerCount += 1;
+        this.activeCompactions.add(session.sessionId);
         session.compact.inProgress = true;
         session.compact.lastTriggeredAt = new Date().toISOString();
         session.compact.lastTriggeredAtInput = session.current.totalInputForBudget;
@@ -579,20 +499,14 @@ export class TokenBudgetService implements vscode.Disposable {
             const message = err instanceof Error ? err.message : String(err);
             Logger.warn(`[tokenBudget] 发送压缩指令失败：${message}`);
             const session = this.store.getSession(sessionId);
-            if (session) {
-                session.compact.inProgress = false;
-                session.compact.lastOutcome = 'failed';
-                session.compact.lastError = message;
-                this.store.saveSession(session);
-            }
-            const failedState: CompactionState = { kind: 'failed', sessionId, error: message };
-            this.compactionEmitter.fire(failedState);
-            this.deps.notifier?.notifyCompactionState(failedState);
+            if (session) this.resetCompactionState(session, message);
         }
     }
 
     /** 复位压缩状态，同时恢复界面并释放等待该会话压缩结果的发送者。 */
     private resetCompactionState(session: SessionUsage, error: string): void {
+        this.activeCompactions.delete(session.sessionId);
+        this.startedCompactions.delete(session.sessionId);
         session.compact.inProgress = false;
         session.compact.lastOutcome = 'failed';
         session.compact.lastError = error;
@@ -601,6 +515,16 @@ export class TokenBudgetService implements vscode.Disposable {
         const state: CompactionState = { kind: 'failed', sessionId: session.sessionId, error };
         this.compactionEmitter.fire(state);
         this.deps.notifier?.notifyCompactionState(state);
+    }
+
+    /**
+     * resume 后原生压缩可能早于普通请求；只按当前主模型建立桶。
+     * @param sessionId 原生会话。
+     * @returns 主模型桶，不使用摘要模型的容量。
+     */
+    private ensureMainCompactionSession(sessionId: string): SessionUsage | undefined {
+        const current = this.deps.configManager.getCurrentModel?.();
+        return current ? this.ensureSession(sessionId, current.providerId, current.modelId) : undefined;
     }
 
     /**
@@ -621,7 +545,7 @@ export class TokenBudgetService implements vscode.Disposable {
         if (existing) {
             const limit = this.resolveContextLimit(providerId, modelId);
             existing.contextLimit = limit;
-            existing.threshold = Math.max(0, limit - THRESHOLD_RESERVE);
+            existing.threshold = estimateCompactionThreshold(limit);
             existing.providerId = providerId;
             existing.modelId = modelId;
             existing.modelKey = `${providerId}/${modelId}`;
@@ -661,27 +585,18 @@ export class TokenBudgetService implements vscode.Disposable {
         else Logger.info(message);
     }
 
-    /** 读取模型配置并按用户配置、静态表、默认值顺序解析上限。 */
+    /**
+     * 读取主模型配置并使用共享解析器，不重复维护静态表。
+     * @param providerId 提供商 id。
+     * @param modelId 模型 id。
+     * @returns 配置、静态表或默认窗口。
+     */
     private resolveContextLimit(providerId: string, modelId: string): number {
         const provider = this.deps.configManager.getProvider(providerId);
         const model = provider?.models.find((m) => m.modelId === modelId);
-        const configured = readConfiguredContextWindow(model);
-        if (configured && configured > 0) {
-            this.logContextLimit(`[tokenBudget] contextLimit 命中用户配置：${providerId}/${modelId}=${configured}`);
-            return configured;
-        }
-        const staticLimit = MODEL_CONTEXT_LIMITS[modelId];
-        if (typeof staticLimit === 'number' && staticLimit > 0) {
-            this.logContextLimit(`[tokenBudget] contextLimit 走静态表（用户未配置 contextLength）：${providerId}/${modelId}=${staticLimit}`);
-            return staticLimit;
-        }
-        this.logContextLimit(
-            `[tokenBudget] contextLimit 兜底为 DEFAULT=${DEFAULT_CONTEXT_LIMIT}：`
-            + `provider=${providerId} model=${modelId} `
-            + `providerFound=${!!provider} modelFound=${!!model}`,
-            true
-        );
-        return DEFAULT_CONTEXT_LIMIT;
+        const window = resolveContextWindow(modelId, model?.contextLength);
+        this.logContextLimit(`[tokenBudget] contextLimit=${window.contextLimit} source=${window.source} model=${providerId}/${modelId}`);
+        return window.contextLimit;
     }
 
     /**
@@ -712,21 +627,4 @@ export class TokenBudgetService implements vscode.Disposable {
             Logger.warn(`[tokenBudget] 加载持久化文件失败：${message}`);
         }
     }
-}
-
-/**
- * 读取 ModelConfig 上的上下文长度配置（取 contextLength）。
- *
- * 用户在配置面板填的"上下文长度"就是模型 token 上限；TokenBudgetService 用它
- * 计算阈值 `threshold = contextLength - 50000`。未填或非法时返回 undefined，
- * 调用方走静态表或 DEFAULT_CONTEXT_LIMIT 兜底。
- *
- * @param model ModelConfig 实例（或 undefined）。
- * @returns 配置值或 undefined。
- */
-function readConfiguredContextWindow(model: unknown): number | undefined {
-    if (!model || typeof model !== 'object') return undefined;
-    const value = (model as { contextLength?: unknown }).contextLength;
-    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
-    return undefined;
 }

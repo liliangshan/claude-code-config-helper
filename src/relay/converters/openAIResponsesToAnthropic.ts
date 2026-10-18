@@ -1,8 +1,6 @@
-/**
- * @file OpenAI Responses 非流式响应到 Anthropic Messages 响应的转换器。
- *
- * 本模块先实现 JSON 非流式响应转换；SSE 流式状态机会在后续任务中补充。
- */
+/** @file OpenAI Responses JSON/SSE 到 Anthropic Messages 的转换与可见思考摘要透传。 */
+
+import type { ModelReasoningMode } from '../../types';
 
 import type { ResponsesConversionWarning } from './anthropicToOpenAIResponses';
 import { formatAnthropicSseError } from './openAIErrorToAnthropic';
@@ -11,6 +9,7 @@ import { readCachedTokens } from './openAIChatToAnthropic';
 /** Anthropic content block。 */
 type AnthropicContentBlock =
     | { type: 'text'; text: string }
+    | { type: 'thinking'; thinking: string }
     | { type: 'tool_use'; id: string; name: string; input: unknown };
 
 /** Anthropic Messages 非流式响应体。 */
@@ -89,6 +88,16 @@ interface ResponsesTextPartState {
     /** 对应 Anthropic content_block index。 */
     anthropicBlockIndex: number;
     /** 是否已经输出 content_block_stop。 */
+    closed: boolean;
+}
+
+/** 可见摘要 part 的去重状态；不保存 encrypted_content，也不复用工具参数状态。 */
+interface ResponsesReasoningPartState {
+    /** 已实际发送的可见摘要文本，完整快照只能补发匹配前缀的后缀。 */
+    emittedText: string;
+    /** 非空摘要才分配 Anthropic block，避免空思考占用正文/工具索引。 */
+    anthropicBlockIndex?: number;
+    /** 已关闭的 part 不能被重复 done 或迟到 delta 重新打开。 */
     closed: boolean;
 }
 
@@ -187,8 +196,20 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         this.onInvalidToolArguments?.(`[tool-json] invalid JSON: ${JSON.stringify({ source, ...detail })}`);
     }
 
-    /** 注入诊断日志通道，保持转换器不依赖 VS Code。 */
-    public constructor(private readonly onInvalidToolArguments?: (message: string) => void) {}
+    private readonly reasoningParts = new Map<string, ResponsesReasoningPartState>();
+    /** output_index 与 item_id 双向关联，避免最终快照重复开出同一摘要。 */
+    private readonly reasoningItemIds = new Map<number, string>();
+    /** 已结束的 reasoning item，重复快照不新增 part。 */
+    private readonly closedReasoningItems = new Set<number>();
+    /** 任意可见内容已打开后，不在末尾补发先前遗漏的思考摘要。 */
+    private hasVisibleNonReasoning = false;
+
+    /**
+     * 创建转换器；思考透传关闭时维持原有输出，不影响工具诊断回调。
+     * @param onInvalidToolArguments 工具 JSON 异常诊断。
+     * @param reasoningMode 仅 passthrough 显示上游提供的可见摘要。
+     */
+    public constructor(private readonly onInvalidToolArguments?: (message: string) => void, private readonly reasoningMode: ModelReasoningMode = 'off') {}
 
     private readonly warnings: ResponsesConversionWarning[] = [];
 
@@ -308,6 +329,11 @@ export class OpenAIResponsesToAnthropicStreamConverter {
                 return this.handleContentPartAdded(payload);
             case 'response.content_part.done':
                 return this.handleContentPartDone(payload);
+            case 'response.reasoning_summary_part.added':
+            case 'response.reasoning_summary_part.done':
+            case 'response.reasoning_summary_text.delta':
+            case 'response.reasoning_summary_text.done':
+                return this.handleReasoningSummary(type, payload);
             case 'response.output_text.delta':
                 return this.handleOutputTextDelta(payload);
             case 'response.output_text.done':
@@ -333,6 +359,149 @@ export class OpenAIResponsesToAnthropicStreamConverter {
                 this.warnings.push({ path: 'sse.type', code: 'unsupported_sse_event', message: `已忽略未知 Responses SSE 事件：${type}。` });
                 return '';
         }
+    }
+
+    /**
+     * 解析摘要事件的输出索引，并绑定 item_id；冲突身份不猜测归属。
+     * @param payload 摘要事件或最终输出项。
+     * @returns 输出索引，缺失或冲突时跳过。
+     */
+    private reasoningOutputIndex(payload: Record<string, unknown>): number | undefined {
+        const itemId = typeof payload.item_id === 'string' ? payload.item_id : undefined;
+        let index = typeof payload.output_index === 'number' && Number.isSafeInteger(payload.output_index) && payload.output_index >= 0
+            ? payload.output_index : undefined;
+        if (payload.output_index !== undefined && index === undefined) return undefined;
+        if (index === undefined && itemId) {
+            index = [...this.reasoningItemIds].find(([, id]) => id === itemId)?.[0];
+        }
+        if (index === undefined) return undefined;
+        const previous = this.reasoningItemIds.get(index);
+        const boundIndex = itemId ? [...this.reasoningItemIds].find(([, id]) => id === itemId)?.[0] : undefined;
+        if (itemId && ((previous && previous !== itemId) || (boundIndex !== undefined && boundIndex !== index))) {
+            this.warnings.push({ path: 'reasoning.item_id', code: 'reasoning_identity_conflict', message: '摘要输出项身份冲突，已跳过，不改写已发送文本。' });
+            return undefined;
+        }
+        if (itemId) this.reasoningItemIds.set(index, itemId);
+        return index;
+    }
+
+    /**
+     * 将可见摘要 delta/完整快照转换为 thinking_delta；加密内容从不参与展示。
+     * @param type 摘要事件类型。
+     * @param payload 上游摘要事件。
+     * @returns 可立即下发的 Anthropic SSE。
+     */
+    private handleReasoningSummary(type: string, payload: Record<string, unknown>): string {
+        if (this.reasoningMode !== 'passthrough') return '';
+        const outputIndex = this.reasoningOutputIndex(payload);
+        const summaryIndex = payload.summary_index;
+        if (outputIndex === undefined || typeof summaryIndex !== 'number' || !Number.isSafeInteger(summaryIndex) || summaryIndex < 0) return '';
+        const part = isRecord(payload.part) ? payload.part : {};
+        const isDelta = type === 'response.reasoning_summary_text.delta';
+        const text = isDelta ? payload.delta : type === 'response.reasoning_summary_text.done' ? payload.text
+            : part.type === 'summary_text' ? part.text : undefined;
+        let out = this.emitReasoningText(outputIndex, summaryIndex, typeof text === 'string' ? text : '', !isDelta);
+        if (type.endsWith('.done')) out += this.closeReasoningPart(`${outputIndex}:${summaryIndex}`);
+        return out;
+    }
+
+    /**
+     * 输出摘要增量或只补发完整快照的匹配后缀；不回滚或猜测修改内容。
+     * @param outputIndex 输出项索引。
+     * @param summaryIndex 摘要段索引。
+     * @param text 可见摘要文本。
+     * @param snapshot 是否为完整快照而非 delta。
+     * @returns thinking SSE，不触碰工具参数状态。
+     */
+    private emitReasoningText(outputIndex: number, summaryIndex: number, text: string, snapshot: boolean): string {
+        const key = `${outputIndex}:${summaryIndex}`;
+        let part = this.reasoningParts.get(key);
+        if (this.closedReasoningItems.has(outputIndex)) return '';
+        if (!part) {
+            if (!text) return '';
+            const nonReasoningOpen = [...this.state.textParts.values()].some(value => !value.closed)
+                || [...this.state.outputItems.values()].some(value => value.started && !value.closed);
+            if ((snapshot && this.hasVisibleNonReasoning) || nonReasoningOpen) {
+                this.warnings.push({ path: `output[${outputIndex}].summary[${summaryIndex}]`, code: 'late_reasoning_summary', message: '摘要出现时正文/工具尚未关闭，或仅在后续快照出现；已跳过以保留输出顺序。' });
+                return '';
+            }
+            part = { emittedText: '', closed: false };
+            this.reasoningParts.set(key, part);
+        }
+        let delta = text;
+        if (snapshot) {
+            if (text === part.emittedText) return '';
+            if (!text.startsWith(part.emittedText)) {
+                this.warnings.push({ path: `output[${outputIndex}].summary[${summaryIndex}]`, code: 'reasoning_summary_conflict', message: '摘要快照不匹配已发送前缀，保留原文，不拼接猜测后缀。' });
+                return '';
+            }
+            delta = text.slice(part.emittedText.length);
+        }
+        if (!delta || part.closed) return '';
+        let out = this.ensureMessageStart();
+        if (part.anthropicBlockIndex === undefined) {
+            // 新摘要段前关闭旧段，避免两个 Anthropic thinking block 嵌套。
+            out += this.closeReasoningParts();
+            part.anthropicBlockIndex = this.state.nextBlockIndex++;
+            out += formatAnthropicSse('content_block_start', { type: 'content_block_start', index: part.anthropicBlockIndex, content_block: { type: 'thinking', thinking: '' } });
+        }
+        part.emittedText += delta;
+        return out + formatAnthropicSse('content_block_delta', { type: 'content_block_delta', index: part.anthropicBlockIndex, delta: { type: 'thinking_delta', thinking: delta } });
+    }
+
+    /**
+     * 关闭一个非空摘要段；重复 done 不再输出 stop，也不重新开块。
+     * @param key 输出项与摘要段的组合键。
+     * @returns 可能产生的 block_stop。
+     */
+    private closeReasoningPart(key: string): string {
+        const part = this.reasoningParts.get(key);
+        if (!part) {
+            this.reasoningParts.set(key, { emittedText: '', closed: true });
+            return '';
+        }
+        if (part.closed) return '';
+        part.closed = true;
+        return part.anthropicBlockIndex === undefined ? ''
+            : formatAnthropicSse('content_block_stop', { type: 'content_block_stop', index: part.anthropicBlockIndex });
+    }
+
+    /**
+     * 关闭当前摘要段，供正文、工具开始或流收尾使用。
+     * @returns 按分配顺序产生的 block_stop。
+     */
+    private closeReasoningParts(): string {
+        let out = '';
+        for (const [key, part] of this.reasoningParts) {
+            if (part.anthropicBlockIndex !== undefined) out += this.closeReasoningPart(key);
+        }
+        return out;
+    }
+
+    /**
+     * 从 reasoning item 快照回填摘要；按 item/summary 索引去重，忽略 encrypted_content。
+     * @param outputIndex 输出项索引。
+     * @param item 上游 reasoning 输出项。
+     * @param done 是否结束整个输出项。
+     * @returns 缺失摘要的安全补发及 block_stop。
+     */
+    private reconcileReasoningItem(outputIndex: number, item: Record<string, unknown>, done: boolean): string {
+        if (this.reasoningMode !== 'passthrough') return '';
+        const index = this.reasoningOutputIndex({ output_index: outputIndex, item_id: item.id });
+        if (index === undefined) return '';
+        let out = '';
+        if (Array.isArray(item.summary)) item.summary.forEach((part, summaryIndex) => {
+            if (!isRecord(part) || part.type !== 'summary_text' || typeof part.text !== 'string') return;
+            out += this.emitReasoningText(index, summaryIndex, part.text, true);
+            if (done) out += this.closeReasoningPart(`${index}:${summaryIndex}`);
+        });
+        if (done) {
+            for (const key of this.reasoningParts.keys()) {
+                if (key.startsWith(`${index}:`)) out += this.closeReasoningPart(key);
+            }
+            this.closedReasoningItems.add(index);
+        }
+        return out;
     }
 
     /**
@@ -403,6 +572,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         const outputIndex = readOutputIndex(payload, this.warnings, 'response.output_item.added');
         if (outputIndex === undefined) return '';
         const item = isRecord(payload.item) ? payload.item : {};
+        if (this.reasoningMode === 'passthrough' && item.type === 'reasoning') return this.reconcileReasoningItem(outputIndex, item, false);
         const state = this.getOutputItemState(outputIndex);
         if (typeof item.type === 'string') state.type = item.type;
         if (typeof item.id === 'string') state.id = item.id;
@@ -429,6 +599,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         const outputIndex = readOutputIndex(payload, this.warnings, 'response.output_item.done');
         if (outputIndex === undefined) return '';
         const item = isRecord(payload.item) ? payload.item : {};
+        if (this.reasoningMode === 'passthrough' && item.type === 'reasoning') return this.reconcileReasoningItem(outputIndex, item, true);
         const state = this.getOutputItemState(outputIndex);
         if (typeof item.type === 'string') state.type = item.type;
         if (typeof item.id === 'string') state.id = item.id;
@@ -570,7 +741,13 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         this.readResponseMetadata(response);
         this.state.status = status;
         if (response.incomplete_details !== undefined) this.state.incompleteDetails = response.incomplete_details;
-        return this.finishIfNeeded(status);
+        let out = '';
+        if (this.reasoningMode === 'passthrough' && Array.isArray(response.output)) {
+            response.output.forEach((item, outputIndex) => {
+                if (isRecord(item) && item.type === 'reasoning') out += this.reconcileReasoningItem(outputIndex, item, true);
+            });
+        }
+        return out + this.finishIfNeeded(status);
     }
 
     /**
@@ -583,7 +760,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         const response = isRecord(payload.response) ? payload.response : payload;
         this.readResponseMetadata(response);
         this.state.finished = true;
-        return formatAnthropicSseError('api_error', readErrorMessage(response, 'Responses response.failed'));
+        return this.closeReasoningParts() + formatAnthropicSseError('api_error', readErrorMessage(response, 'Responses response.failed'));
     }
 
     /**
@@ -594,7 +771,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
      */
     private handleErrorPayload(payload: Record<string, unknown>): string {
         this.state.finished = true;
-        return formatAnthropicSseError('api_error', readErrorMessage(payload, 'Responses stream error'));
+        return this.closeReasoningParts() + formatAnthropicSseError('api_error', readErrorMessage(payload, 'Responses stream error'));
     }
 
     /**
@@ -678,9 +855,11 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         const key = makeTextPartKey(outputIndex, contentIndex);
         const existing = this.state.textParts.get(key);
         if (existing) return initialText ? this.emitTextDelta(outputIndex, contentIndex, initialText) : '';
+        const reasoningTail = this.closeReasoningParts();
+        this.hasVisibleNonReasoning = true;
         const index = this.state.nextBlockIndex++;
         this.state.textParts.set(key, { outputIndex, contentIndex, anthropicBlockIndex: index, closed: false });
-        let out = this.ensureMessageStart();
+        let out = this.ensureMessageStart() + reasoningTail;
         out += formatAnthropicSse('content_block_start', {
             type: 'content_block_start',
             index,
@@ -733,11 +912,13 @@ export class OpenAIResponsesToAnthropicStreamConverter {
      */
     private maybeStartFunctionCall(state: ResponsesOutputItemState): string {
         if (state.started || state.type !== 'function_call' || !state.name) return '';
+        const reasoningTail = this.closeReasoningParts();
+        this.hasVisibleNonReasoning = true;
         const index = this.state.nextBlockIndex++;
         state.anthropicBlockIndex = index;
         state.started = true;
         const id = state.callId || state.id || `toolu_${state.outputIndex}`;
-        return formatAnthropicSse('content_block_start', {
+        return reasoningTail + formatAnthropicSse('content_block_start', {
             type: 'content_block_start',
             index,
             content_block: { type: 'tool_use', id, name: state.name, input: {} }
@@ -800,7 +981,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
      * @returns Anthropic content_block_stop SSE 文本。
      */
     private closeAllOpenBlocks(): string {
-        let out = '';
+        let out = this.closeReasoningParts();
         for (const part of Array.from(this.state.textParts.values()).sort(compareTextParts)) {
             if (!part.closed) {
                 part.closed = true;
@@ -835,12 +1016,13 @@ export class OpenAIResponsesToAnthropicStreamConverter {
  * 将 OpenAI Responses 非流式 JSON 转为 Anthropic Messages JSON。
  *
  * @param json OpenAI Responses JSON。
+ * @param reasoningMode 可见摘要透传开关，关闭时保持原有输出。
  * @returns Anthropic 响应体与 warning 列表。
  */
-export function convertResponsesJsonToAnthropic(json: unknown): OpenAIResponsesToAnthropicJsonResult {
+export function convertResponsesJsonToAnthropic(json: unknown, reasoningMode: ModelReasoningMode = 'off'): OpenAIResponsesToAnthropicJsonResult {
     const source = isRecord(json) ? json : {};
     const warnings: ResponsesConversionWarning[] = [];
-    const content = convertOutputToContent(source.output, warnings);
+    const content = convertOutputToContent(source.output, warnings, reasoningMode);
     const stopReason = mapResponseStopReason(source, content);
     ensureFilteredPlaceholder(source, content);
     return {
@@ -863,9 +1045,10 @@ export function convertResponsesJsonToAnthropic(json: unknown): OpenAIResponsesT
  *
  * @param output Responses output 字段。
  * @param warnings warning 收集器。
+ * @param reasoningMode 可见摘要策略；不展示 encrypted_content。
  * @returns Anthropic content blocks。
  */
-function convertOutputToContent(output: unknown, warnings: ResponsesConversionWarning[]): AnthropicContentBlock[] {
+function convertOutputToContent(output: unknown, warnings: ResponsesConversionWarning[], reasoningMode: ModelReasoningMode): AnthropicContentBlock[] {
     if (!Array.isArray(output)) return [];
     const content: AnthropicContentBlock[] = [];
     output.forEach((item, index) => {
@@ -879,7 +1062,16 @@ function convertOutputToContent(output: unknown, warnings: ResponsesConversionWa
                 appendFunctionCall(content, item, path, warnings);
                 break;
             case 'reasoning':
-                warnings.push({ path, code: 'ignored_reasoning', message: 'Responses reasoning output 已忽略。' });
+                if (reasoningMode === 'passthrough') {
+                    const summary = Array.isArray(item.summary) ? item.summary : [];
+                    for (const part of summary) {
+                        if (isRecord(part) && part.type === 'summary_text' && typeof part.text === 'string' && part.text) {
+                            content.push({ type: 'thinking', thinking: part.text });
+                        }
+                    }
+                } else {
+                    warnings.push({ path, code: 'ignored_reasoning', message: 'Responses reasoning output 已忽略。' });
+                }
                 break;
             default:
                 warnings.push({ path, code: 'unsupported_output_item', message: `已忽略未知 Responses output item：${String(item.type)}。` });

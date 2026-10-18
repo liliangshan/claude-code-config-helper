@@ -560,13 +560,13 @@ export function isHiddenChatToolSegment(segment: ChatSegment): boolean {
 }
 
 /**
- * 从 CLI result 的 usage segment 中回填 modelUsage.contextWindow。
+ * 从 CLI result 的 usage segment 回填本轮输出 token。
  *
- * 上游 OpenAI-compatible 服务有时返回 usage.input_tokens=0，但 CLI result.modelUsage
- * 仍会携带准确 contextWindow。这里把 contextWindow 同步给 TokenBudgetService，
- * 让 token-meter 从「29k/166k」修正为「29k/200k」，同时不改变 estimator 的 used。
+ * contextWindow 仅作为兼容参数传入；TokenBudgetService 不用它覆盖用户配置、
+ * 静态表或默认 200k 上限，避免 CLI 上报值改变当前预算窗口。
  *
  * @param segment 本次到达的 ChatSegment。
+ * @param message 当前助手消息，用于上游输出统计缺失时估算 token。
  */
 export function syncTokenBudgetContextWindowFromUsage(segment: ChatSegment, message: ChatMessage): void {
     if (segment.kind !== 'usage') return;

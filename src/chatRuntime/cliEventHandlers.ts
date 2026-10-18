@@ -15,7 +15,7 @@ import { buildAskUserUpdatedInput, parseAskUserQuestions as parseAskUserQuestion
 import type { AskUserQuestionItem, ChatRoute, ChatSegment, WebviewToExtension } from '../chat/protocol';
 import { Logger } from '../logger';
 import { getChatViewHost } from '../runtime';
-import { getChatCliConfigService, getChatCliSessionStore } from './cliLifecycle';
+import { applyPendingNativeCompactionPolicy, getChatCliConfigService, getChatCliSessionStore } from './cliLifecycle';
 import type { RecoveryIdentity, RequestRecoveryController } from './requestRecovery';
 import { requestUsageRegistry } from './requestUsage';
 import { appendAssistantSegments, finishActiveAssistantMessage, getTokenBudgetServiceRef, pushSessionTitleToWebview } from './chatSession';
@@ -26,6 +26,7 @@ import {
     getStreamAdapterForRoute,
     hiddenCliResponseTurnsByRoute,
     pendingAskUserRequests,
+    noteCliTurn,
     routes
 } from './routeState';
 
@@ -192,51 +193,37 @@ export async function handleParsedCliEvent(event: ParsedCliEvent, source: ChatRo
             return;
     }
     } finally {
-        // 先处理 result 的正文和用量，再发压缩，避免旧回合收尾覆盖压缩状态。
+        // 只在 CLI 整轮 result 后释放投递标记；自动压缩由 CLI 自己执行。
         if ((event.type === 'segments' || event.type === 'done') && event.turnFinished) {
             const result = event.turnResult;
             if (identity && (!result?.sessionId || result.sessionId === identity.sessionId)) {
                 recovery?.onCliTurnFinished(identity, result?.isError);
             }
-            await getTokenBudgetServiceRef()?.flushPendingAutoCompaction(getSessionIdForRoute(source));
+            noteCliTurn(-1);
+            if (getTokenBudgetServiceRef()?.isCompactionInFlight(getSessionIdForRoute(source))) {
+                getTokenBudgetServiceRef()?.finishNativeCompaction(getSessionIdForRoute(source), false, 'CLI turn ended without compact result');
+            }
+            await applyPendingNativeCompactionPolicy();
         }
     }
 }
 
+/**
+ * 将 CLI 原生压缩状态交给单一协调器广播，避免 status 与摘要请求重复通知。
+ * @param event 原生开始、完成或失败事件。
+ * @param source CLI 来源路由。
+ */
 export function handleCliCompactStatus(
     event: Extract<ParsedCliEvent, { type: 'compact/status' }>,
     source: ChatRoute
 ): void {
     const sessionId = event.sessionId || getSessionIdForRoute(source);
+    const service = getTokenBudgetServiceRef();
     if (event.status === 'compacting') {
-        // CLI 自己开始压缩（用户手敲 /compact 或 CLI 自动压缩）时也要登记在途，
-        // 否则 TokenBudgetService 看不到这次压缩，防抖窗口失效会再压一次。
-        getTokenBudgetServiceRef()?.noteExternalCompaction(sessionId);
-        void getChatViewHost()?.postMessage({
-            type: 'compaction/started',
-            sessionId,
-            beforeTokens: 0
-        });
+        service?.noteExternalCompaction(sessionId);
         return;
     }
-    if (event.compactResult === 'success') {
-        getTokenBudgetServiceRef()?.finishNativeCompaction(sessionId, true);
-        void getChatViewHost()?.postMessage({
-            type: 'compaction/finished',
-            oldSessionId: sessionId,
-            newSessionId: sessionId,
-            beforeTokens: 0,
-            afterTokens: 0,
-            summary: ''
-        });
-        return;
-    }
-    getTokenBudgetServiceRef()?.finishNativeCompaction(sessionId, false, event.compactResult || 'compact failed');
-    void getChatViewHost()?.postMessage({
-        type: 'compaction/failed',
-        sessionId,
-        error: event.compactResult || 'compact failed'
-    });
+    service?.finishNativeCompaction(sessionId, event.compactResult === 'success', event.compactError || event.compactResult || 'compact failed');
 }
 
 /**

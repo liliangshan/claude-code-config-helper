@@ -3,7 +3,7 @@
  *
  * 覆盖任务流模型方案下「normal 单路 ChatCliConfig 派生」的核心规则：
  * 1. normal 绑定 path-based `ANTHROPIC_BASE_URL`（`/normal`）与 relay 端口环境变量；
- * 2. 配置了 contextLength 时注入 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，未配置时不注入；
+ * 2. 按配置/静态表/默认窗口生成容量；关闭原生自动压缩仍注入 200k 兜底；
  * 3. 默认 `appendSystemPrompt` 含 Write 工具使用纪律、不含任何 ask_expert / @llsPlanTask 诱导；
  * 4. `chat.dispatcher.appendSystemPrompt` 非空时覆盖默认提示词文案；
  * 5. MCP servers（vscode 等内置桥）随 relayPort 注入并被 normal 继承。
@@ -80,12 +80,13 @@ test('getRoutedConfigsWithRelayEnv: 配置了 contextLength 时注入 CLAUDE_COD
     assert.equal(normal.cliEnv.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '200000');
 });
 
-test('getRoutedConfigsWithRelayEnv: 未配置 contextLength 时不注入 CLAUDE_CODE_MAX_CONTEXT_TOKENS', async () => {
+test('getRoutedConfigsWithRelayEnv: 未配置 contextLength 时注入默认 200k 容量', async () => {
     setExtensionConfig({ 'chat.enabled': true });
     const service = makeService({ providerId: 'p1', modelId: 'm1' });
     const { normal } = await service.getRoutedConfigsWithRelayEnv(12345);
 
-    assert.equal(normal.cliEnv.CLAUDE_CODE_MAX_CONTEXT_TOKENS, undefined);
+    assert.equal(normal.cliEnv.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '200000');
+    assert.equal(normal.cliEnv.DISABLE_AUTO_COMPACT, '1');
 });
 
 test('getRoutedConfigsWithRelayEnv: 默认 dispatcher 提示词含 Write 纪律且无 ask_expert/@llsPlanTask', async () => {

@@ -111,7 +111,7 @@ for (const scenario of ['valid', 'invalid_complete', 'truncated_end', 'aborted',
             assert.equal(saved.upstreamResponseBytes, rawBytes.length);
             if (scenario === 'invalid_utf8') assert.deepEqual(Buffer.from(saved.upstreamResponseBase64!, 'base64'), rawBytes);
             assert.equal(saved.requestParameters.max_output_tokens, 32000);
-            assert.deepEqual(saved.requestParameters.reasoning, { effort: 'xhigh' });
+            assert.deepEqual(saved.requestParameters.reasoning, { effort: 'xhigh', summary: 'auto' });
             assert.ok(saved.diagnostics.some(item => item.includes('call_fixture')));
             if (scenario === 'wrapped_invalid') assert.ok(saved.diagnostics.some(item => item.includes('__unparsedToolInput')));
             if (scenario === 'final_replaces_delta' || scenario === 'late_delta') {

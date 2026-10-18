@@ -35,7 +35,7 @@ import {
     schedulePersistChatSession
 } from './chatSession';
 import { CLAUDE_COMPACT_COMMAND } from '../relay/tokenBudget/service';
-import { getSessionIdForRoute } from './routeState';
+import { getSessionIdForRoute, noteCliTurn } from './routeState';
 import { cancelRouteProcess, chatCliCancelState, chatRouteState, getStreamAdapterForRoute, hiddenCliResponseTurnsByRoute, isRouteBusy } from './routeState';
 import type { UpstreamTimeoutKind } from '../relay/upstreamTimeouts';
 
@@ -586,7 +586,13 @@ export async function sendUserMessageToCli(text: string, options: { hidden?: boo
             const identity = beginRecoveryTurn({ sessionId: getSessionIdForRoute(cliRoute), cliInstanceId, route, originalPrompt: outgoingText, deliveryState: 'unknown' });
             bindRecoveryAdapter(adapter, identity);
         } else if (options.recovery) bindRecoveryAdapter(adapter, options.recovery);
-        await adapter.sendUserMessage(outgoingText);
+        noteCliTurn(1);
+        try {
+            await adapter.sendUserMessage(outgoingText);
+        } catch (error) {
+            noteCliTurn(-1);
+            throw error;
+        }
     } catch (err) {
         if (suppressResponse) hiddenCliResponseTurnsByRoute[cliRoute] = Math.max(0, hiddenCliResponseTurnsByRoute[cliRoute] - 1);
         const message = err instanceof Error ? err.message : String(err);

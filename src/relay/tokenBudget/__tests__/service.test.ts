@@ -246,7 +246,7 @@ test('依赖未注入时即使触达阈值也跳过压缩，并写 warn 日志',
     assert.equal(snap.compact.triggerCount, 0);
 });
 
-test('contextLength 配置生效 → threshold = contextLength - 50000', () => {
+test('contextLength 配置生效 → threshold 为原生内部预留后的估算', () => {
     const { service, store } = buildService({ contextLength: 100000 });
     service.beforeSend({
         sessionId: 's1', providerId: 'p1', modelId: 'm',
@@ -254,7 +254,7 @@ test('contextLength 配置生效 → threshold = contextLength - 50000', () => {
     });
     const snap = store.getSession('s1');
     assert.equal(snap.contextLimit, 100000);
-    assert.equal(snap.threshold, 50000);
+    assert.equal(snap.threshold, 67000);
 });
 
 test('updateCliUsage 不会用 CLI contextWindow 覆盖用户手填的 contextLength', () => {
@@ -266,7 +266,7 @@ test('updateCliUsage 不会用 CLI contextWindow 覆盖用户手填的 contextLe
     service.updateCliUsage('s1', 1000000, 500);
     const snap = store.getSession('s1');
     assert.equal(snap.contextLimit, 200000);
-    assert.equal(snap.threshold, 150000);
+    assert.equal(snap.threshold, 162000);
     assert.equal(snap.current.outputTokens, 500);
 });
 
@@ -278,20 +278,35 @@ test('updateCliUsage 在用户未配置 contextLength 时仍保留静态上下�
     });
     service.updateCliUsage('s1', 1000000, 500);
     const snap = store.getSession('s1');
-    assert.equal(snap.contextLimit, 166000);
-    assert.equal(snap.threshold, 116000);
+    assert.equal(snap.contextLimit, 200000);
+    assert.equal(snap.threshold, 162000);
     assert.equal(snap.current.outputTokens, 500);
 });
 
-test('未知 model 走 DEFAULT_CONTEXT_LIMIT = 166000', () => {
+test('未知 model 走 DEFAULT_CONTEXT_LIMIT = 200000', () => {
     const { service, store } = buildService();
     service.beforeSend({
         sessionId: 's1', providerId: 'p1', modelId: 'unknown-model-xyz',
         anthropicBody: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] })
     });
     const snap = store.getSession('s1');
-    assert.equal(snap.contextLimit, 166000);
-    assert.equal(snap.threshold, 116000);
+    assert.equal(snap.contextLimit, 200000);
+    assert.equal(snap.threshold, 162000);
+});
+
+test('静态模型上限优先于默认 200k，已有默认会话在下一次请求更新', () => {
+    const { service, store } = buildService();
+    const input = { sessionId: 'fallback-refresh', providerId: 'p1', modelId: 'unknown-model-xyz', anthropicBody: '{}' };
+    service.beforeSend(input);
+    const previous = store.getSession(input.sessionId);
+    previous.contextLimit = 166000;
+    previous.threshold = 116000;
+    service.beforeSend(input);
+    assert.equal(store.getSession(input.sessionId).contextLimit, 200000);
+    assert.equal(store.getSession(input.sessionId).threshold, 162000);
+    service.beforeSend({ ...input, modelId: 'gpt-4o' });
+    assert.equal(store.getSession(input.sessionId).contextLimit, 128000);
+    assert.equal(store.getSession(input.sessionId).threshold, 95000);
 });
 
 /** 构造一个 token 数必定超过 threshold 的请求体。 */
@@ -305,6 +320,7 @@ test('压缩摘要请求登记在途状态', () => {
         commandSender: async () => { /* noop */ }
     });
 
+    service.beforeSend({ sessionId: 's1', providerId: 'p1', modelId: 'm', anthropicBody: '{}' });
     service.beforeSend({
         sessionId: 's1', providerId: 'p1', modelId: 'm',
         anthropicBody: hugeBody(),
@@ -348,4 +364,39 @@ test('compactNow 仍可手动触发压缩', () => {
     assert.equal(service.compactNow('s1'), true);
     assert.equal(compactCalled, 1);
     assert.equal(store.getSession('s1').compact.inProgress, true);
+});
+
+/** 摘要模型与主模型不同也不能改变主窗口、用量或再次触发压缩。 */
+test('摘要请求不污染主窗口和用量，开始/结束事件去重', () => {
+    const events: string[] = [];
+    const { service, store } = buildService({ contextLength: 500000, notifier: { notifyCompactionState: (state: { kind: string }) => events.push(state.kind) } });
+    service.afterRecv({ sessionId: 's-summary', providerId: 'p1', modelId: 'm', usage: { inputTokens: 400000 }, requestBodyAtSend: '' });
+    service.noteExternalCompaction('s-summary');
+    service.noteExternalCompaction('s-summary');
+    service.beforeSend({ sessionId: 's-summary', providerId: 'summary-provider', modelId: 'gpt-4o', anthropicBody: hugeBody(), compactCommandTriggered: true });
+    service.afterRecv({ sessionId: 's-summary', providerId: 'summary-provider', modelId: 'gpt-4o', usage: { inputTokens: 600000 }, requestBodyAtSend: '', compactCommandTriggered: true });
+    assert.equal(store.getSession('s-summary').contextLimit, 500000);
+    assert.equal(store.getSession('s-summary').modelId, 'm');
+    assert.equal(store.getSession('s-summary').current.totalInputForBudget, 400000);
+    assert.equal(service.compactNow('s-summary'), false);
+    service.finishNativeCompaction('s-summary', false, '402 insufficient quota');
+    service.finishNativeCompaction('s-summary', false, 'duplicate');
+    assert.deepEqual(events, ['started', 'failed']);
+    assert.equal(service.isCompactionInFlight('s-summary'), false);
+    assert.equal(store.getSession('s-summary').compact.lastError, '402 insufficient quota');
+});
+
+/** 旧实例的磁盘标记立即失效，不等待 30 分钟。 */
+test('旧在途标记复位，真实原生失败和进程退出释放等待者', async () => {
+    const { service, store } = buildService();
+    service.beforeSend({ sessionId: 'old', providerId: 'p1', modelId: 'm', anthropicBody: '{}' });
+    store.getSession('old').compact.inProgress = true;
+    store.getSession('old').compact.lastTriggeredAt = new Date().toISOString();
+    assert.equal(service.isCompactionInFlight('old'), false);
+    service.noteExternalCompaction('old');
+    const waiting = service.waitForCompactionSettled('old', 1000);
+    service.releaseCliCompactions('old', 'CLI exited');
+    assert.equal(await waiting, 'failed');
+    assert.ok(store.getSession('old'));
+    assert.equal(service.isCompactionInFlight('old'), false);
 });

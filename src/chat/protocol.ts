@@ -1,4 +1,5 @@
 /** @file 内置 Chat Webview 与扩展宿主之间的基础消息协议。 */
+import type { NativeCompactionPolicy } from '../nativeCompactionPolicy';
 import type { RequestUsageSummary } from '../relay/requestUsage';
 export type { RequestUsageSummary } from '../relay/requestUsage';
 
@@ -333,8 +334,8 @@ export type ExtensionToWebview =
     | { type: 'subagents/current'; enabled: boolean }
     /** 工作区代码预览状态；Markdown 和浏览器标签不受此开关限制。 */
     | { type: 'codePreview/current'; enabled: boolean }
-    /** 阈值自动压缩开关当前状态（对应设置 chat.autoCompact.enabled）。 */
-    | { type: 'autoCompact/current'; enabled: boolean }
+    /** 原生自动压缩开关、实际应用策略及待重启标记。 */
+    | { type: 'autoCompact/current'; enabled: boolean; pending?: boolean; policy?: NativeCompactionPolicy }
     | {
           /**
            * AskUserQuestion 授权通道提问：CLI 发出 `can_use_tool` 后由扩展宿主

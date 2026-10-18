@@ -5,6 +5,7 @@ import { EventEmitter } from 'events';
 import * as vscode from 'vscode';
 
 import { Logger } from '../../logger';
+import { buildCliChildEnv } from '../../nativeCompactionPolicy';
 import type { ChatCliConfig, CliChunk, CliExitEvent, CliProcessStatus } from './types';
 
 /** CliProcess 输出 chunk 事件名。 */
@@ -86,11 +87,17 @@ export class CliProcess implements vscode.Disposable {
             CLAUDE_CODE_SKIP_AUTH_LOGIN: config.cliEnv.CLAUDE_CODE_SKIP_AUTH_LOGIN || '',
             CLAUDE_CODE_SKIP_MODEL_VALIDATION: config.cliEnv.CLAUDE_CODE_SKIP_MODEL_VALIDATION || ''
         }));
+        if (config.nativeCompaction) {
+            Logger.info('Chat CLI 原生压缩策略（阈值为估算）：' + JSON.stringify(config.nativeCompaction));
+        }
+        // 配置每次从原始环境生成；托管值显式覆盖父环境，不修改 process.env。
+        // 冲突时保留用户原值，禁止移除用户 DISABLE_COMPACT。
+        const childEnv = buildCliChildEnv(process.env, config.cliEnv, config.nativeCompactionEnv);
         // 新进程一律从「未退出」开始，避免上一个进程的退出状态串味。
         this.childExited = false;
         this.child = spawn(config.cliPath, args, {
             cwd: config.cwd,
-            env: { ...process.env, ...config.cliEnv },
+            env: childEnv,
             stdio: 'pipe',
             windowsHide: true
         });
@@ -291,6 +298,7 @@ export class CliProcess implements vscode.Disposable {
             (left.strictMcpConfig === true) === (right.strictMcpConfig === true) &&
             this.isSameStringArray(left.cliArgs, right.cliArgs) &&
             this.isSameStringRecord(left.cliEnv, right.cliEnv) &&
+            this.isSameStringRecord(left.nativeCompactionEnv ?? {}, right.nativeCompactionEnv ?? {}) &&
             this.isSameSkills(left.skills, right.skills) &&
             this.isSameMcpServers(left.mcpServers, right.mcpServers);
     }

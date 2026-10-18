@@ -65,12 +65,14 @@ function fixture(protocol: string): [string, string] {
     if (protocol === 'responses') {
         return [
             sse({ type: 'response.created', response: { id: 'fixture', model: 'fixture' } })
-                + sse({ type: 'response.output_text.delta', output_index: 0, content_index: 0, delta: text }),
-            sse({ type: 'response.output_text.done', output_index: 0, content_index: 0 })
-                + sse({ type: 'response.output_item.added', output_index: 1, item: { type: 'function_call', id: 'fc', call_id: 'call', name: 'Edit', arguments: '' } })
-                + sse({ type: 'response.function_call_arguments.delta', output_index: 1, delta: args })
-                + sse({ type: 'response.function_call_arguments.done', output_index: 1, arguments: args })
-                + sse({ type: 'response.output_item.done', output_index: 1, item: { type: 'function_call', arguments: args } })
+                + sse({ type: 'response.reasoning_summary_text.delta', output_index: 0, summary_index: 0, delta: '可见摘要🙂' })
+                + sse({ type: 'response.reasoning_summary_text.done', output_index: 0, summary_index: 0, text: '可见摘要🙂' })
+                + sse({ type: 'response.output_text.delta', output_index: 1, content_index: 0, delta: text }),
+            sse({ type: 'response.output_text.done', output_index: 1, content_index: 0 })
+                + sse({ type: 'response.output_item.added', output_index: 2, item: { type: 'function_call', id: 'fc', call_id: 'call', name: 'Edit', arguments: '' } })
+                + sse({ type: 'response.function_call_arguments.delta', output_index: 2, delta: args })
+                + sse({ type: 'response.function_call_arguments.done', output_index: 2, arguments: args })
+                + sse({ type: 'response.output_item.done', output_index: 2, item: { type: 'function_call', arguments: args } })
                 + sse({ type: 'response.completed', response: { status: 'completed' } })
         ];
     }
@@ -139,6 +141,10 @@ for (const protocol of ['responses', 'chat', 'anthropic']) {
             const [early, late] = fixture(protocol);
             for (const byte of Buffer.from(early)) upstream.emit('data', Buffer.from([byte]));
             assert.ok(Buffer.concat(wire).toString('utf8').includes(text), '正文应在工具生成完成前发送');
+            if (protocol === 'responses') {
+                const earlyEvents = parseEvents(Buffer.concat(wire).toString('utf8'));
+                assert.equal(earlyEvents.filter(event => event.delta?.type === 'thinking_delta').map(event => event.delta.thinking).join(''), '可见摘要🙂', '摘要必须实时通过生产代理与任务流拦截器');
+            }
             for (const byte of Buffer.from(late)) upstream.emit('data', Buffer.from([byte]));
             upstream.complete = true;
             upstream.readableEnded = true;

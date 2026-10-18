@@ -67,7 +67,7 @@ export interface OpenAIResponsesRequestBody {
     /** OpenAI user 字段，由 metadata.user_id 映射而来。 */
     user?: string;
     /** Responses reasoning 参数；passthrough 模式下由 Anthropic thinking 预算映射而来。 */
-    reasoning?: { effort: ReasoningEffort };
+    reasoning?: { effort?: ReasoningEffort; summary?: 'auto' };
     /** 会话级显式缓存分组键。 */
     prompt_cache_key?: string;
     /** 网关显式缓存参数。 */
@@ -148,6 +148,10 @@ export function convertAnthropicToOpenAIResponses(
     } else if (options?.reasoningMode === 'passthrough') {
         const effort = readThinkingEffort(source.thinking);
         if (effort) body.reasoning = { effort };
+    }
+    if (options?.reasoningMode === 'passthrough') {
+        // 请求上游可见摘要，不请求/解密隐藏推理；不改变已经解析出的 effort。
+        body.reasoning = { ...body.reasoning, summary: 'auto' };
     }
     const metadata = convertMetadata(source.metadata, warnings);
     if (metadata) {

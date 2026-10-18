@@ -32,6 +32,8 @@ export interface ChatRouteRuntime {
     busy: boolean;
     /** relay 侧在途请求数，busy 由其是否大于 0 推导。 */
     relayActiveCount: number;
+    /** 已投递但尚未收到整轮 result 的消息数，工具间 HTTP 空隙不能视为空闲。 */
+    pendingTurns: number;
     /** 最近一次 session/init 拿到的 session_id，供 usageSink 同步读取。 */
     sessionId: string;
     /** 按需启动配置缓存（仅 plan / review 使用）。 */
@@ -42,7 +44,7 @@ export interface ChatRouteRuntime {
 
 /** 创建一条路由的初始运行期状态。 */
 function createRouteRuntime(): ChatRouteRuntime {
-    return { busy: false, relayActiveCount: 0, sessionId: '' };
+    return { busy: false, relayActiveCount: 0, pendingTurns: 0, sessionId: '' };
 }
 
 /** 两条路由（normal / taskFlow）的运行期状态容器。 */
@@ -74,7 +76,7 @@ export const pendingAskUserRequests = new Map<string, { route: ChatRoute; input:
 
 /** 是否有任意一条路由正在执行任务。 */
 export function isAnyRouteBusy(): boolean {
-    return routes.normal.busy || routes.taskFlow.busy;
+    return routes.normal.busy || routes.taskFlow.busy || routes.normal.pendingTurns > 0;
 }
 
 /**
@@ -109,7 +111,16 @@ export function getSessionIdForRoute(route: ChatRoute): string {
 
 /** 判断指定路由是否正在执行任务。 */
 export function isRouteBusy(route: ChatRoute): boolean {
-    return routes[route].busy;
+    return routes[route].busy || routes.normal.pendingTurns > 0;
+}
+
+/**
+ * 登记整轮投递/结束，保护原生设置重启不打断工具执行。
+ * @param delta 投递 +1，result 或发送失败 -1。
+ */
+export function noteCliTurn(delta: 1 | -1): void {
+    routes.normal.pendingTurns = Math.max(0, routes.normal.pendingTurns + delta);
+    void getChatViewHost()?.postMessage({ type: 'chat/running', running: isAnyRouteBusy() });
 }
 
 /** 强制把指定路由的在途计数与 busy 状态归零，并同步给 webview。 */
@@ -117,6 +128,7 @@ export function resetRouteBusy(route: ChatRoute): void {
     const state = routes[route];
     state.relayActiveCount = 0;
     state.busy = false;
+    state.pendingTurns = 0;
     void getChatViewHost()?.postMessage({ type: 'chat/running', running: isAnyRouteBusy(), route });
 }
 

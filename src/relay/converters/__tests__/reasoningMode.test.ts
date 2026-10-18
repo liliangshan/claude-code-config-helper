@@ -109,16 +109,16 @@ test('Responses passthrough：thinking.type=enabled 时映射为 reasoning.effor
         { reasoningMode: 'passthrough' }
     );
 
-    assert.deepEqual(body.reasoning, { effort: 'medium' });
+    assert.deepEqual(body.reasoning, { effort: 'medium', summary: 'auto' });
 });
 
-test('Responses passthrough：thinking.type=disabled 时不下发', () => {
+test('Responses passthrough：客户端 disabled 不映射等级，仍请求可见摘要', () => {
     const { body } = convertAnthropicToOpenAIResponses(
         makeAnthropicBody({ type: 'disabled', budget_tokens: 8192 }),
         { reasoningMode: 'passthrough' }
     );
 
-    assert.equal('reasoning' in body, false);
+    assert.deepEqual(body.reasoning, { summary: 'auto' });
 });
 
 test('工作区显式思考等级：覆盖客户端预算及模型 off 策略', () => {
@@ -127,7 +127,8 @@ test('工作区显式思考等级：覆盖客户端预算及模型 off 策略', 
         const original = JSON.stringify(source);
         for (const reasoningMode of ['off', 'passthrough'] as const) {
             assert.equal(convertAnthropicToOpenAIChat(source, { reasoningMode, reasoningEffort: effort }).body.reasoning_effort, effort);
-            assert.deepEqual(convertAnthropicToOpenAIResponses(source, { reasoningMode, reasoningEffort: effort }).body.reasoning, { effort });
+            assert.deepEqual(convertAnthropicToOpenAIResponses(source, { reasoningMode, reasoningEffort: effort }).body.reasoning,
+                reasoningMode === 'passthrough' ? { effort, summary: 'auto' } : { effort });
         }
         assert.equal(JSON.stringify(source), original);
     }
@@ -135,7 +136,7 @@ test('工作区显式思考等级：覆盖客户端预算及模型 off 策略', 
 
 test('auto 不额外注入参数，无客户端 thinking 时两个协议均不下发等级', () => {
     assert.equal('reasoning_effort' in convertAnthropicToOpenAIChat(makeAnthropicBody(), { reasoningMode: 'passthrough', reasoningEffort: undefined }).body, false);
-    assert.equal('reasoning' in convertAnthropicToOpenAIResponses(makeAnthropicBody(), { reasoningMode: 'passthrough', reasoningEffort: undefined }).body, false);
+    assert.deepEqual(convertAnthropicToOpenAIResponses(makeAnthropicBody(), { reasoningMode: 'passthrough', reasoningEffort: undefined }).body.reasoning, { summary: 'auto' });
 });
 
 // ===== 方案 B-1：Chat 响应侧读回 thinking block =====

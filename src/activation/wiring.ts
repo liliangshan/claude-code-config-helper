@@ -12,7 +12,7 @@ import * as vscode from 'vscode';
 import { BROWSER_BRIDGE } from '../browserTools/bridge';
 import { VSCODE_BRIDGE } from '../vscodeTools/bridge';
 import { WAKEUP_BRIDGE } from '../wakeupTools/bridge';
-import { appendAssistantSegments, configureChatSession, finishActiveAssistantMessage } from '../chatRuntime/chatSession';
+import { appendAssistantSegments, configureChatSession, finishActiveAssistantMessage, getTokenBudgetServiceRef } from '../chatRuntime/chatSession';
 import {
     appendUserMessageAndSend,
     configureChatMessaging,
@@ -25,7 +25,7 @@ import {
     handleParsedCliEvent,
     notifyPermissionDeniedToUser
 } from '../chatRuntime/cliEventHandlers';
-import { configureCliLifecycle, recoverCliForRequest } from '../chatRuntime/cliLifecycle';
+import { configureCliLifecycle, recoverCliForRequest, scheduleNativeCompactionRefresh } from '../chatRuntime/cliLifecycle';
 import { applyTaskFlowModelForContinue, configureModelSelection, getModelLabelForRoute } from '../chatRuntime/modelSelection';
 import {
     armHttpExpectation,
@@ -113,7 +113,10 @@ export function configureRuntimeModules(): void {
     configureCliEventHandlers({ showChatToast, recoveryController: requestRecoveryController });
     AutoContinueScheduler.setRecoveryGuard(() => requestRecoveryController.hasPendingRecovery());
     configureRecoveryRuntime({
-        onSucceeded: () => getAutoContinueScheduler()?.resumeAfterRecovery(),
+        onSucceeded: () => {
+            getAutoContinueScheduler()?.resumeAfterRecovery();
+            scheduleNativeCompactionRefresh();
+        },
         submit: submitRecoveryMessage,
         recoverCli: recoverCliForRequest
     });
@@ -128,6 +131,7 @@ export function configureRuntimeModules(): void {
         cancelPendingResend,
         handleParsedCliEvent,
         notifyPermissionDeniedToUser,
+        getCompactionService: getTokenBudgetServiceRef,
         logMcpInjection: (config) => {
             for (const descriptor of [BROWSER_BRIDGE, VSCODE_BRIDGE, WAKEUP_BRIDGE]) {
                 logMcpInjection(config, descriptor);
@@ -162,6 +166,7 @@ export function subscribeConfigManagerChanges(context: vscode.ExtensionContext):
     if (!manager) return;
     context.subscriptions.push(
         manager.onDidChange(() => {
+            scheduleNativeCompactionRefresh();
             void cleanupLegacyRelaySettingsSafely();
             void syncClaudeCliModelSettingsSafely();
             const refreshers: Array<[string, () => Promise<void>]> = [
@@ -188,6 +193,8 @@ export function subscribeConfigManagerChanges(context: vscode.ExtensionContext):
 export function subscribeVscodeConfigurationChanges(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration((event) => {
+            if (event.affectsConfiguration('claudeCodeConfigHelper.chat.autoCompact.enabled')
+                || event.affectsConfiguration('claudeCodeConfigHelper.chat.cliEnv')) scheduleNativeCompactionRefresh();
             if (event.affectsConfiguration(`claudeCodeConfigHelper.${CODE_PREVIEW_SETTING_KEY}`)) {
                 void postChatCodePreviewEnabled().catch((err: unknown) => {
                     Logger.warn(`刷新代码预览开关失败：${err instanceof Error ? err.message : String(err)}`);

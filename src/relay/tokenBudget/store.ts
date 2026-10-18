@@ -16,6 +16,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 
 import { Logger } from '../../logger';
+import { estimateCompactionThreshold } from '../../nativeCompactionPolicy';
 
 /** 落盘目录名（位于工作区根或用户主目录下）。 */
 const STORE_DIR_NAME = '.LLSOAI';
@@ -107,7 +108,7 @@ export interface SessionUsage {
     modelKey: string;
     /** 模型上下文上限。 */
     contextLimit: number;
-    /** 触发阈值 = contextLimit - 50000。 */
+    /** CLI 内部预留后的估算阈值，不是已确认触发点，也不用于扩展自动排队。 */
     threshold: number;
     /** 最近一次更新时间（ISO 8601）。 */
     lastUpdated: string;
@@ -153,7 +154,7 @@ export function createEmptySession(
         modelId,
         modelKey: `${providerId}/${modelId}`,
         contextLimit,
-        threshold: Math.max(0, contextLimit - 50000),
+        threshold: estimateCompactionThreshold(contextLimit),
         lastUpdated: now,
         lastSource: 'estimated',
         current: {
@@ -301,6 +302,7 @@ export class TokenCountStore {
             const text = await fs.readFile(filePath, 'utf-8');
             const parsed = JSON.parse(text) as Partial<TokenCountFile>;
             if (parsed && typeof parsed === 'object') {
+                const liveSessions = this.file.sessions;
                 this.file = {
                     version: typeof parsed.version === 'number' ? parsed.version : SCHEMA_VERSION,
                     lastUpdated: typeof parsed.lastUpdated === 'string'
@@ -310,6 +312,16 @@ export class TokenCountStore {
                         ? (parsed.sessions as Record<string, SessionUsage>)
                         : {}
                 };
+                // 请求入口可能已创建本实例桶；磁盘不能覆盖正在进行的新请求。
+                this.file.sessions = { ...this.file.sessions, ...liveSessions };
+                for (const [id, session] of Object.entries(this.file.sessions)) {
+                    if (!liveSessions[id] && session?.compact?.inProgress) {
+                        session.compact.inProgress = false;
+                        session.compact.lastOutcome = 'failed';
+                        session.compact.lastError = 'previous CLI instance ended';
+                    }
+                    if (session && Number.isFinite(session.contextLimit)) session.threshold = estimateCompactionThreshold(session.contextLimit);
+                }
                 // 加载即裁剪：历史文件里可能已经堆了成千上万个过期桶。
                 this.pruneSessions();
             }
@@ -416,6 +428,12 @@ export class TokenCountStore {
                 : {};
             for (const [id, session] of Object.entries(remoteSessions)) {
                 if (!this.file.sessions[id]) {
+                    // 外部磁盘记录不代表本实例仍有进程在压缩。
+                    if (session?.compact?.inProgress) {
+                        session.compact.inProgress = false;
+                        session.compact.lastOutcome = 'failed';
+                        session.compact.lastError = 'previous CLI instance ended';
+                    }
                     this.file.sessions[id] = session;
                 }
             }

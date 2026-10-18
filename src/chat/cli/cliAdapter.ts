@@ -131,7 +131,7 @@ export type ParsedCliEvent =
     | { type: 'segments'; segments: ChatSegment[]; done?: boolean; turnFinished?: boolean; turnResult?: CliTurnResult }
     | { type: 'error'; message: string; detail?: string }
     | { type: 'session/init'; sessionId: string; cwd: string }
-    | { type: 'compact/status'; status: 'compacting' | null; compactResult?: string; sessionId?: string; uuid?: string }
+    | { type: 'compact/status'; status: 'compacting' | null; compactResult?: string; compactError?: string; sessionId?: string; uuid?: string }
     /** 当前后台任务的全量快照；空数组表示列表已清空。 */
     | { type: 'backgroundTasks/snapshot'; tasks: CliBackgroundTask[]; sessionId?: string }
     /** 指定后台任务的增量补丁；缺失字段保持缺失。 */
@@ -915,7 +915,11 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      * @param record CLI JSON 事件对象。
      * @returns 命中时返回空 segments 事件以丢弃，否则返回 undefined。
      */
-    /** 识别 Claude CLI 原生压缩状态事件。 */
+    /**
+     * 解析已核验的原生状态事件；仅显式 compact_result 代表结束。
+     * @param record CLI JSON 事件对象。
+     * @returns 压缩开始/结束事件；普通状态静默忽略。
+     */
     private parseSystemStatusEvent(record: Record<string, unknown>): ParsedCliEvent | undefined {
         if (record.type !== 'system' || record.subtype !== 'status') return undefined;
         const status = record.status === 'compacting' ? 'compacting' : null;
@@ -925,6 +929,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
             type: 'compact/status',
             status,
             compactResult,
+            compactError: typeof record.compact_error === 'string' ? record.compact_error : undefined,
             sessionId: typeof record.session_id === 'string' ? record.session_id : undefined,
             uuid: typeof record.uuid === 'string' ? record.uuid : undefined
         };

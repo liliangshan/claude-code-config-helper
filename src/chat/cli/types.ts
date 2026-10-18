@@ -1,4 +1,5 @@
 /** @file 内置 Chat CLI 相关领域类型。 */
+import type { NativeCompactionPolicy } from '../../nativeCompactionPolicy';
 
 /** 内置 Chat 支持的 CLI 通信通道。 */
 export type ChatCliTransport = 'streamJsonStdio' | 'printStdio' | 'pty';
@@ -38,6 +39,10 @@ export interface ChatCliConfig {
     transport: ChatCliTransport;
     /** 启动 CLI 时附加的环境变量。 */
     cliEnv: Record<string, string>;
+    /** 本次非敏感原生压缩策略，由实际 CLI 版本探测后生成。 */
+    nativeCompaction?: NativeCompactionPolicy;
+    /** 原始父/用户环境中的压缩键快照；生成时确定，spawn 不再次继承遗漏键。 */
+    nativeCompactionEnv?: Record<string, string>;
     /**
      * Claude CLI 权限模式，会被转换为 `--permission-mode <mode>` 启动参数。
      *

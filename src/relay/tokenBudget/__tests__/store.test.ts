@@ -54,7 +54,7 @@ test('createEmptySession 生成符合 schema 的桶', () => {
     assert.equal(session.providerId, 'p1');
     assert.equal(session.modelKey, 'p1/m');
     assert.equal(session.contextLimit, 200000);
-    assert.equal(session.threshold, 150000);
+    assert.equal(session.threshold, 162000);
     assert.equal(session.current.totalInputForBudget, 0);
     assert.equal(session.compact.inProgress, false);
     assert.deepEqual(session.compact.archivedSessionIds, []);
@@ -137,4 +137,27 @@ test('pruneSessions: lastUpdated 超过 30 天的桶被淘汰', () => {
     const kept = store.getAllSessions();
     assert.equal(kept.stale, undefined);
     assert.ok(kept.fresh);
+});
+
+/** 重载立即迁移旧 inProgress，不覆盖加载期间已经登记的当前实例用量。 */
+test('load: 迁移旧压缩标记，并保留本实例已经创建的桶', async () => {
+    const dir = path.join(tmpRoot, '.LLSOAI');
+    fs.mkdirSync(dir, { recursive: true });
+    const stale = createEmptySession('reloaded', 'p', 'm', 200000);
+    stale.compact.inProgress = true;
+    stale.threshold = 150000;
+    const oldLive = createEmptySession('live', 'p', 'm', 200000);
+    oldLive.current.inputTokens = 1;
+    fs.writeFileSync(path.join(dir, 'token-count.json'), JSON.stringify({ version: 1, lastUpdated: new Date().toISOString(), sessions: { reloaded: stale, live: oldLive } }));
+    const store = new TokenCountStore();
+    const live = createEmptySession('live', 'p', 'm', 500000);
+    live.current.inputTokens = 99;
+    store.saveSession(live);
+    await store.load();
+    assert.equal(store.getSession('reloaded')?.compact.inProgress, false);
+    assert.equal(store.getSession('reloaded')?.compact.lastOutcome, 'failed');
+    assert.equal(store.getSession('reloaded')?.threshold, 162000);
+    assert.equal(store.getSession('live')?.current.inputTokens, 99);
+    assert.equal(store.getSession('live')?.contextLimit, 500000);
+    await store.dispose();
 });

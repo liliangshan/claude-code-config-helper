@@ -5,6 +5,18 @@
 - 本文只写**怎么做**：文件、方法、签名、判定条件、测试。所有行号以当前 HEAD（`c8c965d`）为准。
 - 总红线：`reasoningMode !== 'passthrough'` 时，四个转换器输出必须与改动前**逐字节相同**。新逻辑一律走加法式 `if` 分支。
 
+## Responses 可见摘要补充（2026-10-14）
+
+本节对应本轮“先补 Responses 的可见思考摘要事件及收尾去重”实施，替代文末 B-2 的暂缓项；其他章节保留当时设计背景，不据此声称旧 CLI 已验证。
+
+- 请求侧：仅在模型 `reasoningMode=passthrough` 时请求 `reasoning.summary=auto`，保留已有的 `reasoning.effort` 规则；`off` 不新增摘要参数。
+- 响应侧：支持 `response.reasoning_summary_text.delta/done` 和 `response.reasoning_summary_part.added/done`。可见摘要立即转换成 `thinking_delta`，复用现有稳定 segment id 的打字机显示，不实现正文 `<think>` 流解析，也不读隐藏或加密推理。
+- 去重：以 `output_index` / `item_id` 与 `summary_index` 关联同一摘要段；完整快照只补发与已发送文本前缀一致的后缀。重复 text/part/item/response 完成事件只关闭一次，迟到片段不重开块。
+- 顺序：思考块在正文或工具开始前关闭；若上游仅在正文/工具之后的最终快照给出此前未出现的摘要，则跳过并记录警告，不将思考倒插到回答后面。
+- 降级：非流式 JSON 只保留明确的 `summary_text`；空摘要、`encrypted_content`、未知字段不伪造可见思考。冲突快照保留已发送内容，不猜测修复，也不改动工具参数的前缀校验/错误归档。
+- 验收：包含分片立即输出、重复收尾、多个摘要段、快照回填、关闭策略、失败/断流、UTF-8 每字节拆包、任务流拦截器以及工具 JSON 回归。真实 CLI 2.1.280 经生产 Responses Relay 和本地假上游确认：两个摘要片段在最终正文之前出现在 stdout `thinking_delta`，最终回复正常；未使用收费 API。
+
+
 ## 阶段划分
 
 | 阶段 | 名称 | 前置 | 可独立验收 |

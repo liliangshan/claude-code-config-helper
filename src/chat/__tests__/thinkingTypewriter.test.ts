@@ -71,7 +71,39 @@ test('response identity survives stream and SDK parsing', () => {
     adapter.dispose();
 });
 
-/** 喂一个 thinking_delta 分片，返回首个 markdown segment（无则 undefined）。 */
+/** Responses 可见摘要经统一 CLI 适配器应逐片更新，并跳过聚合重复内容。 */
+test('Responses 摘要 delta 打字机增长，所有完成快照和 CLI 聚合事件不重复', () => {
+    const { OpenAIResponsesToAnthropicStreamConverter } = require('../../relay/converters/openAIResponsesToAnthropic') as typeof import('../../relay/converters/openAIResponsesToAnthropic');
+    const converter = new OpenAIResponsesToAnthropicStreamConverter(undefined, 'passthrough');
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    /** 经过实际 Responses 转换器再以真实 stream_event 包装喂给 CLI 解析器。 */
+    const feed = (payload: Record<string, unknown>) => {
+        const wire = converter.feed(`data: ${JSON.stringify(payload)}\n\n`);
+        const segments: import('../protocol').ChatSegment[] = [];
+        for (const frame of wire.split('\n\n')) {
+            const line = frame.split('\n').find(row => row.startsWith('data:'));
+            if (!line) continue;
+            const events = feedStreamEvent(adapter, JSON.parse(line.slice(5)));
+            for (const event of events) if (event.type === 'segments') segments.push(...event.segments);
+        }
+        return segments;
+    };
+    feed({ type: 'response.created', response: { id: 'r-thinking', model: 'm' } });
+    const first = feed({ type: 'response.reasoning_summary_text.delta', output_index: 0, summary_index: 0, delta: '先检查🙂' });
+    const second = feed({ type: 'response.reasoning_summary_text.delta', output_index: 0, summary_index: 0, delta: '\n再确认' });
+    assert.equal(first.length, 1);
+    assert.equal(first[0].text, '> 💭 先检查🙂');
+    assert.equal(second[0].text, '> 💭 先检查🙂\n> 再确认');
+    assert.equal(second[0].id, first[0].id);
+    assert.equal(first[0].responseMessageId, 'msg_r-thinking');
+    assert.deepEqual(feed({ type: 'response.reasoning_summary_text.done', output_index: 0, summary_index: 0, text: '先检查🙂\n再确认' }), []);
+    const completed = feed({ type: 'response.completed', response: { output: [{ type: 'reasoning', summary: [{ type: 'summary_text', text: '先检查🙂\n再确认' }] }] } });
+    assert.equal(completed.some(segment => segment.id === first[0].id), false);
+    const aggregate = adapter.parseOutput({ source: 'stdout', receivedAt: Date.now(), text: JSON.stringify({ type: 'assistant', message: { id: 'msg_r-thinking', content: [{ type: 'thinking', thinking: '先检查🙂\n再确认' }] } }) + '\n' });
+    assert.deepEqual(aggregate.flatMap(event => event.type === 'segments' ? event.segments : []), []);
+    adapter.dispose();
+});
+
 function feedThinking(
     adapter: InstanceType<typeof StreamJsonCliAdapter>,
     thinking: string,

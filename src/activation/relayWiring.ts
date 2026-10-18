@@ -14,6 +14,7 @@ import { BrowserSessionStore } from '../browserTools/sessionStore';
 import { handleUpstreamTimeoutAutoContinue, sendHiddenUserMessageToCli } from '../chatRuntime/chatMessaging';
 import { setTokenBudgetServiceRef } from '../chatRuntime/chatSession';
 import { setRelayRouteBusy } from '../chatRuntime/routeState';
+import { applyPendingNativeCompactionPolicy } from '../chatRuntime/cliLifecycle';
 import { observeRecoveryRequestStart, observeRecoveryRequestOutcome } from '../chatRuntime/selfHealing';
 import { EditorAutoOpener, extractFilePathFromToolInput } from '../editorAutoOpen';
 import type { AutoContinueScheduler } from '../llsTask/autoContinue';
@@ -197,6 +198,8 @@ export function setupRelayPipeline(
         },
         onUpstreamRequestEnd: ({ route }) => {
             setRelayRouteBusy(route, false, 'relay_request_end');
+            // 只尝试待应用配置；生命周期模块仍检查整轮/权限/压缩状态。
+            void applyPendingNativeCompactionPolicy().catch(error => Logger.warn(`应用待重启压缩策略失败：${String(error)}`));
         }
     });
 

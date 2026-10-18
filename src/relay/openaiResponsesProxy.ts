@@ -15,7 +15,7 @@ import { Logger } from '../logger';
 import { interceptAnthropicResponse } from '../llsTask/interceptor';
 import type { LlsTaskInterceptorDeps } from '../llsTask/interceptor';
 import { LlsTaskStreamingInterceptor } from '../llsTask/streamingInterceptor';
-import type { ApiType } from '../types';
+import type { ApiType, ModelReasoningMode } from '../types';
 import { convertAnthropicToOpenAIResponses } from './converters/anthropicToOpenAIResponses';
 import { buildAnthropicErrorFromUpstream, formatAnthropicSseError, sanitizeErrorMessage } from './converters/openAIErrorToAnthropic';
 import { convertResponsesJsonToAnthropic, OpenAIResponsesToAnthropicStreamConverter } from './converters/openAIResponsesToAnthropic';
@@ -145,9 +145,10 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
         await this.safeRecordRequestBody(injectedBodyText);
         const anthropicBody = this.parseJson(injectedBodyText);
         const explicitCache = resolveModelExplicitCache(provider, modelId);
+        const reasoningMode = resolveReasoningMode(provider, modelId);
         const converted = convertAnthropicToOpenAIResponses(anthropicBody, {
             cacheMode: resolveModelCacheMode(provider, modelId),
-            reasoningMode: resolveReasoningMode(provider, modelId),
+            reasoningMode,
             reasoningEffort: ctx.reasoningEffort,
             explicitCache,
             cacheSessionId: explicitCache ? extractExplicitCacheSessionId(anthropicBody) : undefined
@@ -161,7 +162,7 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
                 describeOpenAIAuthHeaders(provider, headers)
             )} headers=${JSON.stringify(redactHeaders(headers))}`
         );
-        await this.forward({ ctx, startedAt, upstreamUrl, headers, anthropicBodyText: injectedBodyText, upstreamBodyText });
+        await this.forward({ ctx, startedAt, upstreamUrl, headers, anthropicBodyText: injectedBodyText, upstreamBodyText, reasoningMode });
     }
 
     /**
@@ -176,8 +177,10 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
         headers: Record<string, string>;
         anthropicBodyText: string;
         upstreamBodyText: string;
+        /** 请求开始时冻结模型思考策略，响应侧遵循同一个开关。 */
+        reasoningMode: ModelReasoningMode;
     }): Promise<void> {
-        const { ctx, startedAt, upstreamUrl, headers, anthropicBodyText, upstreamBodyText } = args;
+        const { ctx, startedAt, upstreamUrl, headers, anthropicBodyText, upstreamBodyText, reasoningMode } = args;
         const transport = upstreamUrl.protocol === 'http:' ? http : https;
         const options: http.RequestOptions = {
             method: 'POST',
@@ -250,14 +253,14 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
                     return;
                 }
                 if (isStream) {
-                    streamRecording = this.handleStreamResponse(ctx, upstreamRes, (body) => { responseBody = body; }, (body) => { upstreamResponseBody = body; }, finish, startedAt, upstreamBodyText);
+                    streamRecording = this.handleStreamResponse(ctx, upstreamRes, (body) => { responseBody = body; }, (body) => { upstreamResponseBody = body; }, finish, startedAt, upstreamBodyText, reasoningMode);
                     return;
                 }
                 upstreamRes.on('data', (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))));
                 upstreamRes.on('end', () => {
                     const body = Buffer.concat(chunks).toString('utf-8');
                     upstreamResponseBody = body;
-                    responseBody = this.handleJsonResponse(ctx, upstreamRes.statusCode ?? 200, upstreamRes.headers, body);
+                    responseBody = this.handleJsonResponse(ctx, upstreamRes.statusCode ?? 200, upstreamRes.headers, body, reasoningMode);
                     finish();
                 });
                 upstreamRes.on('error', (err) => {
@@ -308,13 +311,15 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
      * @param statusCode 上游状态码。
      * @param headers 上游响应头。
      * @param body 上游响应体。
+     * @param reasoningMode 请求开始时的思考内容透传策略。
      * @returns 转换后的 Anthropic 响应体文本。
      */
     private handleJsonResponse(
         ctx: UpstreamRequestContext,
         statusCode: number,
         headers: Record<string, string | string[] | undefined>,
-        body: string
+        body: string,
+        reasoningMode: ModelReasoningMode
     ): string {
         try {
             const parsed = JSON.parse(body) as unknown;
@@ -325,7 +330,7 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
                 this.writeJsonError(ctx.res, inlineError.statusCode, inlineError.body);
                 return errorBody;
             }
-            const converted = convertResponsesJsonToAnthropic(parsed);
+            const converted = convertResponsesJsonToAnthropic(parsed, reasoningMode);
             const anthropicBody = JSON.stringify(converted.body);
             const intercepted = this.taskDeps
                 ? interceptAnthropicResponse(anthropicBody, 'application/json', this.toInterceptorDeps())
@@ -409,6 +414,7 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
      * @param resolve 完成回调。
      * @param startedAt 本次请求开始时间。
      * @param upstreamBodyText 实际出站请求，仅抽取输出预算和思考配置用于诊断。
+     * @param reasoningMode 请求开始时冻结的思考内容透传策略。
      * @returns 流结束后的异常响应快照写入任务。
      */
     private handleStreamResponse(
@@ -418,7 +424,8 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
         captureUpstreamBody: (body: string) => void,
         resolve: () => void,
         startedAt: number,
-        upstreamBodyText: string
+        upstreamBodyText: string,
+        reasoningMode: ModelReasoningMode
     ): Promise<void> {
         ctx.res.statusCode = upstreamRes.statusCode ?? 200;
         this.copyResponseHeaders(ctx.res, upstreamRes.headers, 'text/event-stream; charset=utf-8');
@@ -426,7 +433,7 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
         const converter = new OpenAIResponsesToAnthropicStreamConverter((message) => {
             diagnostics.push(message);
             Logger.warn(message);
-        });
+        }, reasoningMode);
         const interceptor = this.taskDeps ? new LlsTaskStreamingInterceptor(this.toInterceptorDeps()) : undefined;
         // 每次响应独立的 usage 抽取器，吃下行 Anthropic SSE。
         const usageReporter = getRequestUsageReporter(ctx, this.usageSink);

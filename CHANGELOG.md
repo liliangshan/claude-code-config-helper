@@ -2,6 +2,38 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.72] - 2026-10-19
+
+### Fixed
+
+- Responses visible reasoning summaries now stream through the existing thinking-block typewriter when model reasoning passthrough is enabled. Requests ask for `reasoning.summary=auto` without changing effort selection; disabling passthrough preserves the previous request/response output.
+- Summary text/part deltas and completion snapshots are correlated by output item and summary index. Final snapshots append only matching, unsent suffixes; repeated done/item/response events do not duplicate text or close blocks twice. Encrypted reasoning is never rendered, and summary snapshots first arriving after ordinary output are skipped to preserve order.
+- Added converter, CLI-adapter and local HTTP integration coverage, including byte-split Chinese/emoji and unchanged tool arguments/diagnostics. A real CLI 2.1.280 probe against a local synthetic Responses upstream confirmed visible reasoning deltas before final text; no paid API requests were used.
+
+### Known Issues
+
+- Reused upstream response IDs can still prevent per-message usage display. This separately diagnosed issue is not fixed by the reasoning-summary changes.
+
+## [3.2.71] - 2026-10-14
+
+### Changed
+
+- Delegate automatic compaction to the CLI's native tool-loop safe points instead of queuing `/compact` until a full-turn `result`. Window resolution is shared by CLI startup and token accounting: configured context length, known-model table, then 200,000 tokens.
+- Native managed startup sets `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to the complete model window, with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=90` for windows ≤200K or `80` for larger windows. Internal CLI output/summary reserves are reflected as estimates, not promised trigger points.
+- **Switch migration:** Auto compact remains off by default, but off now disables native automatic compaction with subprocess-only `DISABLE_AUTO_COMPACT`; manual `/compact` remains available. The extension does not modify global shell/Claude settings or silently remove user disable flags.
+- Configuration changes resume-restart an idle CLI; changes during generation, tools, permissions, compaction or recovery remain pending until a safe point. Seven-language UI hints distinguish pending, applied, disabled, conflicting and unsupported policies.
+
+### Fixed
+
+- Probe the selected executable rather than PATH for the verified CLI 2.1.280+ baseline, reject unsupported managed windows outside 100K–1M without enlarging user settings, and report native-setting/environment conflicts by key name only.
+- Isolate managed environment keys when spawning, recompute each model/task-flow/recovery startup, migrate old persisted in-progress markers, deduplicate native status notifications and release waiters on compaction failure, cancellation or CLI exit.
+- Summary-model requests no longer replace the main session's context capacity or usage. Smaller summary-model capacity is flagged without automatically changing providers. Native summaries, manual compaction, dated pre-compaction snapshots and the separate task-flow pre-continue path remain intact.
+
+### Validation
+
+- Real CLI 2.1.280 with isolated loopback synthetic upstreams verified 200K/500K/1M native compaction before full-turn result, dedicated summary-model routing, dated request snapshots and continuation on the main model. Synthetic 402/429/400, timeout, connection loss and stream interruption never reported compaction success. No paid API requests were used. Provider-specific real workload behavior still depends on upstream model limits.
+- All 58 compaction acceptance tests passed. The unrelated pre-existing unknown-session binding test still fails (`true !== false`); its implementation and test were left unchanged.
+
 ## [3.2.70] - 2026-10-12
 
 ### Added

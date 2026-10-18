@@ -102,11 +102,11 @@ test('集成：触达阈值不再自动压缩，compactNow 才发送原生 /comp
     assert.deepEqual(events.map((e) => e.kind), []);
     const bucket = service.store.getSession('s-old');
     assert.equal(bucket.compact.inProgress, true);
-    assert.equal(bucket.compact.triggerCount, 0);
+    assert.equal(bucket.compact.triggerCount, 1);
 });
 
-/** 阈值命中只排队，整轮完成信号才能消费一次压缩命令。 */
-test('自动压缩等待 CLI 整轮完成，不在工具响应后发送', async () => {
+/** 长工具循环超阈值时仅计量，不排队也不误报在途。 */
+test('自动压缩由 CLI 单独执行，扩展不等待 result 排队', async () => {
     const sent: string[] = [];
     const service: any = new TokenBudgetService({
         configManager: makeConfigManager() as any,
@@ -114,20 +114,14 @@ test('自动压缩等待 CLI 整轮完成，不在工具响应后发送', async 
     });
     service.store = new TokenCountStore();
     service.loaded = true;
-    service.isAutoCompactEnabled = () => true;
-    service.afterRecv({
-        sessionId: 'queued-auto', providerId: 'p1', modelId: 'm',
-        usage: { inputTokens: 60000 }, requestBodyAtSend: ''
-    });
-    await flushAsync();
-    assert.deepEqual(sent, []);
-    assert.equal(service.isCompactionInFlight('queued-auto'), true);
-    await service.flushPendingAutoCompaction('other-session');
-    assert.deepEqual(sent, []);
-    await service.flushPendingAutoCompaction('queued-auto');
-    await service.flushPendingAutoCompaction('queued-auto');
-    assert.deepEqual(sent, [CLAUDE_COMPACT_COMMAND]);
-    service.dispose();
+        for (const used of [180000, 200000, 400000, 600000]) {
+            service.afterRecv({ sessionId: 'queued-auto', providerId: 'p1', modelId: 'm', usage: { inputTokens: used }, requestBodyAtSend: '' });
+        }
+        await flushAsync();
+        assert.deepEqual(sent, [], '长工具循环不能外部排队发送 /compact');
+        assert.equal(service.isCompactionInFlight('queued-auto'), false, '阈值不是正在压缩');
+        assert.equal(service.store.getSession('queued-auto').compact.triggerCount, 0);
+        await service.dispose();
 });
 
 test('集成：压缩在途时重复 afterRecv 不会产生任何 /compact', async () => {

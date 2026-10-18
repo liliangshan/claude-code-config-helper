@@ -18,6 +18,7 @@ import { COMMANDS, CONFIG_NAMESPACE, type ChatCacheTtl } from '../constants';
 import type { ChatMessage, ChatModelOption, LlsTaskSnapshotPayload, ChatQuickPermissionMode, ChatRoute, ChatRoutedModelSelection, ChatUiLanguage, SessionListItem, WebviewToExtension } from '../chat/protocol';
 import { requestUsageRegistry } from './requestUsage';
 import { Logger } from '../logger';
+import { AUTO_COMPACT_SETTING_KEY } from '../nativeCompactionPolicy';
 import { getCodePreviewEnabled, setCodePreviewEnabled } from '../editorAutoOpen';
 import { getChatViewHost, getConfigManager, getLlsTaskService } from '../runtime';
 import {
@@ -27,7 +28,9 @@ import {
     restartChatCli,
     restartChatCliPair,
     restartChatRelayAndCli,
-    selectChatCli
+    selectChatCli,
+    postNativeCompactionState,
+    scheduleNativeCompactionRefresh
 } from './cliLifecycle';
 import {
     appendAssistantSegments,
@@ -264,6 +267,7 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
             chatCliCancelState.requested = true;
             requireDeps().clearHttpExpectation('user_cancel');
             requireDeps().cancelPendingResend('user_cancel');
+            getTokenBudgetServiceRef()?.releaseCliCompactions(currentChatCliSessionIdSync(), 'user cancelled');
             cancelRouteProcess(chatRouteState.active);
             await appendAssistantSegments([{ kind: 'markdown', text: '\n（已请求取消当前输出）\n' }], true);
             return;
@@ -676,22 +680,18 @@ export async function selectChatCodePreviewEnabled(enabled: boolean): Promise<vo
     }
 }
 
-/** 阈值自动压缩开关的设置键（不含命名空间）。 */
-const AUTO_COMPACT_SETTING_KEY = 'chat.autoCompact.enabled';
-
-/** 读取 `chat.autoCompact.enabled` 并回推给输入框开关。 */
+/** 回推原生开关与实际应用状态，忙碌时明确显示待重启。 */
 export async function postChatAutoCompactEnabled(): Promise<void> {
-    const enabled = vscode.workspace.getConfiguration(CONFIG_NAMESPACE).get<boolean>(AUTO_COMPACT_SETTING_KEY, false) === true;
-    await getChatViewHost()?.postMessage({ type: 'autoCompact/current', enabled });
+    await postNativeCompactionState();
 }
 
 /**
- * 保存阈值自动压缩开关到工作区设置并回推真实状态。
+ * 保存原生自动压缩开关，安全空闲时 resume 重启，忙碌时待应用。
  *
  * 写入 workspace 级 `chat.autoCompact.enabled`；无工作区时回退到全局设置。
- * TokenBudgetService 每次响应后实时读取该设置，因此无需重启 CLI。
+ * 关闭只设置子进程 DISABLE_AUTO_COMPACT，手动 /compact 保留。
  *
- * @param enabled 是否开启阈值自动压缩。
+ * @param enabled 是否开启原生自动压缩托管。
  */
 export async function selectChatAutoCompactEnabled(enabled: boolean): Promise<void> {
     try {
@@ -699,6 +699,7 @@ export async function selectChatAutoCompactEnabled(enabled: boolean): Promise<vo
             ? vscode.ConfigurationTarget.Workspace
             : vscode.ConfigurationTarget.Global;
         await vscode.workspace.getConfiguration(CONFIG_NAMESPACE).update(AUTO_COMPACT_SETTING_KEY, enabled === true, target);
+        scheduleNativeCompactionRefresh();
     } catch (error) {
         await showChatToast('error', `自动压缩开关保存失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
