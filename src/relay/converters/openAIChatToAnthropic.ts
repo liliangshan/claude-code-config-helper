@@ -6,6 +6,7 @@
 
 import type { ModelReasoningMode } from '../../types';
 import type { ConversionWarning } from './anthropicToOpenAIChat';
+import { anthropicCacheFields, normalizeOpenAIUsage } from './openAIUsage';
 
 /** Anthropic content block。 */
 type AnthropicContentBlock =
@@ -37,7 +38,7 @@ export interface AnthropicMessageResponse {
         output_tokens: number;
         /** 命中缓存的输入 token 数；上游未返回该字段时不下发。 */
         cache_read_input_tokens?: number;
-        /** OpenAI 输入已包含所有非缓存读取 token，无额外缓存写入项。 */
+        /** 已包含在 OpenAI 总输入中的缓存写入，由扩充明细还原；缺失时不推测。 */
         cache_creation_input_tokens?: number;
     };
 }
@@ -90,10 +91,12 @@ interface OpenAIChatToAnthropicState {
     toolCalls: Map<number, ToolCallStreamState>;
     /** 下一个可用 Anthropic content block index。 */
     nextBlockIndex: number;
-    /** 输入 token 数（已扣除缓存命中部分）。 */
+    /** 输入 token 数（已扣除缓存读写）。 */
     promptTokens: number;
     /** 命中缓存的输入 token 数；上游未返回时为 undefined。 */
     cacheReadTokens?: number;
+    /** 网关扩充明细中的缓存写入；与读取独立保存。 */
+    cacheWriteTokens?: number;
     /** 输出 token 数。 */
     completionTokens: number;
     /** OpenAI finish_reason。 */
@@ -210,15 +213,15 @@ export class OpenAIChatToAnthropicStreamConverter {
     }
 
     /**
-     * 处理一个 OpenAI Chat chunk JSON。
+     * 处理 Chat chunk；首片已有 usage 时先拆分读写再发 message_start，末片仍补发真值。
      *
      * @param chunk OpenAI Chat chunk。
      * @returns Anthropic SSE 文本。
      */
     private handleChunk(chunk: unknown): string {
         if (!isRecord(chunk)) return '';
-        let out = this.ensureMessageStart(chunk);
         this.readUsage(chunk);
+        let out = this.ensureMessageStart(chunk);
         const choice = Array.isArray(chunk.choices) && isRecord(chunk.choices[0]) ? chunk.choices[0] : undefined;
         if (!choice) return out;
         const delta = isRecord(choice.delta) ? choice.delta : {};
@@ -250,7 +253,7 @@ export class OpenAIChatToAnthropicStreamConverter {
     }
 
     /**
-     * 确保已输出 Anthropic message_start。
+     * 确保已输出 Anthropic message_start，使用独立的缓存读写字段。
      *
      * @param chunk OpenAI chunk。
      * @returns 可能产生的 message_start SSE 文本。
@@ -273,26 +276,24 @@ export class OpenAIChatToAnthropicStreamConverter {
                 usage: {
                     input_tokens: this.state.promptTokens,
                     output_tokens: 0,
-                    ...(this.state.cacheReadTokens === undefined
-                        ? {}
-                        : { cache_read_input_tokens: this.state.cacheReadTokens, cache_creation_input_tokens: 0 })
+                    ...anthropicCacheFields(this.state)
                 }
             }
         });
     }
 
     /**
-     * 读取 chunk 中的 usage 信息。
+     * 读取 chunk 中的 usage，扣除总输入中已包含的缓存读写，不重复计算。
      *
      * @param chunk OpenAI chunk。
      */
     private readUsage(chunk: Record<string, unknown>): void {
         if (!isRecord(chunk.usage)) return;
-        const cachedTokens = readCachedTokens(chunk.usage, 'prompt_tokens_details');
-        // OpenAI 的 prompt_tokens 含缓存命中部分，Anthropic 的 input_tokens 不含，故做减法。
-        this.state.promptTokens = readNumber(chunk.usage.prompt_tokens) - (cachedTokens ?? 0);
-        this.state.cacheReadTokens = cachedTokens;
-        this.state.completionTokens = readNumber(chunk.usage.completion_tokens);
+        const usage = normalizeOpenAIUsage(chunk.usage, 'chat');
+        this.state.promptTokens = usage.inputTokens;
+        this.state.cacheReadTokens = usage.cacheReadTokens;
+        this.state.cacheWriteTokens = usage.cacheWriteTokens;
+        this.state.completionTokens = usage.outputTokens;
     }
 
     /**
@@ -476,7 +477,7 @@ export class OpenAIChatToAnthropicStreamConverter {
     }
 
     /**
-     * 如尚未完成则关闭所有 block 并输出 message_delta/message_stop。
+     * 如尚未完成则关闭所有 block，输出带真实缓存读写明细的 message_delta/message_stop。
      *
      * @returns Anthropic SSE 文本。
      */
@@ -497,9 +498,7 @@ export class OpenAIChatToAnthropicStreamConverter {
             usage: {
                 input_tokens: this.state.promptTokens,
                 output_tokens: this.state.completionTokens,
-                ...(this.state.cacheReadTokens === undefined
-                    ? {}
-                    : { cache_read_input_tokens: this.state.cacheReadTokens, cache_creation_input_tokens: 0 })
+                ...anthropicCacheFields(this.state)
             }
         });
         out += formatAnthropicSse('message_stop', { type: 'message_stop' });
@@ -540,7 +539,7 @@ function readToolArgumentsDelta(value: unknown): string {
 }
 
 /**
- * 将 OpenAI Chat Completions 非流式 JSON 转为 Anthropic Messages JSON。
+ * 将 OpenAI Chat Completions 非流式 JSON 转为 Anthropic，缓存读写与 SSE 共用同一归一化规则。
  *
  * @param json OpenAI Chat completion JSON。
  * @param reasoningMode 模型级思考策略；'passthrough' 时把 message.reasoning_content
@@ -568,8 +567,7 @@ export function convertOpenAIChatJsonToAnthropic(
     if (choice.finish_reason === 'content_filter' && content.length === 0) {
         content.push({ type: 'text', text: '[content filtered by upstream provider]' });
     }
-    const usage = isRecord(source.usage) ? source.usage : undefined;
-    const cachedTokens = readCachedTokens(usage, 'prompt_tokens_details');
+    const usage = normalizeOpenAIUsage(source.usage, 'chat');
     return {
         body: {
             id: `msg_${typeof source.id === 'string' ? source.id : 'openai_chat'}`,
@@ -580,10 +578,9 @@ export function convertOpenAIChatJsonToAnthropic(
             stop_reason: stopReason,
             stop_sequence: null,
             usage: {
-                // OpenAI 的 prompt_tokens 含缓存命中部分，Anthropic 的 input_tokens 不含。
-                input_tokens: readNumber(usage?.prompt_tokens) - (cachedTokens ?? 0),
-                output_tokens: readNumber(usage?.completion_tokens),
-                ...(cachedTokens === undefined ? {} : { cache_read_input_tokens: cachedTokens, cache_creation_input_tokens: 0 })
+                input_tokens: usage.inputTokens,
+                output_tokens: usage.outputTokens,
+                ...anthropicCacheFields(usage)
             }
         },
         warnings
@@ -739,16 +736,6 @@ function mapFinishReason(
             warnings.push({ path: 'choices[0].finish_reason', code: 'unknown_finish_reason', message: `未知 finish_reason=${String(finishReason)}，已映射为 end_turn。` });
             return 'end_turn';
     }
-}
-
-/**
- * 安全读取数字字段。
- *
- * @param value 待读取值。
- * @returns 有效数字或 0。
- */
-function readNumber(value: unknown): number {
-    return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 /**

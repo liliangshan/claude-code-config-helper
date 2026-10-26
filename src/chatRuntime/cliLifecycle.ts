@@ -10,6 +10,8 @@ import { StreamJsonCliAdapter, type ParsedCliEvent } from '../chat/cli/cliAdapte
 import { getRecoveryAdapterIdentity, bindRecoveryAdapter, requestRecoveryController } from './selfHealing';
 import type { RecoveryContext, RecoveryIdentity } from './requestRecovery';
 import { ChatCliConfigService } from '../chat/cli/cliConfig';
+import { clearCliVersionCache } from '../chat/cli/nativeCompactionProbe';
+import { notifyNativeCompactionUnsupported } from './nativeCompactionNotice';
 import { CliProcess } from '../chat/cli/cliProcess';
 import { CliResolver } from '../chat/cli/cliResolver';
 import { ChatCliSessionStore } from '../chat/cli/sessionStore';
@@ -78,6 +80,7 @@ let cliStartQueue: Promise<void> = Promise.resolve();
 /** 已应用策略与待重启状态；仅当前 CLI 实例生效，配置不强杀活动工具链。 */
 let appliedNativePolicy: NativeCompactionPolicy | undefined;
 let appliedNativeModel = '';
+let appliedCliPath = '';
 let pendingNativePolicy = false;
 let nativeRefreshTimer: NodeJS.Timeout | undefined;
 
@@ -87,6 +90,19 @@ export async function postNativeCompactionState(): Promise<void> {
     await getChatViewHost()?.postMessage({
         type: 'autoCompact/current', enabled, pending: pendingNativePolicy, policy: appliedNativePolicy
     });
+}
+
+/** 通知不等待用户操作；重新选择只保存路径，由安全空闲重启流程应用。 */
+function showNativeCompactionNotice(config: ChatCliConfig): void {
+    void notifyNativeCompactionUnsupported(config.nativeCompaction, config.cliPath, {
+        language: getConfigManager()?.getResolvedUiLanguage() ?? 'en',
+        warn: (message, ...actions) => vscode.window.showWarningMessage(message, ...actions),
+        retry: () => { clearCliVersionCache(); scheduleNativeCompactionRefresh(); },
+        select: async () => {
+            const selected = await cliResolver?.selectCliPath();
+            if (selected) { clearCliVersionCache(); scheduleNativeCompactionRefresh(); }
+        }
+    }).catch(error => Logger.warn(`显示原生压缩兼容提示失败：${String(error)}`));
 }
 
 /** 判断当前实例能否安全应用环境变更；HTTP 工具间隙不算整轮空闲。 */
@@ -118,7 +134,7 @@ async function refreshNativeCompactionPolicy(): Promise<void> {
     }
     const config = await chatCliConfigService.getConfigWithRelayEnv(port);
     pendingNativePolicy = JSON.stringify(config.nativeCompaction) !== JSON.stringify(appliedNativePolicy)
-        || (config.model || '') !== appliedNativeModel;
+        || (config.model || '') !== appliedNativeModel || config.cliPath !== appliedCliPath;
     await postNativeCompactionState();
     await applyPendingNativeCompactionPolicy();
 }
@@ -175,6 +191,7 @@ export function disposeCliLifecycleServices(): void {
     nativeRefreshTimer = undefined;
     appliedNativePolicy = undefined;
     appliedNativeModel = '';
+    appliedCliPath = '';
     pendingNativePolicy = false;
     cliResolver = undefined;
     chatCliConfigService = undefined;
@@ -377,7 +394,7 @@ async function performStartChatCliPair(options: { forceRestart?: boolean }): Pro
     // ── normal CLI ─────────────────────────────────────────────────────
     if (!options.forceRestart && routes.normal.process.isRunning() && !canApplyNativePolicy()) {
         pendingNativePolicy = JSON.stringify(normal.nativeCompaction) !== JSON.stringify(appliedNativePolicy)
-            || (normal.model || '') !== appliedNativeModel;
+            || (normal.model || '') !== appliedNativeModel || normal.cliPath !== appliedCliPath;
         await postNativeCompactionState();
         return;
     }
@@ -416,7 +433,9 @@ async function performStartChatCliPair(options: { forceRestart?: boolean }): Pro
     }
     appliedNativePolicy = normal.nativeCompaction;
     appliedNativeModel = normal.model || '';
+    appliedCliPath = normal.cliPath;
     pendingNativePolicy = false;
+    showNativeCompactionNotice(normal);
     await postNativeCompactionState();
     await getChatViewHost()?.postMessage({ type: 'cli/status', status: 'running', detail: normal.cliPath });
 }
@@ -461,7 +480,9 @@ async function performRecoveryCliStart(context: Readonly<RecoveryContext>, signa
     await process.start({ ...configs.normal, resumeSessionId: context.sessionId });
     appliedNativePolicy = configs.normal.nativeCompaction;
     appliedNativeModel = configs.normal.model || '';
+    appliedCliPath = configs.normal.cliPath;
     pendingNativePolicy = false;
+    showNativeCompactionNotice(configs.normal);
     await postNativeCompactionState();
     signal.throwIfAborted();
     rebuildNormalAdapter();

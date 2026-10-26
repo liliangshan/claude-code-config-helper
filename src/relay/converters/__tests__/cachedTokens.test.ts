@@ -14,6 +14,7 @@ import {
     OpenAIChatToAnthropicStreamConverter,
     convertOpenAIChatJsonToAnthropic
 } from '../openAIChatToAnthropic';
+import { normalizeOpenAIUsage } from '../openAIUsage';
 import { convertResponsesJsonToAnthropic, OpenAIResponsesToAnthropicStreamConverter } from '../openAIResponsesToAnthropic';
 
 /** 构造一份 OpenAI Chat 非流式响应体。 */
@@ -203,6 +204,105 @@ test('Responses 流式：response.completed 的 usage 出现在 message_delta �
     assert.equal(messageDelta.usage.input_tokens, 94);
     assert.equal(messageDelta.usage.output_tokens, 30);
     assert.equal(messageDelta.usage.cache_read_input_tokens, 0);
+});
+
+/** 生成两种协议的 JSON 与分片 SSE 用量，确保 message_start/message_delta 使用相同拆分。 */
+function allUsageVariants(total: number, details: Record<string, unknown>, extra: Record<string, unknown> = {}): Array<Record<string, number>> {
+    const chatUsage = { prompt_tokens: total, completion_tokens: 3, prompt_tokens_details: details, ...extra };
+    const response = { id: 'resp_write', status: 'completed', output: [], usage: {
+        input_tokens: total, output_tokens: 3, input_tokens_details: details, ...extra
+    } };
+    const chat = new OpenAIChatToAnthropicStreamConverter();
+    const responses = new OpenAIResponsesToAnthropicStreamConverter();
+    const chatEvent = sse({ id: 'chat_write', choices: [], usage: chatUsage });
+    const responseEvent = sse({ type: 'response.completed', response });
+    // 按不同字节边界拆分，避免完整 SSE 帧测试掩盖缓冲路径问题。
+    const streams = [
+        chat.feed(chatEvent.slice(0, 17)) + chat.feed(chatEvent.slice(17)) + chat.feed('data: [DONE]\n\n') + chat.end(),
+        responses.feed(responseEvent.slice(0, 23)) + responses.feed(responseEvent.slice(23)) + responses.end()
+    ];
+    return [
+        convertOpenAIChatJsonToAnthropic(makeChatJson(chatUsage)).body.usage,
+        convertResponsesJsonToAnthropic(response).body.usage,
+        ...streams.flatMap(stream => stream.split('\n').filter(line => line.startsWith('data: '))
+            .map(line => JSON.parse(line.slice(6)))
+            .filter(event => event.type === 'message_start' || event.type === 'message_delta')
+            .map(event => event.type === 'message_start' ? event.message.usage : event.usage))
+    ];
+}
+
+/** 非零写入量按真实明细还原，普通输入 + 读 + 写严格等于总输入。 */
+test('Chat/Responses JSON/SSE 保留缓存写入且不会混进未缓存输入', () => {
+    const context = createRequestUsageContext({}, 'normal', 'p', 'claude-test');
+    for (const [ordinary, read, write] of [[3, 32746, 10], [13, 32746, 0], [0, 0, 4096], [10, 0, 0]]) {
+        const total = ordinary + read + write;
+        for (const usage of allUsageVariants(total, { cached_tokens: read, cache_write_tokens: write })) {
+            assert.equal(usage.input_tokens, ordinary);
+            assert.equal(usage.cache_read_input_tokens, read);
+            assert.equal(usage.cache_creation_input_tokens, write);
+            const summary = normalizeRequestUsage(context, {
+                inputTokens: usage.input_tokens, outputTokens: usage.output_tokens,
+                cacheReadInputTokens: usage.cache_read_input_tokens,
+                cacheCreationInputTokens: usage.cache_creation_input_tokens
+            }, 'completed');
+            assert.equal(summary.totalInputTokens, total);
+            assert.equal(summary.cacheCreationInputTokens, write);
+        }
+    }
+});
+
+/** 仅写入字段也可独立透传；非法值不转型，显式 0 优先于回退明细。 */
+test('缓存写入独立存在、别名优先级和缺失值均正确处理', () => {
+    for (const usage of allUsageVariants(20, { cache_write_tokens: 13 })) {
+        assert.equal(usage.input_tokens, 7);
+        assert.equal(usage.cache_creation_input_tokens, 13);
+        assert.equal(usage.cache_read_input_tokens, undefined);
+    }
+    for (const usage of allUsageVariants(20, { cache_write_tokens: 13 }, { cache_write_tokens: 0 })) {
+        assert.equal(usage.input_tokens, 20);
+        assert.equal(usage.cache_creation_input_tokens, 0);
+    }
+    for (const alias of ['cache_write_tokens', 'cache_creation_input_tokens', 'cache_creation_tokens']) {
+        for (const usage of allUsageVariants(20, {}, { [alias]: 13 })) {
+            assert.equal(usage.input_tokens, 7);
+            assert.equal(usage.cache_creation_input_tokens, 13);
+        }
+    }
+    for (const invalid of [-1, 1.5, '13', null, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+        for (const protocol of ['chat', 'responses'] as const) {
+            const source = protocol === 'chat'
+                ? { prompt_tokens: 20, prompt_tokens_details: { cache_write_tokens: invalid } }
+                : { input_tokens: 20, input_tokens_details: { cache_write_tokens: invalid } };
+            const result = normalizeOpenAIUsage(source, protocol);
+            assert.equal(result.inputTokens, 20);
+            assert.equal(result.cacheWriteTokens, undefined);
+        }
+    }
+});
+
+/** 明细异常大于总输入时限制读写之和，不允许负输入或膨胀命中率分母。 */
+test('缓存读写超出总输入时保持总量守恒', () => {
+    for (const usage of allUsageVariants(10, { cached_tokens: 8, cache_write_tokens: 9 })) {
+        assert.equal(usage.input_tokens, 0);
+        assert.equal(usage.cache_read_input_tokens, 8);
+        assert.equal(usage.cache_creation_input_tokens, 2);
+    }
+});
+
+/** usage 晚于 finish_reason 到达时缓存写入仍必须出现在终态中。 */
+test('Chat 晚到的缓存写入不会在 finish_reason 后丢失', () => {
+    const converter = new OpenAIChatToAnthropicStreamConverter();
+    let out = converter.feed(sse({ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }));
+    out += converter.feed(sse({ choices: [], usage: {
+        prompt_tokens: 32759, completion_tokens: 3, prompt_tokens_details: { cached_tokens: 32746, cache_write_tokens: 10 }
+    } }));
+    out += converter.feed('data: [DONE]\n\n') + converter.end();
+    const events = out.split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)));
+    const usage = events.find(event => event.type === 'message_delta').usage;
+    assert.equal(usage.input_tokens, 3);
+    assert.equal(usage.cache_read_input_tokens, 32746);
+    assert.equal(usage.cache_creation_input_tokens, 10);
+    assert.equal(usage.output_tokens, 3);
 });
 
 /** 复现标题有缓存读取却缺少命中率，覆盖两种 OpenAI 协议的 JSON/SSE 输出。 */

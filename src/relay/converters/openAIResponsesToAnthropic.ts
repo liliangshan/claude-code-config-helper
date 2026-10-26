@@ -4,7 +4,7 @@ import type { ModelReasoningMode } from '../../types';
 
 import type { ResponsesConversionWarning } from './anthropicToOpenAIResponses';
 import { formatAnthropicSseError } from './openAIErrorToAnthropic';
-import { readCachedTokens } from './openAIChatToAnthropic';
+import { anthropicCacheFields, normalizeOpenAIUsage } from './openAIUsage';
 
 /** Anthropic content block。 */
 type AnthropicContentBlock =
@@ -36,7 +36,7 @@ export interface AnthropicResponsesMessageResponse {
         output_tokens: number;
         /** 命中缓存的输入 token 数；上游未返回该字段时不下发。 */
         cache_read_input_tokens?: number;
-        /** OpenAI 输入已包含所有非缓存读取 token，无额外缓存写入项。 */
+        /** 已包含在 OpenAI 总输入中的缓存写入，由扩充明细还原；缺失时不推测。 */
         cache_creation_input_tokens?: number;
     };
 }
@@ -115,10 +115,12 @@ interface OpenAIResponsesToAnthropicState {
     textParts: Map<string, ResponsesTextPartState>;
     /** 下一个 Anthropic content block index。 */
     nextBlockIndex: number;
-    /** 输入 token 数（已扣除缓存命中部分）。 */
+    /** 输入 token 数（已扣除缓存读写）。 */
     inputTokens: number;
     /** 命中缓存的输入 token 数；上游未返回时为 undefined。 */
     cacheReadTokens?: number;
+    /** 网关扩充明细中的缓存写入；与读取独立保存。 */
+    cacheWriteTokens?: number;
     /** 输出 token 数。 */
     outputTokens: number;
     /** Responses status。 */
@@ -775,7 +777,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
     }
 
     /**
-     * 读取 response 元信息，包括 id/model/usage/status。
+     * 读取 response 元信息，缓存读写与 JSON 共用含总输入约束的归一化。
      *
      * @param response Responses response 对象。
      */
@@ -786,15 +788,16 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         if (response.incomplete_details !== undefined) this.state.incompleteDetails = response.incomplete_details;
         const usage = isRecord(response.usage) ? response.usage : undefined;
         if (usage) {
-            const normalizedUsage = normalizeResponsesUsage(usage);
+            const normalizedUsage = normalizeOpenAIUsage(usage, 'responses');
             this.state.inputTokens = normalizedUsage.inputTokens;
             this.state.cacheReadTokens = normalizedUsage.cacheReadTokens;
+            this.state.cacheWriteTokens = normalizedUsage.cacheWriteTokens;
             this.state.outputTokens = normalizedUsage.outputTokens;
         }
     }
 
     /**
-     * 确保已输出 Anthropic message_start。
+     * 确保已输出 Anthropic message_start，缓存读写分别按已知计数发送。
      *
      * @returns 可能产生的 message_start SSE 文本。
      */
@@ -814,9 +817,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
                 usage: {
                     input_tokens: this.state.inputTokens,
                     output_tokens: 0,
-                    ...(this.state.cacheReadTokens === undefined
-                        ? {}
-                        : { cache_read_input_tokens: this.state.cacheReadTokens, cache_creation_input_tokens: 0 })
+                    ...anthropicCacheFields(this.state)
                 }
             }
         });
@@ -946,7 +947,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
     }
 
     /**
-     * 如尚未完成则关闭所有 block 并输出 message_delta/message_stop。
+     * 如尚未完成则关闭所有 block，输出带真实缓存读写明细的 message_delta/message_stop。
      *
      * @param source 触发收尾的来源。
      * @returns Anthropic SSE 文本。
@@ -962,9 +963,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
             usage: {
                 input_tokens: this.state.inputTokens,
                 output_tokens: this.state.outputTokens,
-                ...(this.state.cacheReadTokens === undefined
-                    ? {}
-                    : { cache_read_input_tokens: this.state.cacheReadTokens, cache_creation_input_tokens: 0 })
+                ...anthropicCacheFields(this.state)
             }
         });
         out += formatAnthropicSse('message_stop', { type: 'message_stop' });
@@ -1309,59 +1308,17 @@ function ensureFilteredPlaceholder(source: Record<string, unknown>, content: Ant
 }
 
 /**
- * 转换 Responses usage；缓存写入无额外输入项，已知缓存读取时按 0 映射。
- * input_tokens + cache_read_input_tokens 即 OpenAI 总输入，不重复添加缓存写入。
- *
+ * 转换 Responses usage，缓存写入从扩充明细还原，普通输入扣除读写各一次。
  * @param usage Responses usage 字段。
- * @returns Anthropic usage。
+ * @returns 与 SSE 相同口径的 Anthropic usage。
  */
 function convertUsage(usage: unknown): AnthropicResponsesMessageResponse['usage'] {
-    const normalized = normalizeResponsesUsage(usage);
+    const normalized = normalizeOpenAIUsage(usage, 'responses');
     return {
         input_tokens: normalized.inputTokens,
         output_tokens: normalized.outputTokens,
-        ...(normalized.cacheReadTokens === undefined
-            ? {}
-            : { cache_read_input_tokens: normalized.cacheReadTokens, cache_creation_input_tokens: 0 })
+        ...anthropicCacheFields(normalized)
     };
-}
-
-/** Responses usage 的统一非负归一化结果。 */
-interface NormalizedResponsesUsage {
-    /** 已扣除缓存读且不小于 0 的输入 token。 */
-    inputTokens: number;
-    /** 输出 token。 */
-    outputTokens: number;
-    /** 经总输入上限约束的缓存读 token。 */
-    cacheReadTokens?: number;
-}
-
-/**
- * 统一归一化 JSON 与 response.completed 的 Responses usage。
- *
- * input_tokens 含 cached_tokens；明细异常大于总输入时钳制到总输入。由于没有
- * cache_write_tokens 非零样本及其包含关系证据，当前不映射也不参与扣减。
- *
- * @param usage Responses usage 字段。
- * @returns 可安全映射到 Anthropic 的 token 统计。
- */
-function normalizeResponsesUsage(usage: unknown): NormalizedResponsesUsage {
-    const source = isRecord(usage) ? usage : {};
-    const totalInput = readNonNegativeNumber(source.input_tokens);
-    const cached = readCachedTokens(source, 'input_tokens_details');
-    const cacheReadTokens = cached === undefined
-        ? undefined
-        : Math.min(readNonNegativeNumber(cached), totalInput);
-    return {
-        inputTokens: Math.max(0, totalInput - (cacheReadTokens ?? 0)),
-        outputTokens: readNonNegativeNumber(source.output_tokens),
-        cacheReadTokens
-    };
-}
-
-/** 安全读取有限非负数字；非法值返回 0。 */
-function readNonNegativeNumber(value: unknown): number {
-    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
 /**

@@ -68,3 +68,11 @@ test('不支持范围或旧 CLI 不声称托管成功，不扩大用户窗口', 
     assert.equal(buildNativeCompactionPolicy('m', 200000, true, {}).policy.status, 'unsupported');
     assert.equal(buildNativeCompactionPolicy('m', 200000, true, {}, ['autoCompactEnabled'], '2.1.280').policy.status, 'conflict');
 });
+
+test('版本识别兼容 v 和前置提示；303 通过，旧版和无关版本拒绝', () => {
+    for (const version of ['2.1.303', 'v2.1.303', '2.1.303 (Claude Code)', 'Claude Code 2.1.303', 'Claude Code version: v2.1.303', '启动提示\n2.1.303 (Claude Code)', '\x1b[32mv2.1.303\x1b[0m']) assert.equal(supportsNativeCompaction(version), true, version);
+    for (const version of ['v2.1.279', 'node v24.1.0', 'warning: dependency 3.2.1', '2.1.303-beta.1', '2.1.303\n2.1.279', '12.1.3030garbage']) assert.equal(supportsNativeCompaction(version), false, version);
+    assert.equal(buildNativeCompactionPolicy('m', 200000, true, {}, [], 'v2.1.279').policy.unsupportedReason, 'version_old');
+    assert.equal(buildNativeCompactionPolicy('m', 200000, true, {}, [], 'unrecognized').policy.unsupportedReason, 'version_unknown');
+    assert.equal(buildNativeCompactionPolicy('m', 1048576, true, {}, [], '2.1.303').policy.unsupportedReason, 'window');
+});

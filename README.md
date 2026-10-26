@@ -1,6 +1,6 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.72
+**Version:** 3.2.74
 
 Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
 
@@ -11,6 +11,18 @@ When the Responses stream converter detects malformed tool arguments, it automat
 Files share the existing 20-snapshot error retention limit across date directories. Detection compares the upstream final arguments with the actual emitted argument fragments, including `__unparsedToolInput` wrappers and late fragments. The recorder also retains up to eight recent tool responses in memory (64 MiB total) to correlate a subsequent CLI `InputValidationError` by call ID. If the original response has expired or the extension was reloaded, the fallback file explicitly marks `originalResponseUnavailable`; it never substitutes an unrelated response.
 
 Request bodies, URLs and authentication headers are not included in these diagnostics, but **raw model responses and tool arguments can contain sensitive content**; review them before sharing. Token limits remain unchanged, and arguments are never repaired by guessing missing JSON characters.
+
+## What's New in 3.2.74
+
+- **Accurate cache-write accounting.** Chat and Responses JSON/SSE responses share one normalizer. Gateway-provided cache writes are displayed separately from ordinary input, with ordinary input + cache reads + cache writes matching total input. Root-level write aliases take precedence over detail fields, including explicit zero; invalid counts are ignored and oversized details cannot inflate totals.
+- **Late usage preserved.** Cache-write details arriving after Chat `finish_reason` remain available in the final usage event. Missing write details keep the existing read-cache compatibility behavior; no cache writes are inferred without evidence.
+- **Previous test-package fixes included.** Retains removal of the local 10 MiB Relay request limit, portable CLI version detection and actionable compatibility notices. The independently diagnosed duplicate-response-ID usage-display problem is not fixed by cache accounting changes.
+
+## What's New in 3.2.73
+
+- **Large-context Relay requests.** Removed the local 10 MiB chat/compaction request-body limit that could terminate long-session requests and cause CLI retries. Request bytes are preserved across chunks; interrupted reads release buffers without reporting a false size error. Host memory, Node runtime and upstream/model limits still apply. Image-upload and MCP limits are unchanged.
+- **Portable CLI version detection.** Stable versions such as `v2.1.303` and `Claude Code 2.1.303`, startup notices and ANSI colors are recognized. Windows script probes use CMD or PowerShell as appropriate, with the configured environment and working directory. Failed probes are not cached; the detection timeout is 15 seconds.
+- **Actionable compatibility notices.** Deduplicated notifications distinguish an old CLI, failed detection and an unsupported context window, showing the actual executable path with recheck/selection actions. Changes continue to use the safe restart flow without interrupting an active task. Windows command construction is covered by tests; real Windows-machine acceptance remains pending.
 
 ## What's New in 3.2.72
 

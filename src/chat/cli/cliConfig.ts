@@ -181,7 +181,7 @@ export class ChatCliConfigService {
         const inherited = { ...process.env, ...config.cliEnv };
         const enabled = vscode.workspace.getConfiguration(CONFIG_NAMESPACE).get<boolean>(AUTO_COMPACT_SETTING_KEY, false) === true;
         const [version, conflicts] = await Promise.all([
-            probeCliVersion(config.cliPath),
+            probeCliVersion(config.cliPath, { cwd: config.cwd, env: inherited }),
             probeNativeCompactionConflicts(config.cwd, inherited, config.cliArgs, resolveContextWindow(modelId, contextLength).contextLimit)
         ]);
         const native = buildNativeCompactionPolicy(modelId, contextLength, enabled, inherited, conflicts, version);

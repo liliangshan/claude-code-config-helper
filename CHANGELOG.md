@@ -2,6 +2,23 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.74] - 2026-10-22
+
+### Fixed
+
+- Chat and Responses now share usage normalization for JSON and SSE, preserving gateway-provided cache-write counts instead of folding them into ordinary input. Ordinary input plus cache reads and writes remains equal to the reported total input; invalid counts are ignored and excessive details are clamped.
+- Cache-write aliases at the usage root take priority over detail fields, including explicit zero values. Late Chat usage after finish_reason is preserved. Missing cache-write details retain the existing read-cache compatibility behavior.
+- Includes the 3.2.73 long-request and CLI-version compatibility fixes. The separate reused-response-ID usage-association issue remains unresolved; this release corrects cache accounting, not message identity binding.
+
+## [3.2.73] - 2026-10-22
+
+### Fixed
+
+- Removed the local Relay's fixed 10 MiB request-body limit for chat and native compaction. Large bodies are read intact without destroying the CLI connection; interrupted reads are reported as input errors, not misleading size-limit errors. Requests still require available host memory and remain subject to upstream/model limits; image-upload and MCP-specific limits are unchanged.
+- Native-compaction version checks accept stable `v2.1.303`, `Claude Code 2.1.303`, ANSI-colored output and startup notices while rejecting unrelated component versions and ambiguous/pre-release output. Versions above the 2.1.280 baseline remain supported.
+- Windows version probes dispatch `.cmd`/`.bat` through explicit quoted `cmd.exe` arguments and `.ps1` through PowerShell `-File`, without a generic shell or execution-policy bypass. Probes use the configured cwd/environment, allow 15 seconds, do not cache failures, and support explicit cache clearing.
+- Unsupported compaction produces a deduplicated notification distinguishing an old version, failed version detection and an out-of-range window. It shows the actual CLI path and offers rechecking or choosing another CLI; environment changes still wait for the existing safe restart flow.
+
 ## [3.2.72] - 2026-10-19
 
 ### Fixed

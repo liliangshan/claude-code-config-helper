@@ -862,6 +862,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      * `thinking_tokens` 是新版 CLI 在流式思考期间高频推送的 token 估算计数
      * （estimated_tokens / estimated_tokens_delta），每轮能刷出几十张
      * `System · thinking_tokens` 卡片，对用户没有可读价值，同样静默丢弃。
+     * `session_title_changed` 仅通知会话标题变化，切换/恢复时不展示为聊天内容。
      */
     private static readonly SYSTEM_TASK_EVENT_SUBTYPES: ReadonlySet<string> = new Set([
         'taskstarted',
@@ -872,6 +873,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         'task_progress',
         'compact_boundary',
         'thinking_tokens',
+        'session_title_changed',
     ]);
 
     private static readonly HIDDEN_CHAT_TOOL_NAMES: ReadonlySet<string> = new Set([

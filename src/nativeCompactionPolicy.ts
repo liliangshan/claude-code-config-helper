@@ -31,6 +31,8 @@ export interface NativeCompactionPolicy {
     status: 'managed' | 'disabled' | 'conflict' | 'unsupported';
     conflicts: string[];
     cliVersion?: string;
+    /** 不接管的明确原因，避免把探测失败误称为版本过低。 */
+    unsupportedReason?: 'version_unknown' | 'version_old' | 'window';
     /** 已选择摘要模型的容量偏小，仅提示，不自动改模型或扩大窗口。 */
     summaryContextLimit?: number;
 }
@@ -95,8 +97,10 @@ export function buildNativeCompactionPolicy(modelId: string, configured: unknown
         if (enabled && envFlagEnabled(inherited[key])) conflicts.push(key);
     }
     if (enabled) conflicts.push(...nativeConflicts);
-    const supported = window.contextLimit >= 100000 && window.contextLimit <= 1000000
-        && !!cliVersion && supportsNativeCompaction(cliVersion);
+    const unsupportedReason = !cliVersion || !parseCliVersion(cliVersion) ? 'version_unknown'
+        : !supportsNativeCompaction(cliVersion) ? 'version_old'
+            : window.contextLimit < 100000 || window.contextLimit > 1000000 ? 'window' : undefined;
+    const supported = unsupportedReason === undefined;
     const status = !enabled ? 'disabled' : conflicts.length ? 'conflict' : !supported ? 'unsupported' : 'managed';
     const env: Record<string, string> = status === 'managed' ? intended : {};
     // 关闭仅禁用自动压缩，不设置 DISABLE_COMPACT；每次从原始环境重建，重新开启不会继承本次值。
@@ -104,7 +108,7 @@ export function buildNativeCompactionPolicy(modelId: string, configured: unknown
         env.DISABLE_AUTO_COMPACT = '1';
         env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(window.contextLimit);
     }
-    return { policy: { ...window, enabled, percentage, estimatedThreshold: estimateCompactionThreshold(window.contextLimit, Number(inherited.CLAUDE_CODE_MAX_OUTPUT_TOKENS)), status, conflicts: [...new Set(conflicts)], cliVersion }, env };
+    return { policy: { ...window, enabled, percentage, estimatedThreshold: estimateCompactionThreshold(window.contextLimit, Number(inherited.CLAUDE_CODE_MAX_OUTPUT_TOKENS)), status, conflicts: [...new Set(conflicts)], cliVersion, ...(status === 'unsupported' ? { unsupportedReason } : {}) }, env };
 }
 
 /**
@@ -123,10 +127,28 @@ export function buildCliChildEnv(parent: NodeJS.ProcessEnv, overrides: Record<st
     return env;
 }
 
+/**
+ * 从 CLI 版本行解析稳定版本，兼容 v 前缀、Claude Code 标签和 ANSI 颜色。
+ * 不从任意警告中的 Node 等组件版本猜测 CLI 版本，不接管预发布版本。
+ * @param output --version 输出。
+ * @returns 规范化三段版本；无法唯一确认时未知。
+ */
+export function parseCliVersion(output: string): string | undefined {
+    const clean = output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+    const found = new Set<string>();
+    for (const raw of clean.split(/\r?\n/)) {
+        const line = raw.trim();
+        const match = /^(?:v)?(\d+\.\d+\.\d+)(?:\s*\(Claude Code\))?$/i.exec(line)
+            ?? /^Claude(?:\s+Code)?(?:\s+version)?\s*[:：]?\s+v?(\d+\.\d+\.\d+)$/i.exec(line);
+        if (match && match[1].split('.').every(value => Number.isSafeInteger(Number(value)))) found.add(match[1]);
+    }
+    return found.size === 1 ? [...found][0] : undefined;
+}
+
 /** 比较 CLI 版本是否满足已验证能力基线；@param version --version 输出。 */
 export function supportsNativeCompaction(version: string): boolean {
-    const match = /^(\d+)\.(\d+)\.(\d+)(?:\s|$)/.exec(version.trim());
-    if (!match) return false;
-    const [major, minor, patch] = match.slice(1).map(Number);
+    const parsed = parseCliVersion(version);
+    if (!parsed) return false;
+    const [major, minor, patch] = parsed.split('.').map(Number);
     return major > 2 || (major === 2 && (minor > 1 || (minor === 1 && patch >= 280)));
 }

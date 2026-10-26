@@ -71,6 +71,22 @@ function parseSingleStdoutLine(json: string) {
     return events;
 }
 
+test('session_title_changed 顶层事件静默过滤，不生成 System 卡片或结束回合', () => {
+    const events = parseSingleStdoutLine(JSON.stringify({ type: 'system', subtype: 'session_title_changed', title: '青山现用', uuid: '9c5f9ef0-8c3a-4a31-8630-b66037960977', session_id: 'c1a49706-4692-43d2-aeae-31204081bd04' }));
+    assert.equal(events.length, 1);
+    assert.deepEqual(events[0], { type: 'segments', segments: [], done: false });
+});
+
+test('嵌入文本的 session_title_changed 被剥离，保留正常正文', () => {
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    const internal = adapter as unknown as { stripEmbeddedSystemTaskEvents: (text: string) => { text: string; systemSegments: unknown[] } };
+    const event = JSON.stringify({ type: 'system', subtype: 'session_title_changed', title: '青山现用', session_id: 's1' });
+    const result = internal.stripEmbeddedSystemTaskEvents(`正文前\n${event}\n正文后`);
+    assert.equal(result.text, '正文前\n正文后');
+    assert.deepEqual(result.systemSegments, []);
+    adapter.dispose();
+});
+
 test('parseSystemTaskEvent 丢弃 taskstarted 紧凑写法', () => {
     const events = parseSingleStdoutLine(JSON.stringify({ type: 'system', subtype: 'taskstarted', payload: { id: 't1' } }));
     assert.equal(events.length, 1);

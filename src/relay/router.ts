@@ -36,9 +36,7 @@ import type { UpstreamTimeoutKind } from './upstreamTimeouts';
 /** Claude Code 当前转发的目标路径。 */
 const RELAY_PATH = '/v1/messages';
 
-/** 转发请求体读取上限，避免恶意大包占用内存（10 MiB）。 */
 import { RequestOutcomeReporter, type RelayRequestOutcome } from './requestOutcome';
-const MAX_BODY_BYTES = 10 * 1024 * 1024;
 
 /**
  * 上游适配器拿到的上下文。
@@ -178,34 +176,57 @@ export function parseModelField(body: unknown): { providerId: string; modelId: s
 }
 
 /**
- * 读取完整请求体（带大小上限）。
- *
+ * 读取完整请求体，不设置本地字节上限；长上下文由模型容量与上游接口约束。
+ * 请求仍在内存中聚合，实际受 Node 字符串长度和宿主可用内存约束。
  * @param req 原始 HTTP 请求。
- * @returns utf-8 解码后的请求体字符串。
- * @throws 当请求体超过 {@link MAX_BODY_BYTES} 时抛出。
+ * @returns 完整 UTF-8 请求文本，网络分片不单独解码。
+ * @throws 请求中断、流错误或内存聚合失败时拒绝。
  */
 export function readRequestBody(req: http.IncomingMessage): Promise<string> {
     return new Promise<string>((resolve, reject) => {
         const chunks: Buffer[] = [];
-        let total = 0;
-        req.on('data', (chunk: Buffer | string) => {
-            const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
-            total += buf.length;
-            if (total > MAX_BODY_BYTES) {
-                reject(new Error(`请求体过大，超过 ${MAX_BODY_BYTES} 字节限制`));
-                req.destroy();
-                return;
-            }
-            chunks.push(buf);
-        });
-        req.on('end', () => {
+        let settled = false;
+        /** 成功或失败后解绑监听并释放原始分片引用。 */
+        const cleanup = () => {
+            req.off('data', onData);
+            req.off('end', onEnd);
+            // aborted 后 Node 可能继续发 ECONNRESET，保留一次错误监听防止未捕获异常。
+            req.off('aborted', onAborted);
+            req.off('close', onClose);
+            chunks.length = 0;
+        };
+        /** 只结算一次失败，不主动销毁正常长请求。 */
+        const onError = (error: Error) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+        };
+        /** 原始字节累积，中文或 emoji 跨网络分片不会被破坏。 */
+        const onData = (chunk: Buffer | string) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        };
+        /** 收到完整请求后统一解码并释放缓冲。 */
+        const onEnd = () => {
+            if (settled) return;
             try {
-                resolve(Buffer.concat(chunks).toString('utf-8'));
-            } catch (err) {
-                reject(err instanceof Error ? err : new Error(String(err)));
+                const body = Buffer.concat(chunks).toString('utf8');
+                settled = true;
+                cleanup();
+                resolve(body);
+            } catch (error) {
+                onError(error instanceof Error ? error : new Error(String(error)));
             }
-        });
-        req.on('error', (err) => reject(err));
+        };
+        /** 客户端提前取消必须释放等待，不作为请求过大处理。 */
+        const onAborted = () => onError(new Error('请求体读取中断'));
+        /** 兼容仅发 close 的提前断开。 */
+        const onClose = () => { if (!settled) onAborted(); };
+        req.on('data', onData);
+        req.once('end', onEnd);
+        req.on('error', onError);
+        req.once('aborted', onAborted);
+        req.once('close', onClose);
     });
 }
 
@@ -384,7 +405,8 @@ export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
             rawBody = await readRequestBody(req);
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            writeJsonError(res, 413, 'request_too_large', message);
+            Logger.warn(`Relay 请求体读取失败：${message}`);
+            if (!res.destroyed && !res.writableEnded) writeJsonError(res, 400, 'invalid_request_error', message);
             return;
         }
 

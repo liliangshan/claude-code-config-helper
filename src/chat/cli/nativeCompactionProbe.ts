@@ -1,32 +1,65 @@
 /** @file 只读探测选定 CLI 的版本和原生压缩配置，不写全局设置。 */
 import { execFile } from 'child_process';
+import { createHash } from 'node:crypto';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { NATIVE_COMPACTION_ENV_KEYS } from '../../nativeCompactionPolicy';
+import { NATIVE_COMPACTION_ENV_KEYS, parseCliVersion } from '../../nativeCompactionPolicy';
 
-/** 可执行文件版本缓存按路径、mtime、大小区分，升级后自动失效。 */
-const versions = new Map<string, Promise<string | undefined>>();
+/** 同一文件/环境的并发探测合并；失败不缓存，成功仅缓存一分钟。 */
+const versions = new Map<string, { result: Promise<string | undefined>; expires: number }>();
+
+/** 清除版本缓存供用户显式重新检测，不修改 CLI 文件。 */
+export function clearCliVersionCache(): void { versions.clear(); }
 
 /**
- * 对实际选定文件执行 --version，避免误用 PATH 中的另一份 CLI。
- * @param cliPath 启动文件路径。
- * @returns 版本输出；探测失败时未知，不阻塞手动压缩。
+ * 构造跨平台版本探测入口；Windows 脚本不直接交给 execFile。
+ * @param cliPath 用户实际选择的 CLI 路径。
+ * @param platform 探测平台，允许纯测试注入。
+ * @param env 与启动一致的环境。
+ * @returns 可执行文件及参数；cmd 无法安全引用的路径拒绝而非拼接执行。
  */
-export async function probeCliVersion(cliPath: string): Promise<string | undefined> {
-    if (!cliPath) return undefined;
-    const stat = await fs.stat(cliPath).catch(() => undefined);
-    const key = `${cliPath}:${stat?.mtimeMs}:${stat?.size}`;
-    let value = versions.get(key);
-    if (!value) {
-        value = new Promise(resolve => {
-            execFile(cliPath, ['--version'], { timeout: 5000, maxBuffer: 4096, windowsHide: true }, (error, stdout) => {
-                resolve(error ? undefined : stdout.trim());
-            });
-        });
-        versions.set(key, value);
+export function buildCliVersionCommand(cliPath: string, platform: NodeJS.Platform, env: NodeJS.ProcessEnv): { file: string; args: string[]; windowsVerbatimArguments?: boolean } {
+    const ext = path.win32.extname(cliPath).toLowerCase();
+    if (platform === 'win32' && ['.cmd', '.bat'].includes(ext)) {
+        if (/["%\r\n\0]/.test(cliPath)) throw new Error('unsupported_cmd_path');
+        return { file: env.ComSpec || env.COMSPEC || 'cmd.exe', args: ['/d', '/s', '/v:off', '/c', `""${cliPath}" --version"`], windowsVerbatimArguments: true };
     }
-    return value;
+    if (platform === 'win32' && ext === '.ps1') {
+        return { file: 'powershell.exe', args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-File', cliPath, '--version'] };
+    }
+    return { file: cliPath, args: ['--version'] };
+}
+
+/**
+ * 对实际文件执行 --version，使用与 CLI 启动一致的 cwd/env。
+ * @param cliPath 启动文件路径。
+ * @param options 工作目录和原始用户环境；不含鉴权日志。
+ * @returns 规范化版本；失败不缓存，不以 Node 等组件版本代替。
+ */
+export async function probeCliVersion(cliPath: string, options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<string | undefined> {
+    if (!cliPath) return undefined;
+    const env = options.env ?? process.env;
+    const stat = await fs.stat(cliPath).catch(() => undefined);
+    // 环境仅用于内存缓存身份，不写日志或磁盘。
+    const key = createHash('sha256').update(JSON.stringify([cliPath, stat?.mtimeMs, stat?.size, options.cwd, Object.entries(env).sort(([a], [b]) => a.localeCompare(b))])).digest('hex');
+    const existing = versions.get(key);
+    if (existing && existing.expires > Date.now()) return existing.result;
+    for (const [cachedKey, entry] of versions) if (entry.expires <= Date.now()) versions.delete(cachedKey);
+    if (versions.size >= 32) versions.delete(versions.keys().next().value!);
+    const result = new Promise<string | undefined>(resolve => {
+        try {
+            const command = buildCliVersionCommand(cliPath, process.platform, env);
+            execFile(command.file, command.args, { cwd: options.cwd, env, timeout: 15000, maxBuffer: 65536, windowsHide: true, windowsVerbatimArguments: command.windowsVerbatimArguments }, (error, stdout, stderr) => {
+                resolve(error ? undefined : parseCliVersion(stdout) ?? parseCliVersion(stderr));
+            });
+        } catch { resolve(undefined); }
+    });
+    const entry = { result, expires: Date.now() + 60000 };
+    versions.set(key, entry);
+    const version = await result;
+    if (!version && versions.get(key) === entry) versions.delete(key);
+    return version;
 }
 
 /**
