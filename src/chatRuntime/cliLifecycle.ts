@@ -6,6 +6,7 @@
  * {@link configureCliLifecycle} 注入的回调完成，避免形成循环 import。
  */
 import * as vscode from 'vscode';
+import { isCliUpdateInProgress } from '../setup/gate';
 import { StreamJsonCliAdapter, type ParsedCliEvent } from '../chat/cli/cliAdapter';
 import { getRecoveryAdapterIdentity, bindRecoveryAdapter, requestRecoveryController } from './selfHealing';
 import type { RecoveryContext, RecoveryIdentity } from './requestRecovery';
@@ -108,7 +109,7 @@ function showNativeCompactionNotice(config: ChatCliConfig): void {
 /** 判断当前实例能否安全应用环境变更；HTTP 工具间隙不算整轮空闲。 */
 function canApplyNativePolicy(): boolean {
     const recoveryState = requestRecoveryController.getSnapshot()?.state;
-    return !isAnyRouteBusy() && !pendingAskUserRequests.size
+    return !isCliUpdateInProgress() && !isAnyRouteBusy() && !pendingAskUserRequests.size
         && !['native_retry', 'waiting_recovery', 'recovering'].includes(recoveryState || '')
         && !deps?.getCompactionService?.()?.isCompactionInFlight(getSessionIdForRoute('normal'));
 }
@@ -369,10 +370,43 @@ export async function startChatCliFromCurrentConfig(options: { forceRestart?: bo
  * @throws Chat CLI 组件未初始化时抛出错误。
  */
 export async function startChatCliPair(options: { forceRestart?: boolean } = {}): Promise<void> {
-    const run = cliStartQueue.then(() => performStartChatCliPair(options));
+    if (!await (await import('../setup/gate')).requireSetup()) throw new Error('请先完成扩展安装引导 / Complete extension setup first');
+    const run = cliStartQueue.then(() => {
+        if (isCliUpdateInProgress()) throw new Error('CLI update in progress');
+        return performStartChatCliPair(options);
+    });
     // 失败只交给本次调用方；队列自身恢复为空闲态，避免一次失败毒化后续启动。
     cliStartQueue = run.catch(() => undefined);
     return run;
+}
+
+/** Drain previously admitted startup and stop the sidebar without permitting automatic task replay.
+ * @returns Whether a live sidebar was stopped and must be restored by the update coordinator.
+ * @throws If the old process cannot be confirmed stopped; the caller must not replace it.
+ */
+export async function prepareSidebarCliUpdate(): Promise<boolean> {
+    await cliStartQueue;
+    if (!routes.normal.process?.isRunning()) return false;
+    chatCliCancelState.requested = true;
+    requireDeps().cancelPendingResend('CLI update');
+    requireDeps().clearHttpExpectation('CLI update');
+    routes.normal.adapterSubscription?.dispose();
+    routes.normal.adapter?.dispose(); routes.normal.adapter = undefined;
+    pendingAskUserRequests.clear();
+    await routes.normal.process.stop();
+    resetAllRouteBusy();
+    await requireDeps().finishActiveAssistantMessage();
+    return true;
+}
+
+/** Restart an already-owned sidebar process after a user-approved managed CLI update.
+ * The caller blocks new admissions and has already validated the replacement executable.
+ */
+export async function restartSidebarAfterCliUpdate(): Promise<void> {
+    chatCliCancelState.requested = false;
+    const run = cliStartQueue.then(() => performStartChatCliPair({ forceRestart: true }));
+    cliStartQueue = run.catch(() => undefined);
+    await run;
 }
 
 /**

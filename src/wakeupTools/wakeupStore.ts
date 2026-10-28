@@ -84,6 +84,8 @@ function isValidJob(raw: unknown): raw is WakeupJob {
 
 /** 按 `.LLSOAI/wakeups.json` 读写定时唤醒任务列表。 */
 export class WakeupStore {
+    /** @param explicitFile Optional editor-owned store; legacy paths remain unchanged when omitted. */
+    public constructor(private readonly explicitFile?: string) {}
     /**
      * 写操作串行化队列。
      *
@@ -193,6 +195,7 @@ export class WakeupStore {
      * @returns 文件绝对路径。
      */
     private async resolveFilePath(): Promise<string> {
+        if (this.explicitFile) { await fs.mkdir(path.dirname(this.explicitFile), { recursive: true }); return this.explicitFile; }
         const dir = path.join(this.resolveRoot(), STORE_DIR_NAME);
         await fs.mkdir(dir, { recursive: true });
         return path.join(dir, STORE_FILE_NAME);

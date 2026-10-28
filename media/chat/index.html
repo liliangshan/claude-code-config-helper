@@ -12,25 +12,18 @@
         <header class="chat-header">
             <div class="chat-header__main">
                 <h1 data-role="session-title" data-default-title="LLS CLAUDE CHAT">LLS CLAUDE CHAT</h1>
-                <p data-role="cli-status" data-i18n="statusInitializing">Initializing…</p>
-                <div class="chat-models" data-role="models-bar">
-                    <span class="chat-models__item">
-                        <span class="chat-models__label" data-i18n="modelsBarNormal">Normal:</span>
-                        <span class="chat-models__name" data-role="normal-model-name">—</span>
-                    </span>
-                    <span class="chat-models__sep">·</span>
-                    <span class="chat-models__item">
-                        <span class="chat-models__label" data-i18n="modelsBarTaskFlow">Task flow:</span>
-                        <span class="chat-models__name" data-role="taskflow-model-name">—</span>
-                    </span>
-                    <button type="button" class="chat-models__edit" data-role="open-model-picker"
-                            data-i18n-title="openModelPicker" title="Choose models">⚙</button>
-                </div>
             </div>
-            <div class="chat-actions">
-                <button type="button" data-role="open-sessions" data-i18n="sessions" data-i18n-title="sessionsTitle" title="Past conversations">Sessions</button>
-                <button type="button" data-role="new-session" data-i18n="newSession" data-i18n-title="newSessionTitle" title="Start a new conversation">New chat</button>
-                <button type="button" data-role="restart-cli" data-i18n="restart" data-i18n-title="restartTitle" title="Restart CLI">Restart</button>
+            <div class="chat-actions-row">
+                <div class="chat-actions chat-actions--primary">
+                    <button type="button" class="sidebar-only" data-role="extension-settings" data-i18n="extensionSettings" title="Extension settings">Settings</button>
+                </div>
+                <div class="chat-actions chat-actions--sessions">
+                    <button type="button" data-role="session-title-edit" data-i18n="sessionTitleEditAction" data-i18n-title="sessionTitleEditLabel" title="Edit conversation title">Edit title</button>
+                    <button type="button" data-role="restart-cli" data-i18n="restartCliLabel" data-i18n-title="restartCliTitle" title="Restart this conversation's relay and CLI, with progress shown in chat">Restart CLI</button>
+                    <button type="button" class="sidebar-only" data-role="editor-session-new" data-i18n="editorNew" data-i18n-title="editorNewTitle" title="Open the independent conversation on the left">＋ Parallel session</button>
+                    <button type="button" data-role="new-session" data-i18n="newSession" data-i18n-title="newSessionTitle" title="Start a new conversation">New chat</button>
+                    <button type="button" data-role="help-open" data-i18n="helpLabel" data-i18n-title="helpTitle" data-i18n-aria-label="helpTitle" title="Open the help website" aria-label="Open the help website">Help</button>
+                </div>
             </div>
         </header>
         <main class="chat-list" data-role="messages" aria-live="polite"></main>
@@ -166,18 +159,6 @@
             </footer>
         </div>
     </dialog>
-    <div class="session-panel" data-role="session-list" aria-hidden="true">
-        <div class="session-panel__backdrop" data-role="session-list-close"></div>
-        <div class="session-panel__drawer">
-            <header class="session-panel__header">
-                <h2 data-i18n="sessionsTitle">Past conversations</h2>
-                <button type="button" class="session-panel__close" data-role="session-list-close" aria-label="Close">×</button>
-            </header>
-            <div class="session-panel__content" data-role="session-list-content">
-                <p class="session-panel__empty" data-i18n="sessionsEmpty">No past conversations found.</p>
-            </div>
-        </div>
-    </div>
     <dialog class="task-restore cache-solution-dialog" data-role="cache-solution-dialog">
         <div class="task-restore__body">
             <header class="task-restore__header">
@@ -195,6 +176,7 @@
         </div>
     </dialog>
     <script nonce="{{nonce}}" src="{{cacheSolutionScriptUri}}"></script>
+    <script nonce="{{nonce}}" src="{{clipboardUri}}"></script>
     <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
 </body>
 </html>

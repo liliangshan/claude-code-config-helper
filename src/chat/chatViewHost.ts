@@ -16,11 +16,14 @@ type ChatWebviewTarget = { view: vscode.WebviewView; webview: vscode.Webview };
 /**
  * 管理右侧 Chat WebviewView 生命周期和扩展/Webview 消息收发。
  *
- * 该类优先把 Chat 放到 VS Code Secondary Sidebar，视觉位置与官方 Claude Code 类似；
+ * 会话标题显示在 VS Code 原生视图标题栏，编辑区独立聊天保留自己的页面标题；
  * 该类只负责视图创建、HTML 注入、postMessage 和 Webview 消息转发，
  * 不直接包含 CLI 协议、任务流注入或解析器业务逻辑。
  */
 export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposable {
+    private pendingSetupView?: vscode.WebviewView;
+    private pendingSetupMessages?: vscode.Disposable;
+    private pendingSetupVisibility?: vscode.Disposable;
     /** 当前已解析的 Chat Webview 宿主。 */
     private target: ChatWebviewTarget | undefined;
 
@@ -29,6 +32,9 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
 
     /** 最近一次用于初始化 Webview 的 CLI 路径。 */
     private cliPath = '';
+
+    /** Latest sidebar title and identity, retained when the view has not yet resolved. */
+    private sessionTitle = { title: '', sessionId: '' };
 
     /** 最近一次任务流状态消息，用于 Webview 延迟创建后补发顶部 Todo 卡片状态。 */
     private lastTaskFlowStatus: Extract<ExtensionToWebview, { type: 'taskFlow/status' }> | undefined;
@@ -63,11 +69,28 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
     public constructor(private readonly context: vscode.ExtensionContext) {}
 
     /**
-     * 解析 VS Code 创建的侧边栏 Chat WebviewView。
-     *
-     * @param webviewView VS Code 根据 package.json 贡献点创建的 WebviewView。
+     * Resolve the right chat and automatically activate the shared wizard when setup is incomplete.
+     * @param webviewView Host-created right-side view; no CLI is started before the setup gate succeeds.
      */
     public async resolveWebviewView(webviewView: vscode.WebviewView): Promise<void> {
+        this.releaseSetupPlaceholder();
+        if (!await (await import('../setup/gate')).requireSetup()) {
+            const nonce = this.createNonce();
+            webviewView.webview.options = { enableScripts: true };
+            webviewView.webview.html = `<html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'"></head><body><p>请先完成安装配置 / Complete setup first</p><button id="setup">打开引导 / Open setup</button><script nonce="${nonce}">const api=acquireVsCodeApi();document.getElementById('setup').onclick=()=>api.postMessage({type:'setup/open'});</script></body></html>`;
+            this.pendingSetupMessages = webviewView.webview.onDidReceiveMessage(message => { if (message?.type === 'setup/open') void vscode.commands.executeCommand('claudeRouter.setup.open'); });
+            this.pendingSetupVisibility = webviewView.onDidChangeVisibility?.(() => {
+                if (webviewView.visible && this.pendingSetupView === webviewView) {
+                    void (async () => {
+                        const setup = (await import('../setup/entry')).getSetupController();
+                        if (setup && !setup.completed()) await setup.show();
+                    })().catch(error => Logger.warn(`打开安装引导失败：${String(error)}`));
+                }
+            });
+            this.pendingSetupView = webviewView;
+            webviewView.onDidDispose(() => { if (this.pendingSetupView === webviewView) this.releaseSetupPlaceholder(); });
+            return;
+        }
         webviewView.webview.options = {
             enableScripts: true,
             localResourceRoots: [
@@ -76,8 +99,16 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
             ]
         };
         this.target = { view: webviewView, webview: webviewView.webview };
+        this.updateNativeTitle();
         webviewView.webview.html = await this.buildHtml(webviewView.webview);
         webviewView.webview.onDidReceiveMessage((message: WebviewToExtension | Record<string, unknown>) => {
+            if (message.type === 'leftSessions/show' || message.type === 'leftSessions/list' || message.type === 'editorSession/new' || message.type === 'editorSession/list') {
+                void vscode.commands.executeCommand('claudeRouter.chat.openParallelSessions'); return;
+            }
+            if (message.type === 'clipboard/write') {
+                void this.writeClipboard(webviewView.webview, message as Record<string, unknown>);
+                return;
+            }
             // React 前端发送的消息类型可能不匹配 WebviewToExtension 协议，
             // 这里透传给上层处理，上层会忽略未知类型
             this.messageEmitter.fire(message as WebviewToExtension);
@@ -94,7 +125,7 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
     }
 
     /**
-     * 打开或聚焦右侧 Chat 侧边栏。
+     * 打开或聚焦默认右侧主聊天；保留用户手动调整后的视图位置。
      *
      * @param initialMessages 初始会话消息列表。
      * @param cliPath 当前 CLI 路径，用于显示状态栏提示。
@@ -102,6 +133,7 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
     public async open(initialMessages: ChatMessage[], cliPath: string): Promise<void> {
         this.initialMessages = initialMessages;
         this.cliPath = cliPath;
+        if (this.pendingSetupView) await this.resolveWebviewView(this.pendingSetupView);
         if (this.target) {
             this.target.view.show(false);
             await this.postMessage({ type: 'session/init', messages: initialMessages, cliPath });
@@ -111,6 +143,42 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
         await this.revealSidebarView();
         await this.postMessage({ type: 'session/init', messages: initialMessages, cliPath });
         await this.postLastTaskFlowStatus();
+    }
+
+    /** Reveal the existing main view only when hidden; do not restart CLI, reset history or steal settings focus. */
+    public async ensureVisible(preserveFocus = true): Promise<void> {
+        const view = this.target?.view ?? this.pendingSetupView;
+        if (view) {
+            if (!view.visible) view.show(preserveFocus);
+            return;
+        }
+        await vscode.commands.executeCommand(`${CHAT_SECONDARY_VIEW_ID}.focus`, { preserveFocus });
+    }
+
+    /** Return the full current title and identity for the native title-bar rename action. */
+    public getSessionTitle(): { title: string; sessionId: string } { return { ...this.sessionTitle }; }
+
+    /** Display the current conversation in the native VS Code title bar, with a stable untitled fallback. */
+    private updateNativeTitle(): void {
+        if (!this.target) return;
+        this.target.view.title = this.sessionTitle.title.trim() || 'LLS CLAUDE CHAT';
+    }
+
+    /**
+     * Write explicitly requested text using the host clipboard and acknowledge the real outcome.
+     * Clipboard content is never logged; replies go to the originating Webview only.
+     * @param webview Originating chat view.
+     * @param message Untrusted Webview request with an opaque request identifier.
+     */
+    private async writeClipboard(webview: vscode.Webview, message: Record<string, unknown>): Promise<void> {
+        if (typeof message.requestId !== 'string' || message.requestId.length > 100) return;
+        let ok = false;
+        if (typeof message.text === 'string' && message.text.length <= 10 * 1024 * 1024) {
+            try { await vscode.env.clipboard.writeText(message.text); ok = true; }
+            catch { /* Report failure without exposing selected text. */ }
+        }
+        try { await webview.postMessage({ type: 'from-extension', message: { type: 'clipboard/result', requestId: message.requestId, ok } }); }
+        catch { /* A disposed originating view needs no reply. */ }
     }
 
     /**
@@ -132,6 +200,14 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
      * @returns Webview 不存在时返回 false，否则返回 postMessage 结果。
      */
     public async postMessage(message: ExtensionToWebview): Promise<boolean> {
+        if (message.type === 'session/init') {
+            this.initialMessages = message.messages;
+            this.cliPath = message.cliPath;
+        }
+        if (message.type === 'session/title') {
+            this.sessionTitle = { title: message.title, sessionId: message.sessionId };
+            this.updateNativeTitle();
+        }
         if (message.type === 'taskFlow/status') {
             this.lastTaskFlowStatus = message;
         }
@@ -152,10 +228,18 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
         }
     }
 
+    /** Release only the setup placeholder subscriptions before chat rebinds the same right-side view. */
+    private releaseSetupPlaceholder(): void {
+        this.pendingSetupMessages?.dispose(); this.pendingSetupMessages = undefined;
+        this.pendingSetupVisibility?.dispose(); this.pendingSetupVisibility = undefined;
+        this.pendingSetupView = undefined;
+    }
+
     /**
      * 释放 WebviewPanel 与事件资源。
      */
     public dispose(): void {
+        this.releaseSetupPlaceholder();
         this.flushPatchQueue();
         if (this.patchFlushTimer) clearTimeout(this.patchFlushTimer);
         this.patchFlushTimer = undefined;
@@ -164,10 +248,9 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
     }
 
     /**
-     * 按官方 Claude Code 的方式优先打开 Secondary Sidebar 中的 Chat 视图。
+     * 打开右侧 Secondary Sidebar 容器中的主聊天视图。
      *
-     * VS Code 会在执行容器打开命令后按需调用 resolveWebviewView。这里不再注册
-     * Activity Bar 兜底视图，避免 Chat 图标出现在左侧活动栏。
+     * VS Code 按需解析唯一的主聊天视图；既有视图 ID 保持不变以保留历史和用户布局。
      */
     private async revealSidebarView(): Promise<void> {
         await vscode.commands.executeCommand('setContext', 'claudeRouter.chat.useActivityBarFallback', false);
@@ -254,15 +337,18 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
         const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'style.css'));
         const bridgeUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'bridge.js'));
         const cacheSolutionScriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'cacheSolution.js'));
+        const clipboardUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'clipboard.js'));
         const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'main.js'));
         const nonce = this.createNonce();
         const html = await fs.readFile(htmlUri.fsPath, 'utf8');
         return html
+            .replace('<body>', '<body class="sidebar-chat">')
             .replace(/{{cspSource}}/g, webview.cspSource)
             .replace(/{{nonce}}/g, nonce)
             .replace(/{{styleUri}}/g, String(styleUri))
             .replace(/{{bridgeUri}}/g, String(bridgeUri))
             .replace(/{{cacheSolutionScriptUri}}/g, String(cacheSolutionScriptUri))
+            .replace(/{{clipboardUri}}/g, String(clipboardUri))
             .replace(/{{scriptUri}}/g, String(scriptUri));
     }
 

@@ -12,7 +12,7 @@ import { autoOpenBuiltInChatIfCliConfigured } from './activation/chatEntry';
 import { registerAllCommands } from './activation/commands';
 import { setupRelayPipeline } from './activation/relayWiring';
 import { shutdownExtension } from './activation/shutdown';
-import { applyClaudeCodeInitialPermissionMode, cleanupLegacyRelaySettingsSafely } from './activation/startup';
+import { restorePreferredSidebarLayout } from './activation/sidebarLayout';
 import {
     configureRuntimeModules,
     configureStatelessModules,
@@ -22,6 +22,10 @@ import {
     subscribeVscodeConfigurationChanges
 } from './activation/wiring';
 import { ChatCliConfigService } from './chat/cli/cliConfig';
+import { configureSetup } from './setup/entry';
+import { applyPendingSetupReset } from './setup/resetRequest';
+import { requireSetup } from './setup/gate';
+import { configureEditorChat } from './editorChat/entry';
 import { ChatViewHost } from './chat/chatViewHost';
 import { createCliLifecycleServices, registerChatCliStatusHandlers } from './chatRuntime/cliLifecycle';
 import { restorePersistedChatSession } from './chatRuntime/chatSession';
@@ -133,27 +137,22 @@ function registerDisposables(
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     Logger.init(context);
     Logger.info('LLS CCAI 已激活');
+    await applyPendingSetupReset(context);
+    Logger.info('[runtime] 扩展运行信息', { extensionPath: context.extensionUri.fsPath,
+        extensionMode: context.extensionMode, version: context.extension.packageJSON.version, setupCompleted: context.globalState.get('setup.completed') === true });
     runtime.setExtensionContext(context);
 
     configureStatelessModules();
     restorePersistedChatSession();
-    await applyClaudeCodeInitialPermissionMode();
 
     const services = createCoreServices(context);
+    configureSetup(context, services.configManager);
+    configureEditorChat(context, services.configManager);
     configureRuntimeModules();
-    await restoreTaskFlowSafely(services.llsTaskService);
-
-    // 上次窗口在任务流中途被强制关闭时，workspaceState 里可能残留原主模型。
-    // 此时若已没有活动 workflow，说明任务流模型不再需要，直接还原；
-    // 有活动 workflow 则保持在任务流模型上，等它跑完再还原。
-    if (hasPendingTaskFlowModelRestore() && !services.llsTaskService.hasActiveWorkflow()) {
-        void restoreMainModelAfterTaskFlow('activate-compensate');
-    }
 
     const autoContinueScheduler = new AutoContinueScheduler(services.llsTaskService);
     setAutoContinueScheduler(autoContinueScheduler);
     setupRelayPipeline(context, autoContinueScheduler);
-    void cleanupLegacyRelaySettingsSafely();
 
     registerDisposables(context, services);
     registerChatCliStatusHandlers(context);
@@ -163,13 +162,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     subscribeActiveEditorContext(context);
     registerAllCommands(context);
 
-    await promptEnableBrowserChatToolsIfNeeded();
-    void autoOpenBuiltInChatIfCliConfigured();
-
-    // 必须在 chatViewHost 与 Chat 命令注册完成之后：补发错过的唤醒会立刻写聊天区。
-    void getWakeupScheduler()?.restore().catch((err: unknown) => {
-        Logger.warn(`恢复定时唤醒失败：${err instanceof Error ? err.message : String(err)}`);
-    });
+    // Register both views and restore their placement before an incomplete setup activates the wizard.
+    await restorePreferredSidebarLayout(context);
+    const setupReady = await requireSetup();
+    if (setupReady) {
+        await restoreTaskFlowSafely(services.llsTaskService);
+        if (hasPendingTaskFlowModelRestore() && !services.llsTaskService.hasActiveWorkflow()) {
+            void restoreMainModelAfterTaskFlow('activate-compensate');
+        }
+        await promptEnableBrowserChatToolsIfNeeded();
+        void autoOpenBuiltInChatIfCliConfigured();
+        void getWakeupScheduler()?.restore().catch(error => Logger.warn(`恢复定时唤醒失败：${String(error)}`));
+    }
 }
 
 /**

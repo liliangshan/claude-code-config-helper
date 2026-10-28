@@ -6,7 +6,7 @@
  *
  * 依赖方向：本模块位于 chatRuntime 之上，直接 import 会话与生命周期模块；不被其反向引用。
  */
-import { chatSessionState, showChatSessionPrivacyNoticeIfNeeded } from '../chatRuntime/chatSession';
+import { chatSessionState, ensureSidebarHistoryRestored, showChatSessionPrivacyNoticeIfNeeded } from '../chatRuntime/chatSession';
 import { ensureChatCliStarted, getChatCliConfigService } from '../chatRuntime/cliLifecycle';
 import { Logger } from '../logger';
 import { getChatViewHost } from '../runtime';
@@ -18,6 +18,8 @@ import { getChatViewHost } from '../runtime';
  * CLI 路径一起交给 WebviewPanel 渲染。
  */
 export async function openBuiltInChat(): Promise<void> {
+    if (!await (await import('../setup/gate')).requireSetup()) return;
+    await ensureSidebarHistoryRestored();
     await ensureChatCliStarted();
     const host = getChatViewHost();
     const cliConfig = getChatCliConfigService();

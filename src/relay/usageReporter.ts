@@ -14,7 +14,7 @@
  * 改写"，本模块只管"token 抽取"。
  */
 
-import { requestUsageRegistry } from '../chatRuntime/requestUsage';
+import { requestUsageRegistry, type RequestUsageRegistry } from '../chatRuntime/requestUsage';
 import type { UpstreamRequestContext } from './router';
 import { Logger } from '../logger';
 
@@ -25,7 +25,7 @@ const requestReporters = new WeakMap<UpstreamRequestContext, UsageReporter>();
 export function getRequestUsageReporter(ctx: UpstreamRequestContext, sink?: UsageSink): UsageReporter {
     let reporter = requestReporters.get(ctx);
     if (!reporter) {
-        reporter = new UsageReporter(sink, ctx.usageContext);
+        reporter = new UsageReporter(sink, ctx.usageContext, ctx.usageRegistry);
         requestReporters.set(ctx, reporter);
     }
     return reporter;
@@ -88,13 +88,15 @@ export class UsageReporter {
     private reported = false;
 
     /**
-     * 创建 usage 抽取器。
-     *
-     * @param sink usage 上报回调；为空时模块仅维护内部状态、不向外发布。
+     * 创建请求级用量报告器，将响应身份写入所属会话的关联表。
+     * @param sink 最终用量回调。
+     * @param context 请求开始时冻结的身份。
+     * @param registry 独立会话关联表；主聊天默认使用原关联表。
      */
-    public constructor(private readonly sink: UsageSink | undefined, context?: RequestUsageContext) {
+    public constructor(private readonly sink: UsageSink | undefined, context?: RequestUsageContext,
+        private readonly registry: RequestUsageRegistry = requestUsageRegistry) {
         this.report.context = context;
-        if (context) requestUsageRegistry.registerRequest(context);
+        if (context) this.registry.registerRequest(context);
     }
 
     /** 终止状态；错误事件优先于普通流结束。 */
@@ -178,7 +180,7 @@ export class UsageReporter {
         const context = this.report.context;
         if (context && type === 'content_block_start' && isRecord(payload.content_block)
             && payload.content_block.type === 'tool_use' && typeof payload.content_block.id === 'string') {
-            requestUsageRegistry.bindResponseMessage(context.requestId, context.sessionId, payload.content_block.id, 'tool');
+            this.registry.bindResponseMessage(context.requestId, context.sessionId, payload.content_block.id, 'tool');
         }
         if (type === 'error') this.status = 'error';
         if (type === 'message_start') {
@@ -201,12 +203,12 @@ export class UsageReporter {
         }
         const context = this.report.context;
         if (context && typeof messageJson.id === 'string') {
-            requestUsageRegistry.bindResponseMessage(context.requestId, context.sessionId, messageJson.id);
+            this.registry.bindResponseMessage(context.requestId, context.sessionId, messageJson.id);
         }
         if (context && Array.isArray(messageJson.content)) {
             for (const block of messageJson.content) {
                 if (isRecord(block) && block.type === 'tool_use' && typeof block.id === 'string') {
-                    requestUsageRegistry.bindResponseMessage(context.requestId, context.sessionId, block.id, 'tool');
+                    this.registry.bindResponseMessage(context.requestId, context.sessionId, block.id, 'tool');
                 }
             }
         }

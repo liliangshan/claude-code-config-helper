@@ -545,6 +545,7 @@ async function waitForCompactionBeforeSend(text: string, hidden: boolean): Promi
  * @param text 用户输入文本。
  */
 export async function sendUserMessageToCli(text: string, options: { hidden?: boolean; suppressResponse?: boolean; forceRoute?: ChatRoute; recovery?: Readonly<RecoveryContext>; signal?: AbortSignal } = {}): Promise<void> {
+    if ((await import('../setup/gate')).isCliUpdateInProgress()) throw new Error('CLI update in progress');
     // 压缩在途时先等它结束再发：任务流续推、自愈重发、超时 Continue 都走这里，
     // 若不拦截，新请求会与压缩摘要请求并发，压缩结果也可能被新一轮覆盖。
     await waitForCompactionBeforeSend(text, options.hidden === true);

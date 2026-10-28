@@ -15,7 +15,7 @@ import type { TokenBudgetService } from '../relay/tokenBudget/service';
 import { requestUsageRegistry } from './requestUsage';
 import type { RequestUsageSummary } from '../relay/requestUsage';
 import { getChatViewHost, getExtensionContext } from '../runtime';
-import { currentChatCliSessionIdSync } from './cliLifecycle';
+import { currentChatCliSessionIdSync, getChatCliConfigService, getChatCliSessionStore } from './cliLifecycle';
 import { chatRouteState } from './routeState';
 
 /** chatSession 对尚未拆出的上层模块的依赖，由 activate 在装配期注入。 */
@@ -46,6 +46,10 @@ export interface PersistedChatSession {
     updatedAt: number;
     /** 已保存的 Chat 消息。 */
     messages: ChatMessage[];
+    /** Message-cache identity; older versions may omit it and require validation against native history. */
+    sessionId?: string;
+    /** CLI working directory associated with the message cache. */
+    cwd?: string;
 }
 
 /** Chat 会话 workspaceState 持久化键。 */
@@ -77,7 +81,14 @@ export const chatSessionState: {
     messages: ChatMessage[];
     /** 当前正在接收流式输出的 assistant 消息 ID。 */
     activeAssistantMessageId?: string;
+    /** Identity of the messages shown in the main chat, independent of whether the CLI emitted init yet. */
+    sessionId?: string;
+    /** CLI working directory that owns the displayed history. */
+    cwd?: string;
 } = { messages: [] };
+
+/** Deduplicate startup history reads when both the view and auto-open path restore concurrently. */
+let chatHistoryRestore: Promise<void> | undefined;
 
 /** Chat 会话持久化防抖定时器。 */
 let chatSessionPersistTimer: NodeJS.Timeout | undefined;
@@ -102,16 +113,48 @@ export function getTokenBudgetServiceRef(): TokenBudgetService | undefined {
  */
 export function restorePersistedChatSession(): void {
     const persisted = getExtensionContext()?.workspaceState.get<PersistedChatSession>(CHAT_SESSION_STATE_KEY);
+    chatSessionState.activeAssistantMessageId = undefined;
+    chatSessionState.sessionId = undefined; chatSessionState.cwd = undefined;
+    chatHistoryRestore = undefined;
     if (!persisted || persisted.version !== 1 || !Array.isArray(persisted.messages)) {
         chatSessionState.messages = [];
         return;
     }
+    chatSessionState.sessionId = typeof persisted.sessionId === 'string' ? persisted.sessionId : undefined;
+    chatSessionState.cwd = typeof persisted.cwd === 'string' ? persisted.cwd : undefined;
     chatSessionState.messages = sanitizePersistedChatMessages(persisted.messages).map((message) => ({
         ...message,
         pending: false
     }));
-    chatSessionState.activeAssistantMessageId = undefined;
     Logger.info(`已恢复 Chat 会话消息：${chatSessionState.messages.length} 条`);
+}
+
+/** Restore the exact saved CLI history before showing chat; never replay a prompt or select another history. */
+export async function ensureSidebarHistoryRestored(): Promise<void> {
+    if (chatHistoryRestore) return chatHistoryRestore;
+    const operation = restoreSidebarHistory(); chatHistoryRestore = operation;
+    try { await operation; } finally { if (chatHistoryRestore === operation) chatHistoryRestore = undefined; }
+}
+
+/** Match UI cache to the CLI identity, loading native history when cached messages are absent or mismatched. */
+async function restoreSidebarHistory(): Promise<void> {
+    const config = getChatCliConfigService()?.getConfig();
+    if (!config?.cwd) return;
+    const sessionId = currentChatCliSessionIdSync() || await getChatCliSessionStore()?.readSessionId(config.cwd, 'normal');
+    if (!sessionId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) return;
+    if (chatSessionState.messages.length && chatSessionState.sessionId === sessionId && chatSessionState.cwd === config.cwd) return;
+    const originalMessages = chatSessionState.messages;
+    const originalLength = originalMessages.length;
+    const file = path.join(resolveClaudeProjectDir(config.cwd, config.cliEnv?.CLAUDE_CONFIG_DIR), `${sessionId}.jsonl`);
+    const messages = await parseSessionJsonl(file);
+    const currentId = currentChatCliSessionIdSync() || await getChatCliSessionStore()?.readSessionId(config.cwd, 'normal');
+    if (currentId !== sessionId || originalMessages !== chatSessionState.messages || originalLength !== chatSessionState.messages.length || chatSessionState.activeAssistantMessageId) return;
+    const sameCache = (!chatSessionState.sessionId || chatSessionState.sessionId === sessionId) && (!chatSessionState.cwd || chatSessionState.cwd === config.cwd);
+    if (messages.length || !sameCache) chatSessionState.messages = messages;
+    chatSessionState.sessionId = sessionId; chatSessionState.cwd = config.cwd;
+    await flushPersistedChatSession();
+    await pushSessionTitleToWebview(config.cwd, sessionId);
+    Logger.info(`[session/restore] 主区历史已恢复：sessionId=${sessionId}, messages=${chatSessionState.messages.length}`);
 }
 
 /**
@@ -215,12 +258,13 @@ export async function parseSessionJsonl(jsonlPath: string): Promise<ChatMessage[
  * 深路径（尤其 Windows 长路径）算出错误目录名。
  *
  * @param cwd 工作区目录绝对路径。
+ * @param configDir CLI 实际配置目录；未提供时使用扩展宿主环境或默认目录。
  * @returns 该工作区对应的 projects 子目录绝对路径。
  */
-export function resolveClaudeProjectDir(cwd: string): string {
-    const configDir = process.env['CLAUDE_CONFIG_DIR'] ?? path.join(os.homedir(), '.claude');
+export function resolveClaudeProjectDir(cwd: string, configDir?: string): string {
+    const directory = configDir ?? process.env['CLAUDE_CONFIG_DIR'] ?? path.join(os.homedir(), '.claude');
     const encodedCwd = cwd.replace(/[^a-zA-Z0-9]/g, '-');
-    return path.join(configDir, 'projects', encodedCwd);
+    return path.join(directory, 'projects', encodedCwd);
 }
 
 /**
@@ -275,7 +319,8 @@ export async function extractSessionTitle(jsonlPath: string): Promise<string> {
 export async function pushSessionTitleToWebview(cwd: string, sessionId: string): Promise<void> {
     if (!sessionId) return;
     try {
-        const jsonlPath = path.join(resolveClaudeProjectDir(cwd), `${sessionId}.jsonl`);
+        const config = getChatCliConfigService()?.getConfig();
+        const jsonlPath = path.join(resolveClaudeProjectDir(cwd, config?.cliEnv?.CLAUDE_CONFIG_DIR), `${sessionId}.jsonl`);
         const title = await extractSessionTitle(jsonlPath);
         await getChatViewHost()?.postMessage({ type: 'session/title', title, sessionId });
     } catch (e) {
@@ -297,7 +342,8 @@ export async function pushSessionTitleToWebview(cwd: string, sessionId: string):
  */
 export async function writeSessionCustomTitle(cwd: string, sessionId: string, title: string): Promise<void> {
     if (!sessionId) return;
-    const jsonlPath = path.join(resolveClaudeProjectDir(cwd), `${sessionId}.jsonl`);
+    const config = getChatCliConfigService()?.getConfig();
+    const jsonlPath = path.join(resolveClaudeProjectDir(cwd, config?.cliEnv?.CLAUDE_CONFIG_DIR), `${sessionId}.jsonl`);
     let raw: string;
     try {
         raw = await fs.readFile(jsonlPath, 'utf8');
@@ -354,7 +400,9 @@ export async function flushPersistedChatSession(): Promise<void> {
     const payload: PersistedChatSession = {
         version: 1,
         updatedAt: Date.now(),
-        messages: chatSessionState.messages.slice(-MAX_PERSISTED_CHAT_MESSAGES)
+        messages: chatSessionState.messages.slice(-MAX_PERSISTED_CHAT_MESSAGES),
+        sessionId: chatSessionState.sessionId || currentChatCliSessionIdSync() || undefined,
+        cwd: chatSessionState.cwd || getChatCliConfigService()?.getConfig().cwd
     };
     await context.workspaceState.update(CHAT_SESSION_STATE_KEY, payload);
 }
@@ -363,6 +411,7 @@ export async function flushPersistedChatSession(): Promise<void> {
  * 清空 workspaceState 中保存的 Chat 会话。
  */
 export async function clearPersistedChatSession(): Promise<void> {
+    chatSessionState.sessionId = undefined; chatSessionState.cwd = undefined;
     if (chatSessionPersistTimer) clearTimeout(chatSessionPersistTimer);
     chatSessionPersistTimer = undefined;
     await getExtensionContext()?.workspaceState.update(CHAT_SESSION_STATE_KEY, undefined);
@@ -379,7 +428,8 @@ export async function showChatSessionPrivacyNoticeIfNeeded(): Promise<void> {
     const shown = context.workspaceState.get<boolean>(CHAT_SESSION_PRIVACY_NOTICE_KEY, false);
     if (shown) return;
     await context.workspaceState.update(CHAT_SESSION_PRIVACY_NOTICE_KEY, true);
-    await vscode.window.showInformationMessage(
+    // Informational notices must not delay opening the restored conversation until dismissal.
+    void vscode.window.showInformationMessage(
         '内置 Chat 会在当前工作区恢复最近会话消息；如不希望保留，可点击 Chat 面板里的清空会话。'
     );
 }

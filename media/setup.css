@@ -1,0 +1,87 @@
+/* Theme-aware onboarding layout; colors follow the active VS Code theme. */
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--vscode-editor-background); color: var(--vscode-foreground); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size, 13px); }
+[hidden] { display: none !important; }
+.setup-shell { max-width: 880px; margin: 0 auto; padding: 42px 32px 56px; }
+.brand { font-size: 11px; font-weight: 600; letter-spacing: 1.8px; color: var(--vscode-descriptionForeground); }
+.brand-divider { margin: 0 7px; opacity: .5; }
+h1 { font-size: 27px; font-weight: 650; letter-spacing: -.5px; margin: 13px 0 10px; }
+h2 { font-size: 19px; font-weight: 600; margin: 0 0 12px; }
+#environment { font-family: var(--vscode-editor-font-family); font-size: 12px; color: var(--vscode-descriptionForeground); margin: 0; }
+.steps { list-style: none; display: flex; padding: 0; margin: 30px 0; gap: 16px; }
+.steps li { display: flex; align-items: center; gap: 9px; flex: 1; color: var(--vscode-descriptionForeground); font-size: 12px; }
+.steps li:not(:last-child)::after { content: ''; height: 1px; flex: 1; background: var(--vscode-widget-border, var(--vscode-panel-border)); margin-left: 5px; }
+.step-number { display: inline-flex; justify-content: center; align-items: center; flex-shrink: 0; width: 27px; height: 27px; border-radius: 50%; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); font-size: 12px; }
+.steps .active { color: var(--vscode-foreground); font-weight: 600; }
+.steps .active .step-number { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: var(--vscode-button-background); }
+.steps .done .step-number { color: var(--vscode-testing-iconPassed, var(--vscode-foreground)); }
+.preferences { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 22px; }
+.preference, .model-field { display: flex; flex-direction: column; gap: 9px; }
+.field-label { font-size: 12px; color: var(--vscode-descriptionForeground); }
+select, button { font: inherit; }
+select { width: 100%; min-height: 36px; padding: 7px 11px; background: var(--vscode-dropdown-background); color: var(--vscode-dropdown-foreground); border: 1px solid var(--vscode-dropdown-border, var(--vscode-widget-border, transparent)); border-radius: 5px; }
+button { border: 1px solid transparent; border-radius: 5px; min-height: 34px; padding: 7px 15px; cursor: pointer; white-space: nowrap; }
+button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+button.primary:hover { background: var(--vscode-button-hoverBackground); }
+button.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+button:disabled, select:disabled { opacity: .5; cursor: default; }
+button:focus-visible, select:focus-visible, summary:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 3px; }
+.setup-card { padding: 28px; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 10px; background: var(--vscode-sideBar-background, var(--vscode-editor-background)); }
+.description { color: var(--vscode-descriptionForeground); line-height: 1.7; margin: 0 0 22px; }
+.info-row { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; margin: 20px 0; }
+.info-value, .summary-path { font-family: var(--vscode-editor-font-family); font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.status { border-radius: 4px; padding: 3px 8px; font-size: 11px; color: var(--vscode-descriptionForeground); background: var(--vscode-badge-background); }
+.status.verified { color: var(--vscode-testing-iconPassed, var(--vscode-foreground)); background: transparent; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
+.advanced { border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); margin-top: 22px; padding-top: 17px; }
+summary { cursor: pointer; font-size: 12px; color: var(--vscode-descriptionForeground); width: fit-content; }
+.advanced-actions { display: flex; flex-wrap: wrap; gap: 9px; padding-top: 16px; }
+.actions { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); padding-top: 22px; margin-top: 24px; }
+.model-field { margin: 22px 0 16px; }
+.mirror-note, .notice { font-size: 12px; color: var(--vscode-descriptionForeground); line-height: 1.7; margin: -8px 0 20px; }
+.notice { border-left: 2px solid var(--vscode-focusBorder); padding: 10px 14px; margin: 22px 0; white-space: pre-line; }
+.install-progress { border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); background: var(--vscode-editor-background); border-radius: 7px; padding: 15px 17px; margin-top: 22px; }
+.progress-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 28px; }
+.progress-header strong { font-size: 12px; font-weight: 500; }
+.link-button { background: transparent; color: var(--vscode-textLink-foreground); padding: 3px 5px; min-height: 26px; font-size: 12px; }
+.link-button:hover { color: var(--vscode-textLink-activeForeground); text-decoration: underline; }
+progress { display: block; width: 100%; height: 6px; margin: 12px 0 10px; border: 0; border-radius: 8px; overflow: hidden; accent-color: var(--vscode-progressBar-background); background: var(--vscode-widget-border, var(--vscode-panel-border)); }
+progress::-webkit-progress-bar { background: var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 8px; }
+progress::-webkit-progress-value { background: var(--vscode-progressBar-background); border-radius: 8px; transition: width .15s ease; }
+progress:indeterminate { background: linear-gradient(90deg, transparent, var(--vscode-progressBar-background), transparent); background-size: 200% 100%; animation: pending 1.5s linear infinite; }
+.progress-detail { color: var(--vscode-descriptionForeground); font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.install-progress[data-phase="error"], #error { color: var(--vscode-errorForeground); }
+.install-progress[data-phase="complete"] strong, .install-progress[data-phase="current"] strong { color: var(--vscode-testing-iconPassed, var(--vscode-foreground)); }
+#error:empty { display: none; }
+#error { line-height: 1.7; overflow-wrap: anywhere; }
+@keyframes pending { from { background-position: 200% 0; } to { background-position: 0 0; } }
+@media (max-width: 520px) {
+    .setup-shell { padding: 24px 18px; }
+    .setup-card { padding: 20px; }
+    .preferences { grid-template-columns: 1fr; gap: 14px; }
+    h1 { font-size: 23px; }
+    .steps { gap: 10px; }
+    .steps li { gap: 6px; font-size: 11px; }
+    .steps li:not(:last-child)::after { display: none; }
+    .actions button { flex: 1; }
+}
+/* Embedded supplier management reuses the settings editor while matching the wizard card. */
+.embedded-providers .app-shell { padding: 0; max-width: none; }
+.embedded-providers .card { border: 0; padding: 0; margin: 0; background: transparent; }
+.embedded-providers .card-title > div { display: none; }
+.embedded-providers .card-title { display: block; margin: 0 0 18px; }
+.embedded-providers #btn-new-provider { width: 100%; min-height: 36px; }
+.embedded-providers .provider-card { padding: 18px; border-radius: 8px; border-color: var(--vscode-widget-border, var(--vscode-panel-border)); }
+.embedded-providers .provider-head { flex-direction: column; gap: 14px; }
+.embedded-providers .provider-meta { overflow-wrap: anywhere; line-height: 1.6; }
+.embedded-providers .title-with-switch h3 { font-size: 14px; }
+.embedded-providers .card-actions { gap: 8px; }
+.embedded-providers .card-actions button { min-height: 30px; padding: 5px 11px; font-size: 12px; }
+.embedded-providers .model-table { table-layout: fixed; }
+.embedded-providers .model-table td { overflow-wrap: anywhere; }
+.embedded-providers .model-table .row-actions { gap: 6px; }
+.embedded-providers .modal-backdrop { z-index: 100; }
+.embedded-providers .modal { padding: 24px; }
+.embedded-providers .modal input:focus, .embedded-providers .modal textarea:focus { outline: 1px solid var(--vscode-focusBorder); }
+.embedded-providers .switch input { min-height: 0; }
+@media (prefers-reduced-motion: reduce) { progress:indeterminate { animation: none; } progress::-webkit-progress-value { transition: none; } }

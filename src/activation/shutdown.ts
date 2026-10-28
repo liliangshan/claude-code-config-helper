@@ -7,6 +7,7 @@
  *
  * 依赖方向：本模块位于所有功能模块之上，不被它们反向引用。
  */
+import { shutdownEditorChat } from '../editorChat/entry';
 import { flushPersistedChatSession } from '../chatRuntime/chatSession';
 import { Logger } from '../logger';
 import { disposeCliLifecycleServices } from '../chatRuntime/cliLifecycle';
@@ -51,6 +52,7 @@ function disposeRouteProcesses(): void {
  * @returns 全部释放动作完成后 resolve。
  */
 export async function shutdownExtension(): Promise<void> {
+    await shutdownEditorChat().catch(error => Logger.warn(`Editor chat shutdown: ${String(error)}`));
     cancelPendingResend('deactivate');
     requestRecoveryController.dispose();
     await flushPersistedChatSession().catch((err: unknown) => {

@@ -36,6 +36,34 @@
     };
 
 
+    /** 会话列表入口、抽屉标题与空状态在七种语言下统一显示，不更改历史恢复协议。 */
+    const sessionListTranslations = {
+        en: ['Conversation list', 'Loading…', 'No conversations found.'],
+        'zh-cn': ['会话列表', '加载中…', '暂无会话。'],
+        'zh-tw': ['會話列表', '載入中…', '暫無會話。'],
+        ja: ['会話一覧', '読み込み中…', '会話がありません。'],
+        ko: ['대화 목록', '불러오는 중…', '대화가 없습니다.'],
+        fr: ['Liste des conversations', 'Chargement…', 'Aucune conversation.'],
+        de: ['Unterhaltungsliste', 'Wird geladen…', 'Keine Unterhaltungen gefunden.']
+    };
+    Object.entries(sessionListTranslations).forEach(([language, labels]) => {
+        Object.assign(chatTranslations[language], { sessions: labels[0], sessionsTitle: labels[0], sessionsLoading: labels[1], sessionsEmpty: labels[2] });
+    });
+
+    /** 并行会话入口直接显示左侧独立会话，不展示列表或创建编辑区标签。 */
+    const editorButtonTranslations = {
+        en: ['＋ Parallel session', 'Task sessions', 'Reset context', 'Open the independent conversation on the left', 'View task sessions; switch to an open task or resume a saved one', 'Reset context in this task session'],
+        'zh-cn': ['＋ 并行会话', '任务会话', '重置上下文', '直接打开左侧独立会话，无历史时自动新建', '查看任务会话列表，切换已打开的任务或恢复历史任务', '重置当前任务会话的上下文'],
+        'zh-tw': ['＋ 並行會話', '任務會話', '重設上下文', '直接開啟左側獨立會話，沒有歷史時自動新增', '檢視任務會話列表，切換已開啟的任務或恢復歷史任務', '重設目前任務會話的上下文'],
+        ja: ['＋ 並行セッション', 'タスクの会話', 'コンテキストをリセット', '左側の独立した会話を直接開き、履歴がなければ新規作成', 'タスクの会話を一覧表示し、切り替えまたは再開する', 'このタスクの会話のコンテキストをリセット'],
+        ko: ['＋ 병렬 대화', '작업 대화', '컨텍스트 초기화', '왼쪽 독립 대화를 바로 열고 기록이 없으면 새로 만들기', '작업 대화 목록에서 열린 작업으로 전환하거나 이전 작업 재개', '현재 작업 대화의 컨텍스트 초기화'],
+        fr: ['＋ Session parallèle', 'Sessions de tâches', 'Réinitialiser le contexte', 'Ouvrir directement la conversation indépendante à gauche, ou la créer sans historique', 'Afficher les sessions pour changer de tâche ou reprendre une tâche enregistrée', 'Réinitialiser le contexte de cette tâche'],
+        de: ['＋ Parallele Sitzung', 'Aufgabensitzungen', 'Kontext zurücksetzen', 'Unabhängige Unterhaltung links direkt öffnen oder ohne Verlauf neu erstellen', 'Aufgabensitzungen anzeigen, zwischen Aufgaben wechseln oder gespeicherte Aufgaben fortsetzen', 'Kontext dieser Aufgabensitzung zurücksetzen']
+    };
+    Object.entries(editorButtonTranslations).forEach(([language, values]) => {
+        Object.assign(chatTranslations[language], { editorNew: values[0], editorList: values[1], editorReset: values[2], editorNewTitle: values[3], editorListTitle: values[4], editorResetTitle: values[5], leftSessionList: chatTranslations[language].sessions });
+    });
+
     /** 网页图文粘贴提示随界面语言切换，错误不暴露带签名的图片 URL。 */
     Object.assign(chatTranslations.en, { pasteImageFailed: 'Some webpage images could not be added. Copy the image itself or paste a screenshot instead.', pasteImageLimit: 'Only the first 5 webpage images are added per paste.', pasteImagePending: 'Images are still being added. Wait before sending.' });
     Object.assign(chatTranslations['zh-cn'], { pasteImageFailed: '部分网页图片无法添加，请单独复制图片或粘贴截图。', pasteImageLimit: '每次粘贴最多添加前 5 张网页图片。', pasteImagePending: '图片正在添加，请完成后再发送。' });
@@ -117,6 +145,35 @@
         resendConfirm: '发送修改后的消息',
         resendCancel: '取消重发编辑',
         resendEditorAria: '编辑后重发消息'
+    });
+    /** Compact title actions reuse the existing conversation dialog in sidebar and editor chats. */
+    const titleActionLabels = { en: 'Edit title', 'zh-cn': '编辑标题', 'zh-tw': '編輯標題', ko: '제목 편집', ja: 'タイトル編集', fr: 'Modifier le titre', de: 'Titel ändern' };
+    Object.entries(titleActionLabels).forEach(([language, label]) => { chatTranslations[language].sessionTitleEditAction = label; });
+    /** 左右聊天的帮助按钮、悬停提示与无障碍名称跟随现有七语言设置。 */
+    const helpActionLabels = {
+        en: ['Help', 'Open the help website'],
+        'zh-cn': ['帮助', '直接打开帮助官网'],
+        'zh-tw': ['說明', '直接開啟說明官網'],
+        ja: ['ヘルプ', 'ヘルプサイトを開く'],
+        ko: ['도움말', '도움말 웹사이트 열기'],
+        fr: ['Aide', 'Ouvrir le site d’aide'],
+        de: ['Hilfe', 'Hilfewebsite öffnen']
+    };
+    Object.entries(helpActionLabels).forEach(([language, labels]) => {
+        Object.assign(chatTranslations[language], { helpLabel: labels[0], helpTitle: labels[1] });
+    });
+    /** “重启 CLI”复用现有中转与 CLI 重启流程，并在当前会话展示进度。 */
+    const restartActionLabels = {
+        en: ['Restart CLI', 'Restart this conversation’s relay and CLI; show progress in chat'],
+        'zh-cn': ['重启 CLI', '重启当前会话的中转和 CLI，在聊天中显示进度'],
+        'zh-tw': ['重啟 CLI', '重新啟動目前會話的中轉與 CLI，在聊天中顯示進度'],
+        ja: ['CLI を再起動', 'この会話のリレーと CLI を再起動し、会話内に進捗を表示'],
+        ko: ['CLI 재시작', '현재 대화의 릴레이와 CLI를 재시작하고 진행 상황 표시'],
+        fr: ['Redémarrer le CLI', 'Redémarrer le relais et le CLI de cette conversation ; afficher la progression dans le chat'],
+        de: ['CLI neu starten', 'Relay und CLI dieser Unterhaltung neu starten; Fortschritt im Chat anzeigen']
+    };
+    Object.entries(restartActionLabels).forEach(([language, labels]) => {
+        Object.assign(chatTranslations[language], { restartCliLabel: labels[0], restartCliTitle: labels[1] });
     });
     /** 补齐会话标题编辑弹窗文案。 */
     Object.assign(chatTranslations.en, {
@@ -510,6 +567,7 @@
     });
     const vscode = acquireVsCodeApi();
     const messagesEl = document.querySelector('[data-role="messages"]');
+    const chatClipboard = window.installChatClipboard(vscode, messagesEl, function (key) { return t(key); });
     const composerShellEl = document.querySelector('[data-role="composer-shell"]');
     const composerEl = document.querySelector('[data-role="composer"]');
     const sendEl = document.querySelector('[data-role="send"]');
@@ -575,7 +633,6 @@
     let sessionTitleEditing = false;
     const restartCliEl = document.querySelector('[data-role="restart-cli"]');
     const newSessionEl = document.querySelector('[data-role="new-session"]');
-    const openSessionsEl = document.querySelector('[data-role="open-sessions"]');
     const sessionListDialogEl = document.querySelector('[data-role="session-list"]');
     const sessionListContentEl = document.querySelector('[data-role="session-list-content"]');
     const sessionListCloseEls = document.querySelectorAll('[data-role="session-list-close"]');
@@ -2940,29 +2997,14 @@
     var COPIED_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 8.5L6.2 11.8L13 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
     /**
-     * 把文本写入剪贴板。
-     *
-     * Webview 里 navigator.clipboard 在无焦点或权限受限时会 reject，
-     * 因此保留 textarea + execCommand 兜底路径。
-     *
-     * @param {string} textContent 要复制的文本。
-     * @param {Function} onDone 复制结束（成功或走完兜底）后的回调。
+     * Copy through the host without focusing a hidden textarea or disturbing the selection.
+     * @param {string} textContent Text explicitly requested by the user.
+     * @param {Function} onDone Called only after the host confirms a successful write.
      */
     function copyTextWithFallback(textContent, onDone) {
-        function fallback() {
-            var ta = document.createElement('textarea');
-            ta.value = textContent;
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand('copy');
-            document.body.removeChild(ta);
-            onDone();
-        }
-        try {
-            navigator.clipboard.writeText(textContent).then(onDone).catch(fallback);
-        } catch (e) {
-            fallback();
-        }
+        chatClipboard.write(textContent).then(onDone).catch(function () {
+            showToast('error', t('copyBodySourceFailed'));
+        });
     }
 
     /**
@@ -3469,6 +3511,7 @@
     /** 按缓存完整重绘消息区，同时保留用户当前滚动意图。 */
     function rerenderMessagesFromDom() {
         if (!messagesEl) return;
+        if (chatClipboard.defer('messages', messagesEl, rerenderMessagesFromDom)) return;
         var messages = cloneMessagesForCache(renderedMessagesCache);
         var wasAtBottom = isScrolledNearBottom();
         var previousScrollTop = messagesEl.scrollTop;
@@ -5221,6 +5264,8 @@
             });
             return;
         }
+        // Keep selected nodes alive during streaming; replay from the complete cache on deselection.
+        if (chatClipboard.defer('messages', item, rerenderMessagesFromDom)) return;
         // 记录渲染前的滚动状态：只有用户已经在底部附近时才跟随。
         var wasAtBottom = isScrolledNearBottom();
         // 更新 pending 状态
@@ -5483,6 +5528,16 @@
             console.log('[chat] handleExtensionMessage', message.type, message);
         } catch (_logErr) { /* noop */ }
         switch (message.type) {
+            case 'editorSession/mode':
+                editorConversationId = message.conversationId;
+                document.body.classList.add('editor-chat');
+                vscode.setState({ editorConversationId: message.conversationId, cwd: message.cwd });
+                if (message.draft && composerEl instanceof HTMLTextAreaElement) {
+                    composerEl.value = message.draft.text || '';
+                    if (Array.isArray(message.draft.attachments)) { composerState.attachments = message.draft.attachments; renderAttachments(); }
+                    autoResizeComposer();
+                }
+                break;
             case 'request/recovery':
                 updateRequestRecoveryStatus(message.state);
                 break;
@@ -5527,6 +5582,7 @@
                     syncSessionInitSignatureFromDom();
                     break;
                 }
+                chatClipboard.reset();
                 renderEmptyState();
                 syncClaudeTodoFromMessages(initMessages);
                 // 批量渲染历史消息——进入历史回放模式；授权通道模式下
@@ -5745,6 +5801,10 @@
             case 'sessions/list/result':
                 renderSessionList(message.sessions || []);
                 break;
+            case 'session/edit-title':
+                applySessionTitle(message.title || '', message.sessionId || '');
+                beginSessionTitleEdit();
+                break;
             case 'session/title':
                 applySessionTitle(message.title || '', message.sessionId || '');
                 break;
@@ -5756,9 +5816,9 @@
     /**
      * 把会话标题应用到顶部 H1。
      *
-     * 标题为空时回退到默认标题（data-default-title）。显示时截断到 10 个字符并追加
-     * 省略号，完整标题写入 title 属性与内部状态，便于悬停查看与内联编辑回填。
-     * 编辑态下跳过应用，避免推送覆盖正在编辑的输入框。
+     * 标题为空时回退到默认标题（data-default-title）。显示时截断到 25 个字符并追加
+     * 省略号，完整标题写入 title 属性与内部状态，便于悬停查看与编辑回填。
+     * 编辑期间仍更新真实会话身份，但不改写当前标题节点，避免切换会话后误改其他记录。
      *
      * @param {string} title 会话标题，空字符串表示无标题。
      * @param {string} [sessionId] 该标题所属会话 ID，用于编辑写回。
@@ -5768,10 +5828,10 @@
         if (typeof sessionId === 'string') {
             currentSessionTitleId = sessionId;
         }
-        if (sessionTitleEditing) return;
         const fallback = sessionTitleEl.getAttribute('data-default-title') || 'LLS CLAUDE CHAT';
         const text = (title || '').trim();
         currentSessionTitleFull = text;
+        if (sessionTitleEditing) return;
         const display = text || fallback;
         const truncated = display.length > 25 ? display.slice(0, 25) + '…' : display;
         sessionTitleEl.textContent = truncated;
@@ -5791,6 +5851,8 @@
         if (!currentSessionTitleId) return;
         if (typeof HTMLDialogElement === 'undefined') return;
         sessionTitleEditing = true;
+        const editingSessionId = currentSessionTitleId;
+        const originalTitle = currentSessionTitleFull;
 
         const dialog = document.createElement('dialog');
         dialog.className = 'session-title-dialog';
@@ -5802,8 +5864,8 @@
         const input = document.createElement('input');
         input.type = 'text';
         input.className = 'session-title-dialog__input';
-        input.value = currentSessionTitleFull;
-        input.maxLength = 60;
+        input.value = originalTitle;
+        input.maxLength = 120;
 
         const actions = document.createElement('div');
         actions.className = 'session-title-dialog__actions';
@@ -5833,11 +5895,12 @@
             if (settled) return;
             settled = true;
             const next = (input.value || '').trim();
-            if (commit && next !== currentSessionTitleFull) {
-                post({ type: 'session/set-title', title: next, sessionId: currentSessionTitleId });
-                applySessionTitle(next, currentSessionTitleId);
+            if (commit && editingSessionId === currentSessionTitleId && next !== originalTitle) {
+                post({ type: 'session/set-title', title: next, sessionId: editingSessionId });
+                currentSessionTitleFull = next;
             }
             cleanup();
+            applySessionTitle(currentSessionTitleFull, currentSessionTitleId);
         };
 
         okBtn.addEventListener('click', () => finish(true));
@@ -6193,6 +6256,7 @@
         if (!(event.target instanceof Element)) return;
         const codeEl = event.target.closest('code[data-copy="1"]');
         if (!(codeEl instanceof HTMLElement)) return;
+        if (chatClipboard.selectedText()) return;
         const clone = codeEl.cloneNode(true);
         clone.querySelectorAll('.inlineCopyIcon_-a7MRw').forEach((el) => el.remove());
         const text = clone.textContent || '';
@@ -6206,10 +6270,18 @@
             }, 1200);
         });
     });
+    const settingsLabels = { en: 'Settings', 'zh-cn': '扩展设置', 'zh-tw': '擴充設定', ja: '拡張設定', ko: '확장 설정', fr: 'Paramètres', de: 'Einstellungen' };
+    Object.entries(settingsLabels).forEach(([language, label]) => { chatTranslations[language].extensionSettings = label; });
+    document.querySelector('[data-role="extension-settings"]')?.addEventListener('click', () => post({ type: 'config/open' }));
+    document.querySelector('[data-role="help-open"]')?.addEventListener('click', () => post({ type: 'help/open' }));
+    let editorConversationId = '';
+    document.querySelector('[data-role="editor-session-new"]')?.addEventListener('click', () => post({ type: 'leftSessions/show' }));
+    document.querySelector('[data-role="editor-session-list"]')?.addEventListener('click', () => post({ type: 'editorSession/list' }));
+    document.addEventListener('chat-copy-error', function () { showToast('error', t('copyBodySourceFailed')); });
     restartCliEl?.addEventListener('click', () => post({ type: 'cli/restart' }));
     newSessionEl?.addEventListener('click', () => { applySessionTitle('', ''); post({ type: 'session/clear' }); });
+    document.querySelector('[data-role="session-title-edit"]')?.addEventListener('click', beginSessionTitleEdit);
     sessionTitleEl?.addEventListener('click', beginSessionTitleEdit);
-    openSessionsEl?.addEventListener('click', openSessions);
     sessionListCloseEls.forEach((el) => {
         if (el instanceof HTMLElement) el.addEventListener('click', closeSessionList);
     });
@@ -6226,6 +6298,9 @@
         composerImeGuard(event);
     });
     composerEl?.addEventListener('input', autoResizeComposer);
+    composerEl?.addEventListener('input', function () {
+        if (editorConversationId) post({ type: 'editorSession/draft', text: composerEl.value, attachments: composerState.attachments });
+    });
     document.addEventListener('paste', (event) => {
         void handlePaste(event);
     }, true);

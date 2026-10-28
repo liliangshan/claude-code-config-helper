@@ -20,6 +20,11 @@
 .requestRecoveryStatus { flex: 0 0 auto; padding: 6px 10px; font-size: 12px; color: var(--vscode-descriptionForeground); overflow-wrap: anywhere; }
 .requestRecoveryStatus button { margin-inline-start: 8px; color: var(--vscode-textLink-foreground); background: transparent; border: 1px solid var(--vscode-button-border, transparent); cursor: pointer; }
 
+/* Selection copy menu stays in the Webview so native menu focus changes cannot lose text. */
+.chat-copy-menu { position: fixed; z-index: 10000; padding: 4px; min-width: 100px; background: var(--vscode-menu-background, #252526); color: var(--vscode-menu-foreground, #fff); border: 1px solid var(--vscode-menu-border, #555); border-radius: 4px; box-shadow: 0 2px 8px #0005; }
+.chat-copy-menu button { display: block; width: 100%; padding: 6px 12px; text-align: start; background: transparent; color: inherit; border: 0; cursor: pointer; }
+.chat-copy-menu button:hover, .chat-copy-menu button:focus-visible { background: var(--vscode-menu-selectionBackground, #094771); outline: 1px solid var(--vscode-focusBorder, #007acc); }
+
 :root {
     /* 间距尺度 */
     --lls-space-1: 4px;
@@ -184,8 +189,9 @@ select:focus-visible {
 
 .chat-header {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    justify-content: flex-start;
     gap: var(--lls-space-3);
     padding: var(--lls-space-3) var(--lls-space-4);
     border-bottom: 1px solid var(--lls-border);
@@ -203,6 +209,25 @@ select:focus-visible {
     text-overflow: ellipsis;
     white-space: nowrap;
     cursor: pointer;
+}
+
+/* Editor actions follow the title; sidebar primary actions live in the native VS Code toolbar. */
+.sidebar-chat .chat-actions--primary {
+    display: none;
+}
+
+.sidebar-only {
+    display: none;
+}
+
+.sidebar-chat .sidebar-only {
+    display: inline-flex;
+}
+
+/* Keep the main conversation title visible beside the right-aligned actions, even in narrow panes. */
+.sidebar-chat .chat-header__main {
+    flex: 1 0 72px;
+    max-width: 40%;
 }
 
 .chat-header h1:hover {
@@ -276,12 +301,35 @@ select:focus-visible {
     color: var(--lls-fg-muted);
 }
 
+.chat-header__main { flex: 0 1 auto; min-width: 0; max-width: 25%; padding-top: 2px; }
+
+/* One line after the editor title; horizontal overflow is limited to the actions. */
+.chat-actions-row {
+    display: flex;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: nowrap;
+    gap: var(--lls-space-2);
+    overflow-x: auto;
+}
+
+/* The main chat's visible page actions, including restart, remain right-aligned. */
+.sidebar-chat .chat-actions-row {
+    margin-left: auto;
+    justify-content: safe flex-end;
+}
+
 .chat-actions {
     display: flex;
+    flex-wrap: nowrap;
+    flex: 0 0 auto;
     gap: var(--lls-space-2);
 }
 
 .chat-actions button {
+    flex: 0 0 auto;
+    white-space: nowrap;
     padding: 4px 10px;
     border-radius: var(--lls-radius-sm);
     border: 1px solid var(--lls-border);
@@ -290,6 +338,8 @@ select:focus-visible {
     font-size: var(--lls-font-xs);
     transition: background var(--lls-transition-fast), border-color var(--lls-transition-fast);
 }
+
+[data-role="editor-session-reset"][hidden] { display: none; }
 
 .chat-actions button:hover {
     background: var(--lls-bg-hover);

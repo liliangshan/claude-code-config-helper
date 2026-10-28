@@ -79,7 +79,7 @@ export class CliProcess implements vscode.Disposable {
             hasResume: args.includes('--resume')
         }));
         Logger.info('Chat CLI 环境变量摘要：' + JSON.stringify({
-            ANTHROPIC_BASE_URL: config.cliEnv.ANTHROPIC_BASE_URL || '',
+            ANTHROPIC_BASE_URL: config.cliEnv.LLS_EDITOR_PRIVATE_RELAY ? '[editor private relay]' : config.cliEnv.ANTHROPIC_BASE_URL || '',
             ANTHROPIC_MODEL: config.cliEnv.ANTHROPIC_MODEL || '',
             hasAnthropicAuthToken: !!config.cliEnv.ANTHROPIC_AUTH_TOKEN,
             hasAnthropicApiKey: !!config.cliEnv.ANTHROPIC_API_KEY,
@@ -707,6 +707,7 @@ export class CliProcess implements vscode.Disposable {
      *
      * @param reason 日志记录用的清理原因。
      */
+    /** Stop the owned child and confirm exit before any replacement may start; reject if termination fails. */
     private async disposeRunningChild(reason: string): Promise<void> {
         const child = this.child;
         if (!child) return;
@@ -716,34 +717,25 @@ export class CliProcess implements vscode.Disposable {
             this.expectedExitPids.add(pid);
             setTimeout(() => this.expectedExitPids.delete(pid), 30_000).unref?.();
         }
-        this.child = undefined;
-        await new Promise<void>((resolve) => {
+        await new Promise<void>((resolve, reject) => {
             let settled = false;
-            // 该子进程是否已退出。这里用局部标记而非实例字段：this.child 上面已被置空，
-            // 且实例字段可能被下一次 start() 复位，只有闭包能准确反映「这一个」进程。
-            let exited = false;
-            const finish = () => {
+            let escalation: NodeJS.Timeout | undefined;
+            const finish = (error?: Error) => {
                 if (settled) return;
-                settled = true;
-                clearTimeout(timer);
-                resolve();
+                settled = true; clearTimeout(timer); if (escalation) clearTimeout(escalation);
+                child.off('exit', onExit);
+                if (error) { this.child = child; reject(error); }
+                else { if (this.child === child) this.child = undefined; resolve(); }
             };
+            const onExit = () => finish();
             const timer = setTimeout(() => {
-                if (!exited) {
-                    Logger.warn(`Chat CLI SIGTERM 1500ms 未退出，追加 SIGKILL：pid=${pid ?? 'unknown'}`);
-                    try {
-                        child.kill('SIGKILL');
-                    } catch (err) {
-                        Logger.warn(`Chat CLI SIGKILL 失败：${err instanceof Error ? err.message : String(err)}`);
-                    }
-                }
-                finish();
+                try { child.kill('SIGKILL'); }
+                catch (error) { finish(error instanceof Error ? error : new Error(String(error))); return; }
+                escalation = setTimeout(() => finish(new Error(`CLI process did not exit: ${pid ?? 'unknown'}`)), 1500);
             }, 1500);
-            child.once('exit', () => {
-                exited = true;
-                finish();
-            });
-            child.kill('SIGTERM');
+            if (child.exitCode !== null || child.signalCode !== null || this.childExited) { finish(); return; }
+            child.once('exit', onExit);
+            try { child.kill('SIGTERM'); } catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
         });
     }
 

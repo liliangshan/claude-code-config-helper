@@ -4,10 +4,13 @@
  */
 
 (function () {
-    const vscode = acquireVsCodeApi();
+    const embedded = !!window.llsSetupApi;
+    const vscode = embedded ? { postMessage: message => window.llsSetupApi.postMessage({ type: 'setup/providers', message }) } : acquireVsCodeApi();
 
     /** @type {import('../src/types').ConfigViewState | null} */
     let state = null;
+    let providersOnly = false;
+    let cliUpdateState = { busy: false };
 
     /** 用户配置的语言，auto 表示跟随 VS Code 显示语言。 */
     let configuredLanguage = 'auto';
@@ -53,7 +56,7 @@
             languageGerman: 'Deutsch',
             import: 'Import',
             export: 'Export',
-            globalPromptTask: 'Global Prompt / Task Flow',
+            globalPromptTask: 'Global Prompt',
             workspacePrompt: 'Workspace Prompt',
             openSettingsJson: 'Open settings.json',
             relaySetting: 'Claude Code Relay Setting',
@@ -76,6 +79,14 @@
             providerDescription: 'Configure upstream providers and models for Claude Code Relay. After fetching models or changing provider/model settings, changes take effect immediately in the current workspace. Other workspaces must reload their window or close and reopen it.',
             newProvider: '+ New Provider',
             noProviders: 'No providers yet. Click “New Provider” to start.',
+            sectionCliEyebrow: 'Runtime',
+            sectionCliTitle: 'Claude CLI',
+            sectionCliDescription: 'Verified executable, installation source and update entry for this VS Code environment.',
+            cliStatusMetaLabel: 'Status',
+            sectionProvidersEyebrow: 'Models',
+            providerCountLabel: 'providers',
+            brandTag: 'Enterprise Console',
+            appSubtitle: 'Unified operations console for the local Claude Code relay, upstream providers, model routing, prompts and task flow.',
             enableProvider: 'Enable provider',
             enableModel: 'Enable model',
             baseUrlNotConfigured: 'BaseURL not configured',
@@ -159,7 +170,7 @@
             languageGerman: 'Deutsch',
             import: '导入',
             export: '导出',
-            globalPromptTask: '全局提示词/任务流',
+            globalPromptTask: '全局提示词',
             workspacePrompt: '工作区提示词',
             openSettingsJson: '打开 settings.json',
             relaySetting: 'Claude Code Relay Setting',
@@ -182,6 +193,14 @@
             providerDescription: '配置可供 Claude Code Relay 使用的上游提供商与模型。拉取模型、修改提供商或修改模型配置后，当前工作区立即生效；其它工作区需重载窗口，或关闭窗口后重新打开才生效。',
             newProvider: '+ 新建提供商',
             noProviders: '暂无提供商，点击“新建提供商”开始。',
+            sectionCliEyebrow: '运行环境',
+            sectionCliTitle: 'Claude CLI',
+            sectionCliDescription: '当前 VS Code 环境使用的 CLI、安装来源与更新入口。',
+            cliStatusMetaLabel: '状态',
+            sectionProvidersEyebrow: '模型',
+            providerCountLabel: '个提供商',
+            brandTag: '企业版控制台',
+            appSubtitle: '统一管理中心：本地 Claude Code 中转、上游提供商、模型路由、提示词与任务流。',
             enableProvider: '启用厂商',
             enableModel: '启用模型',
             baseUrlNotConfigured: '未配置 BaseURL',
@@ -267,7 +286,7 @@
         languageGerman: 'Deutsch',
         import: '匯入',
         export: '匯出',
-        globalPromptTask: '全域提示詞 / 任務流',
+        globalPromptTask: '全域提示詞',
         workspacePrompt: '工作區提示詞',
         openSettingsJson: '開啟 settings.json',
         relaySetting: 'Claude Code 中轉設定',
@@ -290,6 +309,14 @@
         providerDescription: '設定可供 Claude Code Relay 使用的上游提供商與模型。擷取模型、修改提供商或模型設定後，目前工作區立即生效；其他工作區需重新載入視窗，或關閉視窗後重新開啟才生效。',
         newProvider: '+ 新增提供商',
         noProviders: '尚無提供商，點擊「新增提供商」開始。',
+        sectionCliEyebrow: '執行環境',
+        sectionCliTitle: 'Claude CLI',
+        sectionCliDescription: '目前 VS Code 環境使用的 CLI、安裝來源與更新入口。',
+        cliStatusMetaLabel: '狀態',
+        sectionProvidersEyebrow: '模型',
+        providerCountLabel: '個提供商',
+        brandTag: '企業版控制台',
+        appSubtitle: '統一管理中心：本機 Claude Code 中轉、上游提供商、模型路由、提示詞與任務流。',
         enableProvider: '啟用提供商',
         enableModel: '啟用模型',
         baseUrlNotConfigured: '未設定 BaseURL',
@@ -351,7 +378,7 @@
         languageGerman: 'Deutsch',
         import: '가져오기',
         export: '내보내기',
-        globalPromptTask: '전역 프롬프트 / 작업 흐름',
+        globalPromptTask: '전역 프롬프트',
         workspacePrompt: '작업 영역 프롬프트',
         openSettingsJson: 'settings.json 열기',
         relaySetting: 'Claude Code 릴레이 설정',
@@ -374,6 +401,14 @@
         providerDescription: 'Claude Code Relay에서 사용할 업스트림 공급자와 모델을 구성합니다. 모델을 가져오거나 공급자 또는 모델 설정을 변경하면 현재 작업 영역에 즉시 적용됩니다. 다른 작업 영역은 창을 다시 로드하거나 닫았다가 다시 열어야 적용됩니다.',
         newProvider: '+ 새 공급자',
         noProviders: '아직 공급자가 없습니다. “새 공급자”를 클릭하여 시작하세요.',
+        sectionCliEyebrow: '실행 환경',
+        sectionCliTitle: 'Claude CLI',
+        sectionCliDescription: '현재 VS Code 환경에서 사용하는 CLI, 설치 소스 및 업데이트 진입점입니다.',
+        cliStatusMetaLabel: '상태',
+        sectionProvidersEyebrow: '모델',
+        providerCountLabel: '개 공급자',
+        brandTag: '엔터프라이즈 콘솔',
+        appSubtitle: '로컬 Claude Code 릴레이, 업스트림 공급자, 모델 라우팅, 프롬프트 및 작업 흐름을 관리하는 통합 콘솔입니다.',
         enableProvider: '공급자 활성화',
         enableModel: '모델 활성화',
         baseUrlNotConfigured: 'BaseURL이 구성되지 않음',
@@ -435,7 +470,7 @@
         languageGerman: 'Deutsch',
         import: 'インポート',
         export: 'エクスポート',
-        globalPromptTask: 'グローバルプロンプト / タスクフロー',
+        globalPromptTask: 'グローバルプロンプト',
         workspacePrompt: 'ワークスペースプロンプト',
         openSettingsJson: 'settings.json を開く',
         relaySetting: 'Claude Code リレー設定',
@@ -458,6 +493,14 @@
         providerDescription: 'Claude Code Relay で使用する上流プロバイダーとモデルを設定します。モデルの取得、プロバイダーまたはモデル設定の変更は、現在のワークスペースにすぐ反映されます。他のワークスペースでは、ウィンドウを再読み込みするか、閉じてから開き直してください。',
         newProvider: '+ 新しいプロバイダー',
         noProviders: 'プロバイダーはまだありません。「新しいプロバイダー」をクリックして開始してください。',
+        sectionCliEyebrow: '実行環境',
+        sectionCliTitle: 'Claude CLI',
+        sectionCliDescription: 'この VS Code 環境で使用する CLI、インストール元、更新の入口です。',
+        cliStatusMetaLabel: '状態',
+        sectionProvidersEyebrow: 'モデル',
+        providerCountLabel: '件のプロバイダー',
+        brandTag: 'エンタープライズコンソール',
+        appSubtitle: 'ローカル Claude Code リレー、上流プロバイダー、モデルルーティング、プロンプト、タスクフローを一元管理します。',
         enableProvider: 'プロバイダーを有効化',
         enableModel: 'モデルを有効化',
         baseUrlNotConfigured: 'BaseURL が未設定',
@@ -519,7 +562,7 @@
         languageGerman: 'Deutsch',
         import: 'Importer',
         export: 'Exporter',
-        globalPromptTask: 'Prompt global / Flux de tâches',
+        globalPromptTask: 'Prompt global',
         workspacePrompt: 'Prompt de l’espace de travail',
         openSettingsJson: 'Ouvrir settings.json',
         relaySetting: 'Paramètres du relais Claude Code',
@@ -542,6 +585,14 @@
         providerDescription: 'Configurez les fournisseurs amont et les modèles utilisables par Claude Code Relay. Après la récupération des modèles ou la modification des paramètres du fournisseur ou du modèle, les changements prennent effet immédiatement dans cet espace de travail. Dans les autres espaces de travail, rechargez la fenêtre ou fermez-la puis rouvrez-la.',
         newProvider: '+ Nouveau fournisseur',
         noProviders: 'Aucun fournisseur pour le moment. Cliquez sur « Nouveau fournisseur » pour commencer.',
+        sectionCliEyebrow: 'Environnement',
+        sectionCliTitle: 'Claude CLI',
+        sectionCliDescription: 'CLI utilisé dans cet environnement VS Code, source d’installation et accès aux mises à jour.',
+        cliStatusMetaLabel: 'État',
+        sectionProvidersEyebrow: 'Modèles',
+        providerCountLabel: 'fournisseurs',
+        brandTag: 'Console entreprise',
+        appSubtitle: 'Console unifiée du relais local Claude Code : fournisseurs amont, routage des modèles, prompts et flux de tâches.',
         enableProvider: 'Activer le fournisseur',
         enableModel: 'Activer le modèle',
         baseUrlNotConfigured: 'BaseURL non configurée',
@@ -596,7 +647,7 @@
         languageGerman: 'Deutsch',
         import: 'Importieren',
         export: 'Exportieren',
-        globalPromptTask: 'Globaler Prompt / Task-Flow',
+        globalPromptTask: 'Globaler Prompt',
         workspacePrompt: 'Workspace-Prompt',
         openSettingsJson: 'settings.json öffnen',
         relaySetting: 'Claude Code Relay-Einstellungen',
@@ -619,6 +670,14 @@
         providerDescription: 'Konfigurieren Sie Upstream-Anbieter und Modelle für Claude Code Relay. Nach dem Abrufen von Modellen oder dem Ändern von Anbieter- oder Modelleinstellungen werden Änderungen im aktuellen Arbeitsbereich sofort wirksam. In anderen Arbeitsbereichen müssen Sie das Fenster neu laden oder schließen und erneut öffnen.',
         newProvider: '+ Neuer Anbieter',
         noProviders: 'Noch keine Anbieter. Klicken Sie auf „Neuer Anbieter“, um zu beginnen.',
+        sectionCliEyebrow: 'Laufzeit',
+        sectionCliTitle: 'Claude CLI',
+        sectionCliDescription: 'CLI, Installationsquelle und Update-Einstieg dieser VS Code-Umgebung.',
+        cliStatusMetaLabel: 'Status',
+        sectionProvidersEyebrow: 'Modelle',
+        providerCountLabel: 'Anbieter',
+        brandTag: 'Enterprise-Konsole',
+        appSubtitle: 'Zentrale Konsole für lokales Claude Code Relay, Upstream-Anbieter, Modell-Routing, Prompts und Task-Flow.',
         enableProvider: 'Anbieter aktivieren',
         enableModel: 'Modell aktivieren',
         baseUrlNotConfigured: 'BaseURL nicht konfiguriert',
@@ -909,7 +968,7 @@
 
     /** 渲染整个应用。 */
     function render() {
-        const app = document.getElementById('app');
+        const app = document.getElementById(embedded ? 'setup-providers' : 'app');
         if (!app) return;
         if (!state) {
             app.innerHTML = '<div class="app-shell"><div class="empty" data-i18n="loading">正在加载配置...</div></div>';
@@ -918,15 +977,16 @@
         }
         app.innerHTML = `
             <main class="app-shell">
-                ${renderAdBanner()}
-                ${renderHeader()}
-                ${renderClaudeCard()}
+                ${providersOnly ? '' : renderAdBanner()}
+                ${providersOnly ? '' : renderHeader()}
+                ${providersOnly ? '' : renderClaudeCard()}
                 ${renderProvidersCard()}
             </main>
             ${renderModal()}
         `;
         bindEvents();
         applyI18n();
+        renderCliUpdate();
         applyPendingAd();
     }
 
@@ -986,13 +1046,18 @@
         if (img) img.removeAttribute('src');
     }
 
-    /** 渲染页面头部。 */
+    /** 渲染精简页头：保留品牌、语言和工具栏，不再显示重复标题及说明。 */
     function renderHeader() {
         return `
             <section class="header">
-                <div>
-                    <h1 data-i18n="appTitle">LLS CCAI Setting</h1>
-                    <p data-i18n="appSubtitle">管理 Claude Code 本地中转、上游提供商、模型、提示词与任务流设置。</p>
+                <div class="brand-row">
+                    <span class="brand-mark" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 1.6 22 7v10L12 22.4 2 17V7z" opacity=".18"/><path fill="currentColor" d="M12 4.2 19.4 8.3v7.4L12 19.8 4.6 15.7V8.3zM12 1.6 22 7v10L12 22.4 2 17V7z" opacity=".45"/><path fill="currentColor" d="M10.9 8.4h2.2v5.3h3.2v2.1H7.7v-2.1h3.2z"/></svg>
+                    </span>
+                    <span class="brand-name">${BRAND_NAME}</span>
+                    <span class="brand-tag" data-i18n="brandTag">企业版控制台</span>
+                </div>
+                <div class="header-main">
                     <div class="language-row">
                         <label for="language-select" data-i18n="languageLabel">语言</label>
                         <select id="language-select" class="language-select" data-i18n-aria-label="languageLabel">
@@ -1017,67 +1082,116 @@
                         <span class="toolbar-btn-label" data-i18n="export">导出</span>
                     </button>
                     <span class="toolbar-divider" aria-hidden="true"></span>
-                    <button id="btn-open-global-shared" class="toolbar-btn toolbar-btn-accent" data-i18n-title="globalPromptTask" title="全局提示词/任务流">
+                    <button id="btn-open-global-shared" class="toolbar-btn toolbar-btn-accent" data-i18n-title="globalPromptTask" title="全局提示词">
                         <svg class="toolbar-btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zM2 8a6 6 0 0 1 1.05-3.39c.32.43.86 1.05 1.62 1.5.16.1.27.27.27.46v1.07c0 .27.11.53.3.72l1.4 1.4a.5.5 0 0 1 .15.35V12a.5.5 0 0 0 .85.35l.9-.9a.5.5 0 0 0 .15-.36V9.5a.5.5 0 0 1 .5-.5h1.2a.5.5 0 0 0 .35-.85L9.5 7.5h1.2a.5.5 0 0 0 .35-.15l1.05-1.05A6 6 0 0 1 14 8a6 6 0 1 1-12 0z"/></svg>
-                        <span class="toolbar-btn-label" data-i18n="globalPromptTask">全局提示词/任务流</span>
+                        <span class="toolbar-btn-label" data-i18n="globalPromptTask">全局提示词</span>
                     </button>
                     <button id="btn-open-workspace-shared" class="toolbar-btn toolbar-btn-accent" data-i18n-title="workspacePrompt" title="工作区提示词">
                         <svg class="toolbar-btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M14.5 3h-5.79L7.6 1.89A1.5 1.5 0 0 0 6.54 1.5H1.5A1.5 1.5 0 0 0 0 3v10a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 16 13V4.5A1.5 1.5 0 0 0 14.5 3zM1.5 2.5h5.04a.5.5 0 0 1 .35.15L8.1 3.85a.5.5 0 0 0 .35.15h6.05a.5.5 0 0 1 .5.5V6H1V3a.5.5 0 0 1 .5-.5zM14.5 13.5h-13A.5.5 0 0 1 1 13V7h14v6a.5.5 0 0 1-.5.5z"/></svg>
                         <span class="toolbar-btn-label" data-i18n="workspacePrompt">工作区提示词</span>
                     </button>
-                    <span class="toolbar-divider" aria-hidden="true"></span>
-                    <button id="btn-open-settings" class="toolbar-btn" data-i18n-title="openSettingsJson" title="打开 settings.json">
-                        <svg class="toolbar-btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.988 1.987l.17.311c.518.95.043 2.146-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.988l.311-.17c.95-.518 2.146-.043 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.988-1.987l-.17-.311c-.518-.95-.043-2.146.872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.988l-.311.17c-.95.518-2.146.043-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/></svg>
-                        <span class="toolbar-btn-label" data-i18n="openSettingsJson">打开 settings.json</span>
-                    </button>
                 </div>
             </section>
         `;
     }
 
-    /** 渲染 Claude Code 顶部配置区。 */
-    function renderClaudeCard() {
-        const cliPath = state.chatCliPath || '';
+    /** 当前版本卡片的七语言文案，检查更新仍沿用原有 setupAction 消息。 */
+    const setupLabels = {
+        en: ['Current version', 'Check for updates'],
+        'zh-cn': ['当前版本', '检查更新'],
+        'zh-tw': ['目前版本', '檢查更新'],
+        ja: ['現在のバージョン', '更新を確認'],
+        ko: ['현재 버전', '업데이트 확인'],
+        fr: ['Version actuelle', 'Vérifier les mises à jour'],
+        de: ['Aktuelle Version', 'Nach Updates suchen']
+    };
+    /** 品牌名保持固定大小写，不进入翻译，避免各语言把它改写成普通词组。 */
+    const BRAND_NAME = 'Claude Code Config Helper';
+
+    /**
+     * 渲染提供商分区标题及右侧操作，不再展示冗长说明。
+     * @param {string} titleKey 标题文案键。
+     * @param {string} eyebrowKey 分区标签文案键。
+     * @param {string} iconPath 徽标内 SVG path。
+     * @param {string} action 原有操作按钮的 HTML，事件绑定保持不变。
+     * @returns {string} 标题行 HTML。
+     */
+    function renderSectionHead(titleKey, eyebrowKey, iconPath, action) {
         return `
-            <section class="card claude-card">
-                <div class="card-title">
-                    <div>
-                        <h2 data-i18n="relaySetting">Claude Code Chat Setting</h2>
-                        <p class="provider-meta" data-i18n="relayDescription">当前模型、端口和环境变量会同步到 Claude Code 运行配置。</p>
+                <div class="section-head providers-heading">
+                    <span class="section-icon" aria-hidden="true">
+                        <svg viewBox="0 0 16 16"><path fill="currentColor" d="${iconPath}"/></svg>
+                    </span>
+                    <div class="section-head-text">
+                        <span class="section-eyebrow" data-i18n="${eyebrowKey}">${text(t(eyebrowKey))}</span>
+                        <h2 data-i18n="${titleKey}">${text(t(titleKey))}</h2>
                     </div>
-                </div>
-                <div class="grid">
-                    <div class="field full">
-                        <label for="chat-cli-path" data-i18n="cliPath">Claude CLI 路径</label>
-                        <div class="path-picker-row">
-                            <input id="chat-cli-path" type="text" readonly value="${text(cliPath)}" data-i18n-placeholder="cliPathPlaceholder" placeholder="尚未选择 CLI 路径" />
-                            <button id="btn-select-chat-cli" type="button" class="secondary" data-i18n="selectCliPath">选择路径</button>
-                        </div>
-                        <div class="cli-install-hint" role="note">
-                            <span data-i18n="cliInstallHint">提示：如果你还没安装 Claude CLI，或不知道安装路径在哪，请用 AI 或搜索引擎搜索：</span>
-                            <code data-i18n="cliInstallQuery">如何安装 Claude CLI 及 Claude CLI的安装路径在哪？</code>
-                            <button id="btn-copy-cli-install-query" type="button" class="icon-copy-button" data-i18n-title="copyCliInstallQuery" data-i18n-aria-label="copyCliInstallQuery" title="复制搜索文本">
-                                <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 4.5A1.5 1.5 0 0 1 5.5 3H12a1 1 0 0 1 1 1v8.5A1.5 1.5 0 0 1 11.5 14h-6A1.5 1.5 0 0 1 4 12.5zM5.5 4a.5.5 0 0 0-.5.5v8a.5.5 0 0 0 .5.5h6a.5.5 0 0 0 .5-.5V4zM3 11H2.5A1.5 1.5 0 0 1 1 9.5v-6A1.5 1.5 0 0 1 2.5 2H9v1H2.5a.5.5 0 0 0-.5.5v6a.5.5 0 0 0 .5.5H3z"/></svg>
-                            </button>
-                            ${renderWindowsCliInstallHint()}
-                            ${renderClaudeSettingsHint()}
-                        </div>
-                    </div>
-                </div>
-            </section>
-        `;
+                    ${action}
+                </div>`;
     }
 
-    /** 渲染提供商管理卡片。 */
+    /** 分区徽标图标：终端、以及堆叠的模型提供商。 */
+    const SECTION_ICON_CLI = 'M2 2.5A1.5 1.5 0 0 1 3.5 1h9A1.5 1.5 0 0 1 14 2.5v11A1.5 1.5 0 0 1 12.5 15h-9A1.5 1.5 0 0 1 2 13.5zM3.5 2a.5.5 0 0 0-.5.5v11a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5v-11a.5.5 0 0 0-.5-.5zM5 4.6l2.6 2.4L5 9.4l.7.7 3.3-3.1L5.7 3.9zM8.3 11h3v1h-3z';
+    const SECTION_ICON_PROVIDERS = 'M1.5 2A1.5 1.5 0 0 1 3 .5h10A1.5 1.5 0 0 1 14.5 2v2A1.5 1.5 0 0 1 13 5.5H3A1.5 1.5 0 0 1 1.5 4zM1.5 7A1.5 1.5 0 0 1 3 5.5h10A1.5 1.5 0 0 1 14.5 7v2a1.5 1.5 0 0 1-1.5 1.5H3A1.5 1.5 0 0 1 1.5 9zM1.5 12a1.5 1.5 0 0 1 1.5-1.5h10A1.5 1.5 0 0 1 14.5 12v2a1.5 1.5 0 0 1-1.5 1.5H3A1.5 1.5 0 0 1 1.5 14z';
+
+    /** 渲染精简 CLI 卡片，仅显示当前版本并保留原有检查更新事件。 */
+    function renderClaudeCard() {
+        const labels = setupLabels[currentLanguage] || setupLabels.en;
+        return `<section class="card claude-card cli-version-card">
+            <div class="cli-version-info">
+                <h2>Claude CLI</h2>
+                <div class="cli-version-line">
+                    <span>${text(labels[0])}</span>
+                    <strong data-role="cli-version">${text(state.setup?.cli?.version || '—')}</strong>
+                </div>
+            </div>
+            <button type="button" data-setup="update">${text(labels[1])}</button>
+            <p class="cli-update-status" data-role="cli-update-status" role="status" hidden></p>
+        </section>`;
+    }
+
+    /** 原位更新版本卡片；不重建设置表单、供应商列表或当前弹窗。 */
+    function renderCliUpdate() {
+        const labels = {
+            en: ['Checking…', 'Waiting for update confirmation…', 'Downloading…', 'Verifying and installing…', 'Restarting active sessions…', 'CLI updated', 'Update cancelled', 'Could not check or update CLI', 'Already up to date'],
+            'zh-cn': ['正在检查…', '等待确认更新…', '正在下载…', '正在校验和安装…', '正在重启活动会话…', 'CLI 更新完成', '已取消更新', 'CLI 检查或更新失败', '已是最新版本'],
+            'zh-tw': ['正在檢查…', '等待確認更新…', '正在下載…', '正在校驗與安裝…', '正在重新啟動活動會話…', 'CLI 更新完成', '已取消更新', 'CLI 檢查或更新失敗', '已是最新版本'],
+            ja: ['確認中…', '更新の確認待ち…', 'ダウンロード中…', '検証とインストール中…', 'セッションを再起動中…', 'CLI 更新完了', '更新キャンセル', 'CLI の確認または更新に失敗', '最新バージョンです'],
+            ko: ['확인 중…', '업데이트 확인 대기 중…', '다운로드 중…', '검증 및 설치 중…', '세션 재시작 중…', 'CLI 업데이트 완료', '업데이트 취소', 'CLI 확인 또는 업데이트 실패', '최신 버전입니다'],
+            fr: ['Vérification…', 'Confirmation de mise à jour en attente…', 'Téléchargement…', 'Vérification et installation…', 'Redémarrage des sessions…', 'CLI mis à jour', 'Mise à jour annulée', 'Échec de vérification ou de mise à jour', 'Déjà à jour'],
+            de: ['Wird geprüft…', 'Warte auf Update-Bestätigung…', 'Download läuft…', 'Prüfung und Installation…', 'Sitzungen werden neu gestartet…', 'CLI aktualisiert', 'Update abgebrochen', 'CLI-Prüfung oder Update fehlgeschlagen', 'Bereits aktuell']
+        };
+        const localized = labels[currentLanguage] || labels.en;
+        const button = document.querySelector('[data-setup="update"]');
+        if (!button) return;
+        button.disabled = cliUpdateState.busy === true;
+        button.textContent = cliUpdateState.busy ? localized[0] : (setupLabels[currentLanguage] || setupLabels.en)[1];
+        const version = document.querySelector('[data-role="cli-version"]');
+        if (version && cliUpdateState.version) version.textContent = cliUpdateState.version;
+        const status = document.querySelector('[data-role="cli-update-status"]');
+        if (!status) return;
+        const progress = cliUpdateState.progress;
+        status.hidden = !progress;
+        if (!progress) { status.textContent = ''; return; }
+        const phases = { checking: 0, confirming: 1, downloading: 2, verifying: 3, switching: 4, complete: 5, cancelled: 6, error: 7, current: 8 };
+        let caption = localized[phases[progress.phase] ?? 0];
+        if (progress.version) caption += ` · ${progress.version}`;
+        if (progress.phase === 'downloading') {
+            const size = bytes => `${((bytes || 0) / 1048576).toFixed(1)} MB`;
+            caption += ` · ${size(progress.bytes)}${progress.total ? ` / ${size(progress.total)}` : ''}`;
+        }
+        if (progress.error) caption += `: ${progress.error}`;
+        status.textContent = caption; status.dataset.phase = progress.phase;
+    }
+
+    /** 渲染提供商管理卡片，新增按钮置于标题右侧，保留原有事件和模型操作。 */
     function renderProvidersCard() {
         return `
-            <section class="card">
-                <div class="card-title">
-                    <div>
-                        <h2 data-i18n="providerManagement">Provider Management</h2>
-                        <p class="provider-meta" data-i18n="providerDescription">配置可供 Claude Code Relay 使用的上游提供商与模型。</p>
-                    </div>
-                    <button id="btn-new-provider" data-i18n="newProvider">+ 新建提供商</button>
+            <section class="card providers-card">
+                ${renderSectionHead('providerManagement', 'sectionProvidersEyebrow', SECTION_ICON_PROVIDERS, '<button id="btn-new-provider" data-i18n="newProvider">+ 新建提供商</button>')}
+                <div class="provider-count providers-total">
+                    <span class="provider-count-value">${state.providers.length}</span>
+                    <span data-i18n="providerCountLabel">个提供商</span>
                 </div>
                 <div class="provider-list">
                     ${state.providers.length === 0 ? `<div class="empty" data-i18n="noProviders">${t('noProviders')}</div>` : state.providers.map(renderProvider).join('')}
@@ -1086,7 +1200,18 @@
         `;
     }
 
-    /** 渲染单个提供商卡片。 */
+    /**
+     * 显示宿主保存的密钥脱敏值；旧配置、短密钥或非法展示值回退至原有状态文案。
+     * @param {object} provider 不含完整密钥的提供商快照。
+     * @returns {string} 已脱敏的展示值或本地化状态。
+     */
+    function providerKeyLabel(provider) {
+        if (!provider.hasApiKey) return t('unsavedApiKey');
+        const masked = provider.maskedApiKey;
+        return typeof masked === 'string' && /^\*[^\s<>"'&]{4}$/u.test(masked) ? masked : t('savedApiKey');
+    }
+
+    /** 渲染单个提供商卡片，密钥仅展示宿主提供的脱敏值。 */
     function renderProvider(provider) {
         return `
             <article class="provider-card" data-provider-id="${text(provider.id)}">
@@ -1096,7 +1221,7 @@
                             <h3>${text(provider.name)}</h3>
                             ${renderSwitch('js-provider-enabled', provider.enabled, t('enableProvider'))}
                         </div>
-                        <div class="provider-meta">${text(provider.baseUrl || t('baseUrlNotConfigured'))} · ${text(provider.apiType)} · ${provider.hasApiKey ? t('savedApiKey') : t('unsavedApiKey')}</div>
+                        <div class="provider-meta">${text(provider.baseUrl || t('baseUrlNotConfigured'))} · ${text(provider.apiType)} · ${text(providerKeyLabel(provider))}</div>
                     </div>
                     <div class="card-actions">
                         <button class="secondary js-edit-provider">${t('edit')}</button>
@@ -1276,6 +1401,9 @@
                 post('updateUiLanguage', configuredLanguage);
             });
         });
+        byId('btn-editor-chat', (el) => el.addEventListener('click', () => post('openEditorSession')));
+        byId('btn-editor-history', (el) => el.addEventListener('click', () => post('openEditorHistory')));
+        document.querySelectorAll('[data-setup]').forEach(button => button.addEventListener('click', () => vscode.postMessage({ type: 'setupAction', action: button.dataset.setup })));
         byId('btn-select-chat-cli', (el) => el.addEventListener('click', () => post('selectChatCliPath')));
         byId('btn-copy-cli-install-query', (el) => el.addEventListener('click', copyCliInstallQuery));
         byId('btn-copy-windows-cli-install', (el) => el.addEventListener('click', copyWindowsCliInstallCommand));
@@ -1575,9 +1703,14 @@
     }
 
     window.addEventListener('message', (event) => {
-        const message = event.data;
-        if (message.type === 'state') {
+        const message = embedded ? event.data?.type === 'setup/providers' ? event.data.message : null : event.data;
+        if (!message) return;
+        if (message.type === 'cli/update') {
+            cliUpdateState = message.payload || { busy: false };
+            renderCliUpdate();
+        } else if (message.type === 'state') {
             state = message.payload;
+            providersOnly = message.providersOnly === true;
             configuredLanguage = state.configuredLanguage || 'auto';
             currentLanguage = state.resolvedLanguage || 'en';
             render();
@@ -1590,6 +1723,7 @@
         }
     });
 
+    if (embedded) window.addEventListener('setup/providersMount', render);
     render();
     post('ready');
 }());

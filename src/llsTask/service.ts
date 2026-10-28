@@ -412,9 +412,14 @@ export class LlsTaskService implements vscode.Disposable {
         }
     }
 
-    /**
-     * 释放事件资源，并把待落盘的快照立即刷盘。
-     */
+    /** Flush this instance's pending workflow checkpoint before its owner releases the session lock. */
+    public async flush(): Promise<void> {
+        if (this.persistTimer) clearTimeout(this.persistTimer);
+        this.persistTimer = undefined;
+        await this.store?.save(this.getSnapshot());
+    }
+
+    /** Release event resources and flush any remaining legacy debounce write. */
     public dispose(): void {
         if (this.persistTimer) {
             clearTimeout(this.persistTimer);

@@ -280,6 +280,7 @@ export type ExtensionToWebview =
       }
     | { type: 'session/init'; messages: ChatMessage[]; cliPath: string }
     | { type: 'session/title'; title: string; sessionId: string }
+    | { type: 'session/edit-title'; title: string; sessionId: string }
     | { type: 'sessions/list/result'; sessions: SessionListItem[] }
     | { type: 'request/recovery'; state: RequestRecoveryViewState | null }
     | { type: 'request/usage'; summary: RequestUsageSummary }
@@ -605,6 +606,10 @@ export type WebviewToExtension =
           modelId: string;
       }
     | {
+          /** 直接打开官网，不修改模型或会话，也不提交任务。 */
+          type: 'help/open';
+      }
+    | {
           /** 打开本扩展的提供商与模型配置页。 */
           type: 'config/open';
       }
@@ -631,6 +636,7 @@ export type WebviewToExtension =
       }
     | { type: 'file/open'; path: string; line?: number; endLine?: number }
     | { type: 'cli/restart' }
+    | { type: 'cli/restartOnly' }
     | { type: 'cli/selectPath' }
     | { type: 'tokenBudget/compactNow' }
     | {

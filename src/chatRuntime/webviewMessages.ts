@@ -37,9 +37,12 @@ import {
     appendLocalChatMessage,
     chatSessionState,
     clearPersistedChatSession,
+    ensureSidebarHistoryRestored,
+    flushPersistedChatSession,
     extractSessionTitle,
     getTokenBudgetServiceRef,
     parseSessionJsonl,
+    pushSessionTitleToWebview,
     resolveClaudeProjectDir,
     writeSessionCustomTitle
 } from './chatSession';
@@ -125,7 +128,7 @@ export async function switchChatRoute(route: ChatRoute, reason: string): Promise
  * 处理 Chat Webview 消息，并将会话/CLI 状态变更操作按到达顺序串行执行。
  *
  * `user/cancel` 与 `askUser/answers` 必须即时处理，不能排在长操作后面；日志也无需
- * 参与状态队列。其余消息进入同一队列，确保 `session/resume` 完成 CLI 重启之后，
+ * 参与状态队列。帮助入口同样即时处理，不等待任务或改变会话；其余消息进入同一队列，确保 `session/resume` 完成 CLI 重启之后，
  * 紧接着的 `user/send` 才会写入新会话对应的进程。
  *
  * @param message WebviewToExtension 协议消息。
@@ -136,7 +139,7 @@ export function handleChatWebviewMessage(message: WebviewToExtension): Promise<v
         requireDeps().cancelPendingResend(`webview:${message.type}`);
     }
     // 代码预览只影响显示，不改变会话；避免被等待压缩或长时间附件处理阻塞。
-    if (message.type === 'user/cancel' || message.type === 'askUser/answers' || message.type === 'log' || message.type === 'codePreview/select') {
+    if (message.type === 'user/cancel' || message.type === 'askUser/answers' || message.type === 'log' || message.type === 'codePreview/select' || message.type === 'help/open') {
         return dispatchChatWebviewMessage(message);
     }
     const run = orderedMessageQueue.then(() => dispatchChatWebviewMessage(message));
@@ -151,17 +154,24 @@ export function handleChatWebviewMessage(message: WebviewToExtension): Promise<v
  * @param message WebviewToExtension 协议消息。
  */
 async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<void> {
+    if ((await import('../setup/gate')).isCliUpdateInProgress() && ['user/send', 'user/resend', 'request/retry', 'cli/restart', 'cli/restartOnly', 'session/resume', 'session/clear'].includes(message.type)) {
+        await showChatToast('warn', 'CLI 更新中，请等待会话重启完成。'); return;
+    }
     switch (message.type) {
         case 'request/retry':
             if (message.identity && typeof message.identity === 'object') requestRecoveryController.retryManually(message.identity);
             return;
         case 'webview/ready':
+            await ensureSidebarHistoryRestored();
             await postChatUiLanguage();
             await getChatViewHost()?.postMessage({
                 type: 'session/init',
                 messages: chatSessionState.messages,
                 cliPath: getChatCliConfigService()!.getConfig().cliPath ?? ''
             });
+            const titleCwd = getChatCliConfigService()?.getConfig().cwd;
+            const titleSessionId = routes.normal.sessionId || (titleCwd ? await getChatCliSessionStore()?.readSessionId(titleCwd, 'normal') : '');
+            if (titleCwd && titleSessionId) await pushSessionTitleToWebview(titleCwd, titleSessionId);
             await postRecoveryState();
             await postChatModelOptions();
             await postChatTaskFlowModelOptions();
@@ -219,6 +229,9 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
         case 'taskFlow/model/select':
             await selectChatTaskFlowModel(message.modelId);
             return;
+        case 'help/open':
+            await vscode.commands.executeCommand(COMMANDS.openHelp);
+            return;
         case 'config/open':
             await vscode.commands.executeCommand(COMMANDS.openConfigPanel);
             return;
@@ -251,7 +264,9 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
                 cliPath: getChatCliConfigService()!.getConfig().cliPath ?? ''
             });
             return;
+        case 'cli/restartOnly': // Compatibility for a Webview loaded before the unified restart action.
         case 'cli/restart':
+            requireDeps().cancelAutoContinue('manual_cli_restart');
             await restartChatRelayAndCli();
             return;
         case 'askUser/answers':
@@ -295,6 +310,7 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
                     routes.normal.sessionId = '';
                     routes.taskFlow.sessionId = '';
                     chatSessionRouteById.clear();
+                    await getChatViewHost()?.postMessage({ type: 'session/title', title: '', sessionId: '' });
                     Logger.info(`[session/clear] 已删除 normal CLI sessionId 文件：cwd=${cwd}`);
                 }
             } catch (err) {
@@ -321,8 +337,9 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
                 return;
             }
             const targetId = (message.sessionId || routes.normal.sessionId || '').trim();
-            if (!targetId) {
-                Logger.warn('[session/set-title] 无可用 sessionId，跳过写回');
+            const activeId = routes.normal.sessionId || await getChatCliSessionStore()?.readSessionId(cwd, 'normal') || '';
+            if (!targetId || targetId !== activeId) {
+                Logger.warn('[session/set-title] 无可用或已切换的 sessionId，跳过写回');
                 return;
             }
             await writeSessionCustomTitle(cwd, targetId, message.title || '');
@@ -330,6 +347,10 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
         }
         case 'session/resume': {
             const targetSessionId = message.sessionId;
+            const editorHistory = await import('../editorChat/entry');
+            if (await editorHistory.isEditorCliSessionOwned(targetSessionId)) {
+                await showChatToast('warn', '该会话正在左侧或编辑区使用，请先停止对应会话再恢复。'); return;
+            }
             Logger.info(`[session/resume] 切换到历史会话：sessionId=${targetSessionId}`);
             requestUsageRegistry.clearRequestUsageBindings();
             chatSessionState.messages = [];
@@ -344,7 +365,8 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
                 const resumeCwd = getChatCliConfigService()?.getConfig().cwd
                     ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
                     ?? process.cwd();
-                const jsonlPath = path.join(resolveClaudeProjectDir(resumeCwd), `${targetSessionId}.jsonl`);
+                const historyConfig = getChatCliConfigService()?.getConfig();
+                const jsonlPath = path.join(resolveClaudeProjectDir(resumeCwd, historyConfig?.cliEnv.CLAUDE_CONFIG_DIR), `${targetSessionId}.jsonl`);
                 Logger.info(`[session/resume] 解析历史 JSONL：cwd=${resumeCwd} path=${jsonlPath}`);
                 historyMessages = await parseSessionJsonl(jsonlPath);
                 resumeTitle = await extractSessionTitle(jsonlPath);
@@ -354,6 +376,9 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
             }
 
             chatSessionState.messages = historyMessages;
+            chatSessionState.sessionId = targetSessionId;
+            chatSessionState.cwd = getChatCliConfigService()?.getConfig().cwd;
+            await flushPersistedChatSession();
             // 立即渲染历史消息到 webview
             Logger.info(`[session/resume] 推送 session/init 到 webview：messages=${chatSessionState.messages.length} host=${getChatViewHost() ? 'ready' : 'null'}`);
             await getChatViewHost()?.postMessage({
@@ -413,7 +438,8 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
                 const cwd = getChatCliConfigService()?.getConfig().cwd
                     ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
                     ?? process.cwd();
-                const projectDir = resolveClaudeProjectDir(cwd);
+                const historyConfig = getChatCliConfigService()?.getConfig();
+                const projectDir = resolveClaudeProjectDir(cwd, historyConfig?.cliEnv.CLAUDE_CONFIG_DIR);
                 const BUF_SIZE = 65536;
                 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                 let entries: string[];
@@ -477,6 +503,16 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
         default:
             return;
     }
+}
+
+/** Open the same in-chat title dialog from the command palette; no separate native input box is used. */
+export async function renameSidebarChat(): Promise<void> {
+    const host = getChatViewHost();
+    if (!host) return;
+    const current = host.getSessionTitle();
+    const sessionId = current.sessionId || routes.normal.sessionId;
+    if (!sessionId) return;
+    await host.postMessage({ type: 'session/edit-title', title: current.title, sessionId });
 }
 
 /**

@@ -5,13 +5,16 @@
  * 当前版本提供 Provider/Model 管理、内置 Chat 设置与共享提示词入口。
  */
 
+import { getSetupController, setupSnapshot } from '../setup/entry';
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 
 import { ConfigManager, getClaudeSettingsPath } from '../configManager';
-import { COMMANDS, WEBVIEW_TITLE, WEBVIEW_VIEW_TYPE } from '../constants';
+import { COMMANDS, PROVIDERS_VIEW_ID, WEBVIEW_TITLE, WEBVIEW_VIEW_TYPE } from '../constants';
 import { Logger } from '../logger';
 import { fetchModels } from '../modelFetcher';
+import { getChatViewHost } from '../runtime';
+import { getLeftChatView } from '../editorChat/entry';
 import type {
     AdItem,
     ConfigViewState,
@@ -70,12 +73,15 @@ function isSameCurrentModelSelection(
     return left.providerId === right.providerId && left.modelId === right.modelId;
 }
 
+/** Settings entry mode; onboarding can focus supplier management without exposing model selection. */
+interface ConfigPageOptions { providersOnly?: boolean; embedded?: boolean }
+
 /**
  * 配置 Webview 共享控制器。
  *
  * 同一套前端既可以显示在 Activity Bar 的 WebviewView 中，也可以作为备用打开到编辑器 WebviewPanel。
  */
-class ConfigWebviewController implements vscode.Disposable {
+export class ConfigWebviewController implements vscode.Disposable {
     /** 待释放资源集合。 */
     private readonly disposables: vscode.Disposable[] = [];
 
@@ -99,13 +105,16 @@ class ConfigWebviewController implements vscode.Disposable {
         private readonly context: vscode.ExtensionContext,
         private readonly manager: ConfigManager,
         private readonly host: ConfigWebviewHost,
-        onDispose?: () => void
+        onDispose?: () => void,
+        private pageOptions: ConfigPageOptions = {}
     ) {
-        this.configureWebview();
-        this.webview.html = this.renderHtml();
+        if (!this.pageOptions.embedded) {
+            this.configureWebview();
+            this.webview.html = this.renderHtml();
+        }
         this.disposables.push(
             this.webview.onDidReceiveMessage((message: WebviewMessage) => {
-                void this.handleMessage(message);
+                this.receiveMessage(message);
             }),
             this.manager.onDidChange(() => this.postState())
         );
@@ -115,11 +124,12 @@ class ConfigWebviewController implements vscode.Disposable {
                 this.dispose();
             }));
         }
-        // 视图初次创建时立即拉取一次顶部广告；网络失败会被静默吞掉，不影响设置页。
-        void this.loadAd();
-        // 视图从隐藏切换为可见时再尝试拉取一次（缓存命中时不会触发网络请求），
-        // 让用户每次回到设置页都能看到广告位的最新状态。
-        this.registerVisibilityRefresh();
+        if (!this.pageOptions.embedded) {
+            const setup = getSetupController();
+            if (setup) this.disposables.push(setup.onDidChangeCliUpdate(payload => this.postMessage({ type: 'cli/update', payload })));
+            void this.loadAd();
+            this.registerVisibilityRefresh();
+        }
     }
 
     /**
@@ -152,6 +162,9 @@ class ConfigWebviewController implements vscode.Disposable {
         this.postState();
     }
 
+    /** Focus the existing supplier editor or restore the full settings page without creating duplicate panels. */
+    public setPageOptions(options: ConfigPageOptions): void { this.pageOptions = options; this.postState(); }
+
     /** 释放 Webview 相关资源。 */
     public dispose(): void {
         while (this.disposables.length > 0) {
@@ -172,13 +185,27 @@ class ConfigWebviewController implements vscode.Disposable {
         };
     }
 
+    /** Route only supplier CRUD/model messages from the embedded wizard through the existing secure backend. */
+    private receiveMessage(message: WebviewMessage | { type: string; message?: WebviewMessage }): void {
+        if (this.pageOptions.embedded) {
+            if (message.type !== 'setup/providers' || !('message' in message) || !message.message) return;
+            const allowed = ['ready', 'saveProviders', 'fetchProviderModels', 'showInfo'];
+            if (allowed.includes(message.message.type)) void this.handleMessage(message.message);
+            return;
+        }
+        void this.handleMessage(message as WebviewMessage);
+    }
+
     /** 处理 Webview 前端发来的消息。 */
     private async handleMessage(message: WebviewMessage): Promise<void> {
         try {
             switch (message.type) {
-                case 'ready':
+                case 'ready': {
                     this.postState();
+                    const update = getSetupController()?.cliUpdateSnapshot();
+                    if (update && !this.pageOptions.embedded) this.postMessage({ type: 'cli/update', payload: update });
                     return;
+                }
                 case 'openSettingsJson':
                     await vscode.commands.executeCommand(COMMANDS.openSettingsJson);
                     return;
@@ -187,6 +214,13 @@ class ConfigWebviewController implements vscode.Disposable {
                     return;
                 case 'openWorkspaceSharedSettings':
                     await vscode.commands.executeCommand(COMMANDS.openWorkspaceSharedSettings);
+                    return;
+                case 'openEditorSession':
+                case 'openEditorHistory':
+                    await vscode.commands.executeCommand('claudeRouter.chat.openParallelSessions'); return;
+                case 'setupAction':
+                    if (['open','download','update','verify','rollback'].includes(message.action)) await vscode.commands.executeCommand(`claudeRouter.setup.${message.action}`);
+                    if (message.action !== 'update') this.postState();
                     return;
                 case 'selectChatCliPath':
                     await vscode.commands.executeCommand(COMMANDS.chatSelectCli);
@@ -203,7 +237,7 @@ class ConfigWebviewController implements vscode.Disposable {
                     const previousModel = this.manager.getCurrentModel();
                     await this.manager.setCurrentModel(message.payload);
                     this.postToast('success', message.payload ? '已切换当前模型并同步配置' : '已清空当前模型');
-                    if (!isSameCurrentModelSelection(previousModel, message.payload)) {
+                    if (setupSnapshot()?.completed && !isSameCurrentModelSelection(previousModel, message.payload)) {
                         await vscode.commands.executeCommand(COMMANDS.reloadWindow);
                     }
                     return;
@@ -416,7 +450,8 @@ class ConfigWebviewController implements vscode.Disposable {
 
     /** 向 Webview 推送完整状态。 */
     private postState(): void {
-        this.postMessage({ type: 'state', payload: this.manager.getState() });
+        const message = { type: 'state', payload: { ...this.manager.getState(), setup: setupSnapshot() }, providersOnly: this.pageOptions.providersOnly === true };
+        void this.webview.postMessage(this.pageOptions.embedded ? { type: 'setup/providers', message } : message);
     }
 
     /** 向 Webview 推送提示消息。 */
@@ -426,7 +461,7 @@ class ConfigWebviewController implements vscode.Disposable {
 
     /** 向 Webview 发送强类型消息。 */
     private postMessage(message: ExtensionMessage): void {
-        void this.webview.postMessage(message);
+        void this.webview.postMessage(this.pageOptions.embedded ? { type: 'setup/providers', message } : message);
     }
 
     /** 渲染 Webview HTML 壳。 */
@@ -470,35 +505,108 @@ class ConfigWebviewController implements vscode.Disposable {
 export class ConfigWebviewViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
     /** 当前侧栏 Webview 控制器。 */
     private controller: ConfigWebviewController | undefined;
+    private view?: vscode.WebviewView;
+    private wizard?: vscode.Disposable;
+    private pageSubscription?: vscode.Disposable;
+    private visibilitySubscription?: vscode.Disposable;
+    private mode?: 'wizard' | 'settings' | 'sessions';
+    private sessionsRequested = false;
 
     /**
-     * 创建侧栏配置视图 Provider。
-     *
-     * @param context 扩展上下文。
-     * @param manager 配置管理器。
+     * Create the left provider, retaining its last selected page without starting a conversation.
+     * @param context Extension state and subscriptions.
+     * @param manager Shared provider configuration.
      */
     public constructor(
         private readonly context: vscode.ExtensionContext,
         private readonly manager: ConfigManager
-    ) {}
+    ) { this.sessionsRequested = context.workspaceState?.get<boolean>('claudeRouter.leftPage.sessions', false) ?? false; }
 
-    /** VS Code 解析 WebviewView 时调用，用于填充侧栏内容。 */
+    /** Route one left-side Webview to onboarding or settings from the explicit global installation state. */
     public resolveWebviewView(webviewView: vscode.WebviewView): void {
-        this.controller?.dispose();
-        this.controller = new ConfigWebviewController(this.context, this.manager, webviewView);
-        this.controller.refresh();
+        this.releasePage();
+        this.pageSubscription?.dispose(); this.visibilitySubscription?.dispose();
+        this.view = webviewView;
+        this.pageSubscription = getSetupController()?.onDidChangePage(() => this.renderPage());
+        this.visibilitySubscription = webviewView.onDidChangeVisibility(() => {
+            if (webviewView.visible) { this.renderPage(); this.activateWizardIfNeeded(); void this.revealMainChat(); }
+        });
+        webviewView.onDidDispose(() => {
+            if (this.view !== webviewView) return;
+            this.releasePage(); this.view = undefined;
+            this.pageSubscription?.dispose(); this.visibilitySubscription?.dispose();
+        });
+        this.renderPage();
+        if (webviewView.visible) { this.activateWizardIfNeeded(); void this.revealMainChat(); }
     }
 
-    /** 聚焦侧栏配置视图。 */
-    public async focus(): Promise<void> {
+    /** Focus onboarding when an uninstalled environment opens the left view, without launching a CLI or download. */
+    private activateWizardIfNeeded(): void {
+        const setup = getSetupController();
+        if (setup && !setup.completed()) void setup.show();
+    }
+
+    /** Route the left view to onboarding, settings or the independent conversation without a list page. */
+    private renderPage(): void {
+        if (!this.view) return;
+        const setup = getSetupController();
+        const mode = setup?.needsWizard() ? 'wizard' : this.sessionsRequested ? 'sessions' : 'settings';
+        if (mode === this.mode) { this.controller?.refresh(); return; }
+        this.releasePage(); this.mode = mode;
+        this.updateToolbarContext(mode === 'sessions');
+        if (mode === 'wizard' && setup) this.wizard = setup.attach(this.view);
+        else if (mode === 'sessions') this.wizard = getLeftChatView()?.mount(this.view);
+        else {
+            this.view.title = 'LLS CCAI Setting';
+            this.controller = new ConfigWebviewController(this.context, this.manager, this.view);
+            this.controller.refresh();
+        }
+    }
+
+    /** Publish left-page context so native chat icons appear only while the left conversation is mounted. */
+    private updateToolbarContext(active: boolean): void {
+        void vscode.commands.executeCommand('setContext', 'claudeRouter.leftChatActive', active)
+            .then(undefined, error => Logger.warn(`更新左侧聊天工具栏失败：${String(error)}`));
+    }
+
+    /** Release only page controllers; switching modes never closes the view or discards setup progress. */
+    private releasePage(): void {
+        if (this.mode === 'sessions') this.updateToolbarContext(false);
+        this.controller?.dispose(); this.controller = undefined;
+        this.wizard?.dispose(); this.wizard = undefined; this.mode = undefined;
+    }
+
+    /** Expand the right main view without starting a session; a display failure must not block settings. */
+    private async revealMainChat(): Promise<void> {
+        if (getSetupController()?.needsWizard()) return;
+        try { await getChatViewHost()?.ensureVisible(true); }
+        catch (error) { Logger.warn(`显示主聊天视图失败：${String(error)}`); }
+    }
+
+    /** Reveal the left conversation without creating editor tabs or altering the right main conversation. */
+    public async showSessions(): Promise<void> {
+        this.sessionsRequested = true;
+        await this.context.workspaceState?.update('claudeRouter.leftPage.sessions', true);
+        await this.revealMainChat();
         await vscode.commands.executeCommand('workbench.view.extension.claudeRouter');
-        this.controller?.refresh();
+        await vscode.commands.executeCommand(`${PROVIDERS_VIEW_ID}.focus`);
+        this.renderPage();
     }
 
-    /** 释放侧栏控制器。 */
+    /** Show both views and leave keyboard focus in the left settings view without stopping a hidden task. */
+    public async focus(): Promise<void> {
+        this.sessionsRequested = false;
+        await this.context.workspaceState?.update('claudeRouter.leftPage.sessions', false);
+        await this.revealMainChat();
+        await vscode.commands.executeCommand('workbench.view.extension.claudeRouter');
+        await vscode.commands.executeCommand(`${PROVIDERS_VIEW_ID}.focus`);
+        this.renderPage();
+    }
+
+    /** Release the shared view controllers and mode/visibility subscriptions. */
     public dispose(): void {
-        this.controller?.dispose();
-        this.controller = undefined;
+        this.releasePage(); this.pageSubscription?.dispose(); this.visibilitySubscription?.dispose();
+        this.pageSubscription = undefined; this.visibilitySubscription = undefined; this.view = undefined;
     }
 }
 
@@ -526,13 +634,13 @@ export class ConfigView implements vscode.Disposable {
      * @param context 扩展上下文。
      * @param manager 配置管理器。
      */
-    public static show(context: vscode.ExtensionContext, manager: ConfigManager): void {
+    public static show(context: vscode.ExtensionContext, manager: ConfigManager, options: ConfigPageOptions = {}): void {
         if (ConfigView.currentPanel) {
             ConfigView.currentPanel.panel.reveal(vscode.ViewColumn.One);
-            ConfigView.currentPanel.controller.refresh();
+            ConfigView.currentPanel.controller.setPageOptions(options);
             return;
         }
-        ConfigView.currentPanel = new ConfigView(context, manager);
+        ConfigView.currentPanel = new ConfigView(context, manager, options);
     }
 
     /**
@@ -543,7 +651,8 @@ export class ConfigView implements vscode.Disposable {
      */
     private constructor(
         private readonly context: vscode.ExtensionContext,
-        private readonly manager: ConfigManager
+        private readonly manager: ConfigManager,
+        options: ConfigPageOptions
     ) {
         this.panel = vscode.window.createWebviewPanel(
             WEBVIEW_VIEW_TYPE,
@@ -557,7 +666,7 @@ export class ConfigView implements vscode.Disposable {
         );
         this.controller = new ConfigWebviewController(context, manager, this.panel, () => {
             ConfigView.currentPanel = undefined;
-        });
+        }, options);
         this.disposables.push(
             this.controller
         );

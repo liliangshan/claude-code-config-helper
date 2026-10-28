@@ -68,7 +68,8 @@ export function extractFilePathFromToolInput(toolName: string, input: unknown): 
 /** 在 Claude Code 檔案工具使用後自動於 VS Code 編輯器開啟對應檔案。 */
 export class EditorAutoOpener {
     /** 建立自動開檔器。 */
-    public constructor(private readonly workspaceRootProvider: () => readonly vscode.WorkspaceFolder[] | undefined = () => vscode.workspace.workspaceFolders) {}
+    public constructor(private readonly workspaceRootProvider: () => readonly vscode.WorkspaceFolder[] | undefined = () => vscode.workspace.workspaceFolders,
+        private readonly previewEnabled: () => boolean = getCodePreviewEnabled) {}
 
     /**
      * 观察文件工具；代码预览关闭时仅保留 Markdown 自动展示，原有总开关仍有效。
@@ -90,7 +91,7 @@ export class EditorAutoOpener {
      * @returns 文件应自动展示时返回 true。
      */
     private shouldPreviewFile(filePath: string): boolean {
-        return ['.md', '.markdown'].includes(path.extname(filePath).toLowerCase()) || getCodePreviewEnabled();
+        return ['.md', '.markdown'].includes(path.extname(filePath).toLowerCase()) || this.previewEnabled();
     }
 
     /** 讀取使用者是否啟用自動開檔。 */

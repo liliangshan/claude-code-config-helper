@@ -147,6 +147,8 @@ export interface ProviderConfigWithoutSecrets {
     updatedAt: number;
     /** 是否已经在 SecretStorage 中保存密钥。 */
     hasApiKey: boolean;
+    /** 保存密钥时生成的脱敏展示值，例如 *ABCD；旧配置或过短密钥可不提供。 */
+    maskedApiKey?: string;
     /** 中转服务调用上游时采用的鉴权模式。 */
     authMode: AuthMode;
     /** 中转服务调用上游时附加的自定义请求头。 */
@@ -187,6 +189,8 @@ export type TaskFlowTarget = 'builtinChat' | 'externalClaudeCode';
 
 /** 配置页面需要的完整状态快照。 */
 export interface ConfigViewState {
+    /** Non-secret CLI installation/onboarding state for the settings card. */
+    setup?: import('./setup/state').SetupState;
     /** 所有提供商配置。 */
     providers: ProviderConfigWithoutSecrets[];
     /** 当前 Claude Code 模型选择。 */
@@ -218,6 +222,9 @@ export type WebviewMessage =
     | { type: 'openGlobalSharedSettings' }
     | { type: 'openWorkspaceSharedSettings' }
     | { type: 'reloadWindow' }
+    | { type: 'openEditorSession' }
+    | { type: 'openEditorHistory' }
+    | { type: 'setupAction'; action: 'open' | 'download' | 'update' | 'verify' | 'rollback' }
     | { type: 'selectChatCliPath' }
     | { type: 'renameClaudeSettings' }
     | { type: 'exportConfig' }
@@ -250,4 +257,5 @@ export interface AdItem {
 export type ExtensionMessage =
     | { type: 'state'; payload: ConfigViewState }
     | { type: 'toast'; payload: { level: ToastLevel; message: string } }
-    | { type: 'ad'; payload: AdItem | null };
+    | { type: 'ad'; payload: AdItem | null }
+    | { type: 'cli/update'; payload: import('./setup/controller').CliUpdateState };

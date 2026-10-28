@@ -78,18 +78,21 @@ export function readEffectiveCompactionModelSelection(): ChatRoutedModelSelectio
 }
 
 /**
- * 保存压缩模型下拉框选择，并同步写入项目配置与全局配置。
+ * 保存压缩模型下拉框选择，默认同步写入项目与全局；引导页可限定为当前工作区。
  *
  * @param modelId 压缩模型 ID；空字符串表示关闭压缩模型。
+ * @param options.workspaceOnly 为 true 时不修改其他工作区沿用的全局默认值。
  */
-export async function saveCompactionModelSelection(modelId: string): Promise<void> {
+export async function saveCompactionModelSelection(modelId: string, options: { workspaceOnly?: boolean } = {}): Promise<void> {
     const normalizedModelId = modelId.trim();
     const enabled = normalizedModelId.length > 0;
     const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
     await config.update(CHAT_COMPACTION_MODE_PROJECT_ENABLED_KEY, enabled, vscode.ConfigurationTarget.Workspace);
     await config.update(CHAT_COMPACTION_MODE_PROJECT_MODEL_KEY, normalizedModelId, vscode.ConfigurationTarget.Workspace);
-    await config.update(CHAT_COMPACTION_MODE_GLOBAL_ENABLED_KEY, enabled, vscode.ConfigurationTarget.Global);
-    await config.update(CHAT_COMPACTION_MODE_GLOBAL_MODEL_KEY, normalizedModelId, vscode.ConfigurationTarget.Global);
+    if (!options.workspaceOnly) {
+        await config.update(CHAT_COMPACTION_MODE_GLOBAL_ENABLED_KEY, enabled, vscode.ConfigurationTarget.Global);
+        await config.update(CHAT_COMPACTION_MODE_GLOBAL_MODEL_KEY, normalizedModelId, vscode.ConfigurationTarget.Global);
+    }
     getConfigManager()?.notifyChanged();
 }
 

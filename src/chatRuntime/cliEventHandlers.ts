@@ -18,7 +18,7 @@ import { getChatViewHost } from '../runtime';
 import { applyPendingNativeCompactionPolicy, getChatCliConfigService, getChatCliSessionStore } from './cliLifecycle';
 import type { RecoveryIdentity, RequestRecoveryController } from './requestRecovery';
 import { requestUsageRegistry } from './requestUsage';
-import { appendAssistantSegments, finishActiveAssistantMessage, getTokenBudgetServiceRef, pushSessionTitleToWebview } from './chatSession';
+import { appendAssistantSegments, chatSessionState, finishActiveAssistantMessage, getTokenBudgetServiceRef, pushSessionTitleToWebview, schedulePersistChatSession } from './chatSession';
 import {
     assistantTurnTextBySource,
     chatSessionRouteById,
@@ -173,6 +173,8 @@ export async function handleParsedCliEvent(event: ParsedCliEvent, source: ChatRo
             // 保证 usageSink 在活动路由为 taskFlow 时也能拿到正确会话。
             routes.normal.sessionId = event.sessionId;
             routes.taskFlow.sessionId = event.sessionId;
+            chatSessionState.sessionId = event.sessionId; chatSessionState.cwd = event.cwd;
+            schedulePersistChatSession();
             void pushSessionTitleToWebview(event.cwd, event.sessionId);
             return;
         case 'compact/status':

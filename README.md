@@ -1,8 +1,34 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.74
+**Version:** 3.2.77
 
-Claude Code Config Helper is a VS Code extension for enhancing Claude Code workflows inside VS Code. It provides a built-in Chat Webview backed by the local Claude CLI, provider/model configuration utilities, task workflow assistance, shared prompts, and VS Code diagnostics injection for model-assisted development.
+**Website: [www.zhineng.dev](https://www.zhineng.dev/)**
+
+[Overview](https://www.zhineng.dev/extension.html) · [Getting Started](https://www.zhineng.dev/guide.html) · [FAQ](https://www.zhineng.dev/faq.html) · [MCP Tools](https://www.zhineng.dev/mcp.html)
+
+Move beyond AI chat and keep development moving. **Claude Code Config Helper (LLS CCAI)** connects the local Claude CLI, model providers, independent left/right conversations and MCP tools inside VS Code, bringing coding, troubleshooting, task flows and diagnostics into one workspace.
+
+- **Guided setup:** download or reuse an existing CLI, manage providers, and choose workspace models and reasoning effort.
+- **Independent conversations:** keep primary and supporting tasks in separate contexts with their own model and permission settings, leaving the editor area for code.
+- **Tools on demand:** connect databases, SSH hosts, caches and APIs; inspect request usage and cache statistics; work in seven interface languages.
+
+Bring your own model service and credentials; model credits are not included. Usage charges and feature availability depend on your provider. This is an independent project, not an official Anthropic or Microsoft product.
+
+The Help icons in both native chat title bars and the Help text buttons open **https://www.zhineng.dev/** directly in your default browser, without a topic menu. Button labels remain localized, and the link contains no credentials, conversation content or workspace paths.
+
+## Recommended MCP Tools
+
+The following MCP servers are maintained by the same author and can complement this extension or run independently with other compatible clients. **They are optional: installing the extension does not automatically install or enable them.**
+
+| Tool | Use Cases | npm Documentation |
+| --- | --- | --- |
+| **SSH** | Remote commands and SFTP transfers with password/key authentication and host-fingerprint verification. | [@liangshanli/mcp-server-ssh](https://www.npmjs.com/package/@liangshanli/mcp-server-ssh) |
+| **MySQL** | Data queries, schema inspection and DDL/DML with read-only mode, permission controls and operation logs. | [@liangshanli/mcp-server-mysql](https://www.npmjs.com/package/@liangshanli/mcp-server-mysql) |
+| **SQL Server** | SQL queries and schema operations with permission controls, connection pooling and logs. | [@liangshanli/mcp-server-mssqlserver](https://www.npmjs.com/package/@liangshanli/mcp-server-mssqlserver) |
+| **Redis** | Cache inspection and key/data management with configurable operation permissions and logs. | [@liangshanli/mcp-server-redis](https://www.npmjs.com/package/@liangshanli/mcp-server-redis) |
+| **API Debug** | HTTP API debugging, shared configuration, login requests and indexed execution of saved endpoints. | [@liangshanli/mcp-server-apidebug](https://www.npmjs.com/package/@liangshanli/mcp-server-apidebug) |
+
+See the [MCP configuration guide](https://www.zhineng.dev/guide.html#mcp-config) for client-specific examples. Consult each package's npm documentation for current requirements. Start with a test environment and least-privilege accounts, verify SSH host fingerprints, and keep credentials out of Git. Application-level switches do not replace database, operating-system or network access controls.
 
 ## Tool JSON error diagnostics
 
@@ -11,6 +37,35 @@ When the Responses stream converter detects malformed tool arguments, it automat
 Files share the existing 20-snapshot error retention limit across date directories. Detection compares the upstream final arguments with the actual emitted argument fragments, including `__unparsedToolInput` wrappers and late fragments. The recorder also retains up to eight recent tool responses in memory (64 MiB total) to correlate a subsequent CLI `InputValidationError` by call ID. If the original response has expired or the extension was reloaded, the fallback file explicitly marks `originalResponseUnavailable`; it never substitutes an unrelated response.
 
 Request bodies, URLs and authentication headers are not included in these diagnostics, but **raw model responses and tool arguments can contain sensitive content**; review them before sharing. Token limits remain unchanged, and arguments are never repaired by guessing missing JSON characters.
+
+## What's New in 3.2.77
+
+- **One-click website help.** Both chat title bars have a Help icon, and both chat headers have a Help text button. Every entry opens [www.zhineng.dev](https://www.zhineng.dev/) directly in the system browser without a dropdown or topic menu. The command palette also provides **LLS CCAI: Open Help**.
+- **Localized controls, English documentation.** Help labels, tooltips, accessible names, command titles and launch-failure notices support all seven interface languages. The README is English-only, with website links and recommended optional MCP tools near the top.
+- **No interruption or private URL data.** Opening Help does not wait for chat task/settings queues or CLI updates, restart a conversation, change a model or send a model request. The fixed homepage URL contains no credentials, messages or workspace paths; simultaneous clicks share the pending browser launch.
+
+**Known issue:** the existing `requestUsageBinding` failure (`true !== false`) and the reused-response-ID association limitation remain unresolved. Real-window external-browser behavior still requires manual acceptance.
+
+## What's New in 3.2.76
+
+- **Two-sided conversations.** The right main chat stays in place. Parallel session and the native **＋** open the left independent conversation directly, restoring its saved selection or first history, and creating one only when no history exists. Repeated clicks reuse the same conversation without refreshing the chat or restarting its CLI. Settings can replace the left page without stopping its task.
+- **Matching title-bar actions.** The left chat has Edit title, Settings and Restart CLI icons like the right chat, but no plus. Rename/restart affect only the corresponding conversation. Chat no longer exposes conversation-list controls; editor task code, histories and restoration remain retained behind hidden legacy entries.
+- **Left usage and MCP fixes.** Exact request/response bindings and persisted statistics restore per-request token/cache usage and the context meter. Each conversation owns its bindings. Native workspace `.mcp.json` discovery follows the user's strict-mode setting rather than being forcibly disabled; folder-scoped VS Code MCP settings resolve against the conversation's own workspace.
+- **Automatic setup activation.** Missing or incomplete global installation records automatically open and focus the shared wizard before either chat starts. The Reset Installation State and Open Setup command clears only setup records through VS Code's live API; it preserves CLI files, providers, secrets, MCP configuration and histories. Development-only one-shot reset requests are ignored by production installations.
+- **Build identification.** Startup output records the actual extension path, mode, version and setup-completion flag, making installed-versus-development testing easier to verify.
+
+**Known issue:** the existing `requestUsageBinding` failure (`true !== false`) and reused-response-ID association limitation remain unresolved. Manual acceptance is still needed for real workspace/provider/MCP behavior.
+
+## What's New in 3.2.75
+
+- **Setup and settings share one view.** The left LLS CCAI view shows the three-step wizard until this host has an explicit global setup-completion record, then switches in place to settings. Existing CLI/model settings are prefilled, not treated as proof that setup is complete. Step 1 configures language, download source and CLI; step 2 manages providers and models directly; step 3 selects workspace Normal, Task flow and Compaction models plus Auto/Low/Medium/High/XHigh reasoning effort.
+- **Managed CLI downloads and updates.** Choose official npm (default) or the explicitly selected third-party China mirror, npmmirror. The extension downloads the host's native platform package, verifies its SHA512 integrity, extracts without running install scripts and validates `--version`. Executables are published directly as `<selected directory>/claude-<version>` (`.exe` on Windows), without overwriting an existing file. Custom download-directory choices survive reloads.
+- **Updates stay in settings.** The CLI card contains only the current version and Check for updates. Checking shows the result inline without switching back to onboarding or refreshing provider forms. New versions require confirmation; validated updates switch the path and restart extension-managed live sessions, preserving their identities and settings. Running tasks can be interrupted and are not replayed; unopened histories remain stopped and old executables are retained.
+- **Up to three parallel task tabs.** The main chat defaults to the right sidebar; settings remain on the left. The title-bar **＋ Parallel task** action reopens saved editor conversations in creation order without a picker, creating a new UUID only after all saved conversations are open. The maximum is three editor task areas, excluding the main chat; hidden, opening and closing tabs count toward the limit. Each tab owns its CLI, context, model choices, reasoning effort, task flow and draft. This is independent chat concurrency, not the separate multi-agent orchestration project.
+- **Cleaner chat and provider controls.** Editor tabs place Edit title, Restart CLI, Conversation list and New chat after the title. Main-chat page actions stay right-aligned, with existing native title-bar shortcuts retained. Manual restart reuses the relay-and-CLI restart flow with visible progress; editor restarts affect only their own runtime. Provider lists show `*` plus the last four key characters only when a hint was generated during saving; older entries retain Saved key, and full credentials remain in SecretStorage.
+- **Recovery and copy fixes.** Reload restores the main chat's exact saved CLI history when its message cache is empty or mismatched. Editor tabs retain UUID association and automatically recover locks only when the recorded owner process is gone. Copying selected chat output uses the host clipboard with a real success acknowledgement and preserves right-click selection.
+
+**Known issue:** the existing `requestUsageBinding` regression (`true !== false`) and the separately documented reused-response-ID usage-association problem remain unresolved. Synthetic/local tests do not replace manual acceptance on every OS, mirror and upstream provider.
 
 ## What's New in 3.2.74
 
@@ -117,7 +172,7 @@ Request bodies, URLs and authentication headers are not included in these diagno
 
 ## What's New in 3.2.50
 
-- **A localized Subagents switch now appears after the footer token meter.** Its label and tooltip support all seven interface languages, including “子智能体” in Simplified Chinese.
+- **A localized Subagents switch now appears after the footer token meter.** Its label and tooltip support all seven interface languages, including Simplified Chinese.
 - **The switch defaults to off and is saved per workspace** using extension `workspaceState`, not global settings. Each workspace keeps its own choice across reloads; legacy global values are not inherited.
 - **Off removes `Agent`, `SendMessage` and `ListAgents` from every subsequent Relay request's `tools` list; on preserves them.** This applies to ordinary chat, task-flow creation/execution and title-generation side requests across all three protocol adapters. The existing task-flow `AskUserQuestion` rule is unchanged. Changing the switch does not stop agents already running or disable other orchestration entry points such as `Workflow`.
 
@@ -134,7 +189,7 @@ Request bodies, URLs and authentication headers are not included in these diagno
 
 ## What's New in 3.2.47
 
-- **Fixed the false "Chat CLI 进程未运行，无法写入 stdin" error while the CLI is actually running.** After a CLI restart (model switch, auto-continue model swap, manual restart), the old child's late `exit` event could flip the shared `childExited` flag to `true` even though the new process was already running — so the next message was rejected with "process not running". Exit events now only affect shared state when they come from the current process.
+- **Fixed the false "Chat CLI process is not running; cannot write to stdin" error while the CLI is actually running.** After a CLI restart (model switch, auto-continue model swap, manual restart), the old child's late `exit` event could flip the shared `childExited` flag to `true` even though the new process was already running — so the next message was rejected with "process not running". Exit events now only affect shared state when they come from the current process.
 - **`send()` now waits up to 1s for a briefly-unwritable stdin instead of failing instantly** right after startup, and the rejection message now distinguishes *no process handle*, *process exited*, and *stdin never became writable*.
 
 ## What's New in 3.2.46
@@ -218,6 +273,20 @@ This release is a hardening pass over the Chat CLI, the relay server, and shutdo
 - Import/export of provider configuration and shared prompts.
 - Multi-language UI support.
 
+## Setup and Parallel Tasks
+
+1. Open **LLS CCAI** from the Activity Bar. When no explicit setup-completion record exists for this extension host, the same left-side view opens the setup wizard—even if an older installation already has a CLI path and providers.
+2. **Language and CLI:** choose the language and installation source. Download a managed CLI or select an existing executable under Advanced options. Next verifies the selected path. Changing the download directory updates both its displayed destination and future installations; it does not move or overwrite an external CLI.
+3. **Providers:** add/edit providers, save credentials, fetch models or add them manually. No paid inference test is required to proceed. Saved credentials stay in VS Code SecretStorage; the optional `*ABCD` key hint is generated only when a key longer than four characters is saved. Existing providers without a hint still show Saved key.
+4. **Workspace models:** choose the Normal model, optional Task flow/Compaction models and reasoning effort. Finish saves the explicit completion record, replaces the wizard with settings in the same view and opens the right-side main chat. It does not send a message automatically.
+5. Use **Check for updates** on the CLI version card for later updates. Merely checking or cancelling does not restart sessions. Accepting an update authorizes switching to its verified executable and restarting active extension-owned CLIs; interrupted work must be reviewed and resumed explicitly. Detached/remote processes can keep running.
+6. Use the main chat's **Parallel session** button or native title-bar **＋** to open the left independent conversation directly. It reuses the active left session, otherwise restores its saved selection or earliest history; without history it creates one conversation. No intermediate list or editor tab is opened.
+7. The left conversation initially copies the main chat's saved settings and then keeps its own models, reasoning, permissions, history and usage. Opening settings or hiding its view does not stop its task. The left native toolbar provides Edit title, Settings and Restart CLI, without a plus; restarting one side does not restart the other.
+
+Independent conversation checkpoints remain under `<workspace>/.LLSOAI/editor-sessions/<conversationId>/`; the main chat retains its existing `.LLSOAI/chat-session.json` CLI identity. Conversation-list controls are no longer shown in chat. The former editor multi-session implementation, saved histories and serializer are preserved, but its creation/history commands are hidden from the usual UI. Restoring a conversation never resends its previous prompt.
+
+Full development notes: [onboarding and CLI management](docs/onboarding-cli-install-left-chat-plan.md) and [independent editor sessions](docs/editor-chat-multi-session-plan.md).
+
 ## Task Flow Mode
 
 Task Flow turns the built-in Chat into a plan-driven, self-continuing agent. Instead of one-shot prompts, the main model writes a plan document first, and the task-flow model then drives that plan to completion.
@@ -231,13 +300,13 @@ The recommended loop:
 
 Progress is visible in the status bar (`completed/total`), the full task list opens from a QuickPick panel, and an unfinished workflow is persisted to `.LLSOAI/task-flow.json` so a VS Code restart offers to resume it. If the model keeps replying with plain text without calling any tool, a circuit breaker pauses auto-continuation instead of spamming the CLI.
 
-A dedicated task-flow model can be picked from the model bar's gear button and is persisted under `claudeCodeConfigHelper.chat.taskFlow.model` (workspace value first, global as fallback); leave it unset to reuse the normal model. `claudeCodeConfigHelper.taskFlow.target` chooses where task-flow prompts go — `builtinChat` (default) or `externalClaudeCode`.
+A dedicated task-flow model can be picked by clicking either model chip in the composer or in setup step 3. It is saved only for the current workspace under `claudeCodeConfigHelper.chat.taskFlow.model`; leave it unset to reuse the normal model. `claudeCodeConfigHelper.taskFlow.target` chooses where task-flow prompts go — `builtinChat` or `externalClaudeCode`.
 
 Full walkthrough: [`docs/taskflow-usage-guide.md`](./docs/taskflow-usage-guide.md).
 
 ## Model Roles
 
-The model picker exposes three roles, all switchable from the header gear button or by clicking either model chip in the composer:
+The model picker exposes three roles, accessible from either model chip in the composer; setup step 3 also configures these roles:
 
 | Role | Setting | Used for |
 | --- | --- | --- |
@@ -293,6 +362,7 @@ The extension marks managed entries with `__CLAUDE_ROUTER_MANAGED__` so that it 
 
 Available commands include:
 
+- `LLS CCAI: Open Help` (`claudeRouter.help.open`) — opens https://www.zhineng.dev/ directly in the system browser.
 - `Claude Code Config: Open Config Panel`
 - `Claude Code Config: Open settings.json`
 - `Claude Code Config: Open Global Shared Settings`
@@ -319,28 +389,13 @@ Command titles may be localized according to your configured UI language.
 
 ### Option 1: Install from a local VSIX
 
-```bash
-npm install
-npm run compile
-npx @vscode/vsce package
-code --install-extension claude-code-config-helper-3.2.48.vsix
-```
+Install the packaged `claude-code-config-helper-3.2.77.vsix` using VS Code's **Extensions → … → Install from VSIX…** action. Reload the window when ready to activate the installed build; reload interrupts currently running extension CLIs. To build a package yourself, install the repository dependencies, run `npm run compile`, then package with `@vscode/vsce`.
 
-### Windows Claude CLI install hint
+### CLI installation through setup
 
-On Windows, the configuration panel can show and copy a Claude CLI npm install command:
+The first setup step can download and verify the native CLI without a global npm install. Official npm is the default; **China mirror · npmmirror** is an opt-in third-party source whose releases may lag the official registry. The selected extension host determines the platform and architecture, including Remote SSH/WSL/container hosts—not the desktop UI machine.
 
-```powershell
-npm install -g @anthropic-ai/claude-code --registry=https://registry.npmmirror.com/
-```
-
-When the extension host is running on Windows, the panel also builds the common Claude CLI executable path from the host `%APPDATA%` environment variable, for example:
-
-```text
-C:\Users\lls\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe
-```
-
-Use the copy button next to the path if you need to paste it into the built-in Chat CLI path setting.
+Managed executables use `<download directory>/claude-<version>` or `claude-<version>.exe`. The installer never overwrites the old executable or an external installation. You can instead select an existing executable in Advanced options and validate it. Source URLs, redirects, archive entries, package integrity and the reported CLI version are checked; SHA512 integrity is not an independent publisher signature.
 
 ### Option 2: Run in development mode
 
@@ -350,20 +405,13 @@ Use the copy button next to the path if you need to paste it into the built-in C
 
 ## Basic Usage
 
-1. Open the Command Palette with `Cmd/Ctrl+Shift+P`.
-2. Run `Claude Code Config: Open Config Panel`.
-3. Create or edit a provider:
-   - **Name**: A display name for the provider.
-   - **Base URL**: The upstream endpoint root.
-   - **API Type**: `anthropic`, `openai-compatible`, or `v1-response`.
-   - **Auth Mode**:
-     - `auth_token`: writes `ANTHROPIC_AUTH_TOKEN` for Claude Code.
-     - `api_key`: writes `ANTHROPIC_API_KEY` for Claude Code.
-     - `none`: writes no authentication secret.
-   - **Custom Headers**: Optional headers, one `Key: Value` pair per line.
-   - **Models**: Add models manually or fetch them from the provider when supported.
-4. Select a model and activate the configuration.
-5. Reload the VS Code window when prompted so Claude Code can pick up the new environment variables.
+1. Open **LLS CCAI** from the Activity Bar, or run **LLS CCAI: Open LLS CCAI Setting** from the Command Palette.
+2. If installation is incomplete, finish **Language and CLI → Providers → Workspace models** in the same view. Existing users without a completion record also follow this flow; an already-installed CLI can be reused without downloading it again.
+3. Add or edit a provider with its name, Base URL, API type (`anthropic`, `openai-compatible` or `v1-response`), authentication mode (`auth_token`, `api_key` or `none`) and key/token. Fetch the model list where supported, or add models manually.
+4. Choose the normal model, optional task-flow and compaction models, and reasoning effort in step 3 or through the model chips in chat. Provider credentials remain shared; independent conversations retain their own saved model selections.
+5. Send a message from the right main chat, or open the independent left conversation with **Parallel session** or the title-bar **＋**. Use **Restart CLI** for that conversation's restart-with-progress flow; it keeps history and never replays the last task.
+
+The left settings view contains a compact CLI version/update card and full provider/model management. It does not require a reload for every edit; reload other workspaces when their shared-provider data needs refreshing. Upstream authentication and feature support still depend on the configured provider.
 
 ### Fetching models keeps your local settings
 
@@ -380,7 +428,7 @@ resets how they are configured:
 - **New ids are appended**, sorted by id, after your existing entries.
 
 The success toast reports the outcome as
-`已拉取 N 个模型：新增 A，保留原有配置 K，移除 R`.
+`Fetched N models: added A, preserved K existing configurations, removed R` (localized to the selected interface language).
 
 ## Built-in Chat Flow
 

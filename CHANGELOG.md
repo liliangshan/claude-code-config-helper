@@ -2,6 +2,81 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.77] - 2026-10-28
+
+### Added
+
+- Matching Help icons in both native chat title bars and Help text buttons in the shared chat header. All entries reuse `claudeRouter.help.open`, which is also available from the command palette.
+- Seven-language Help button labels, tooltips, accessible names, native command titles and external-browser failure messages.
+- Website, overview, getting-started, FAQ and MCP documentation links at the beginning of the README, plus an optional-tool catalog for SSH, MySQL, SQL Server, Redis and API Debug with their npm links and least-privilege guidance.
+
+### Changed
+
+- Help opens `https://www.zhineng.dev/` directly in the system browser, without an intermediate topic picker. The fixed URL contains no credentials, conversation content or workspace paths; simultaneous clicks share the pending browser launch.
+- Help remains available without waiting for chat task/settings queues or a CLI update, and does not restart either conversation, change model settings or send a model request. Browser rejection and launch failures show a localized warning instead of reporting success.
+- The README is now English-only while extension controls retain their existing localization.
+
+### Known Issues and Validation Scope
+
+- The pre-existing `requestUsageBinding` regression (`true !== false`) and the separate reused-response-ID usage-association limitation remain unresolved.
+- Automated coverage verifies direct URL opening, duplicate-click handling, localized failures, both native toolbar contributions, text-button routing and retained English documentation links. External-browser integration still requires manual acceptance in a real VS Code window.
+
+## [3.2.76] - 2026-10-28
+
+### Changed
+
+- The main chat's Parallel session button and native plus action now directly open the independent left conversation, without a list or an editor tab. Repeated clicks reuse the running conversation; first entry restores its saved selection or earliest saved history, creating only when no history exists.
+- The left native title bar matches the right chat's Edit title, Settings and Restart CLI icons, without a plus action. Rename and restart target only the left runtime; settings/onboarding hide chat-only actions.
+- Removed conversation-list controls and the history drawer from chat. Existing editor-session implementation, checkpoints, serializer and hidden legacy commands remain available for future use.
+
+### Fixed
+
+- Left/editor replies now bind per-request usage to exact response/tool identities using private registries, persist statistics with their segments and restore the context meter after settings changes or reload. Main-chat binding resets cannot clear left-chat statistics; compact-model requests do not replace normal context usage.
+- Independent CLI startup no longer forces strict MCP mode, allowing native workspace `.mcp.json` discovery under the user's configured policy. Folder-scoped settings and VS Code MCP files resolve against the conversation's own root; explicitly enabled strict mode and private built-in bridges are preserved.
+- Missing or incomplete environment-local installation state automatically reveals and focuses the shared setup wizard from startup and either sidebar. Simultaneous entry requests share one focus operation, and setup remains required before chat CLI execution.
+- Added Reset Installation State and Open Setup, which removes only setup records through VS Code's live state API. A workspace-targeted one-shot reset request can be consumed only by a development host before startup; production hosts ignore it. CLI files, providers, secrets, MCP configuration and conversation histories are retained.
+- Startup logs include the actual extension path, mode, version and setup-completion flag to distinguish installed builds from development-host builds.
+
+### Known Issues and Validation Scope
+
+- The pre-existing `requestUsageBinding` regression (`true !== false`) and the separate reused-response-ID association limitation remain unresolved.
+- Automated tests cover isolated child processes and local synthetic upstreams. Real-workspace onboarding, native MCP availability and provider behavior still require manual acceptance; opt-in live tests remain skipped unless configured.
+
+## [3.2.75] - 2026-10-28
+
+### Added
+
+- A single left-side settings/onboarding view, routed by explicit environment-bound global setup state. Missing completion records always require the wizard, including existing users; existing paths, providers and models are prefilled rather than silently marked complete.
+- Three setup steps: language/source/CLI validation, embedded provider/model management, then workspace Normal/Task flow/Compaction models and Auto/Low/Medium/High/XHigh reasoning effort. Completing setup switches the same view to settings and opens the right main chat without automatically sending a message.
+- Managed native Claude CLI downloads from official npm by default, with an explicit opt-in npmmirror source. Platform/version metadata matching, HTTPS origin/redirect restrictions, SHA512 integrity, bounded script-free archive extraction, version validation, cancellation and exclusive installation prevent unvalidated payloads from replacing the active path.
+- Version-named executables directly inside the persisted download directory: `claude-<version>` or `claude-<version>.exe`. Existing files and external CLI installations are not overwritten; previous executables remain available for recovery.
+- Independent editor task conversations, each owning a CLI, private relay, UUID checkpoint, model/reasoning/permission settings, task-flow state and input draft. The main chat's plus action reopens valid saved UUIDs in stable creation order without a picker, creating only after every saved conversation is open.
+- A maximum of three concurrent editor task areas per extension host, excluding the main chat. Opening, hidden, closing and restored tabs count toward the limit; older higher settings are clamped to three. The explicit task-session history command remains available.
+- Optional host-generated masked provider-key hints (`*` plus the final four characters). Full keys remain in SecretStorage; legacy providers without a hint retain the saved-key label, and keys no longer than four characters do not expose their complete value.
+
+### Changed
+
+- Restored right-sidebar main chat and left-sidebar settings, retaining view/session identities. Existing workspaces receive a one-time move of this extension's views without resetting the full workbench layout; opening settings also reveals a hidden main chat while preserving settings focus.
+- Simplified the settings CLI card to current version and Check for updates. Queries and download status update the card in place without replacing the Webview or resetting provider forms. A newer version prompts for approval before downloading or restarting anything.
+- Validated CLI updates automatically switch the selected path and restart previously active extension-owned sidebar/editor CLIs using their original session identities and model settings. New sends are gated during switching; interrupted tasks are not automatically replayed, unopened histories stay stopped and partial restart errors are reported.
+- Refined theme-aware settings cards, provider headings and compact controls. Removed the repeated settings heading/description, JSON-settings shortcut and provider help paragraph; shortened Global Prompt text without changing its action, and moved New Provider beside the provider heading.
+- Compact chat headers place the title and actions on one line. Editor tasks expose Edit title, Restart CLI, Conversation list and New chat; main-chat actions remain right-aligned with native title-bar shortcuts. Conversation-list controls and status messages support all seven UI languages.
+- Unified manual Restart CLI with the existing relay-and-CLI restart flow and visible phase messages, rather than a second process-only shortcut. Editor restarts affect only their own runtime and retain prior messages and context identity.
+
+### Fixed
+
+- Restored main-chat history from its exact persisted CLI session when the workspace message cache is empty or belongs to another session, respecting the configured CLI history directory. Manual history selection now immediately persists both messages and identity; initialization no longer overwrites restored content with an empty placeholder.
+- Editor tab identity survives reload without disposing serializable panels. Dead-host locks can be reclaimed automatically; live, inaccessible and malformed lock owners remain blocked. Editor CLI startup includes the private-relay authentication/model environment needed to avoid unintended OAuth-login errors.
+- Selected output copy now uses `vscode.env.clipboard.writeText` and a real acknowledgement, preserving right-click selection before the menu collapses it. Message redraws defer while they intersect an active selection.
+- Process replacement requires confirmed child termination. Failed stops do not release the owned process or launch a competing replacement; late-generation output cannot mutate another editor conversation.
+- Installation completion and rollback no longer wait for informational-notification dismissal before releasing busy state. Custom installation destinations persist and are used consistently by display, confirmation and download.
+
+### Known Issues and Validation Scope
+
+- The pre-existing `requestUsageBinding` test still fails with `true !== false`; the separately documented reused-response-ID usage-association issue is not fixed in this release.
+- Automated coverage uses isolated fixtures, real child processes and synthetic local upstreams. Opt-in live-CLI cases are skipped unless explicitly configured; real provider behavior and Windows/Linux/Remote-host installation still require manual acceptance.
+- An approved update/restart can interrupt in-flight tools. Detached or remote background processes may keep running; review side effects before resuming a task. This release adds independent task tabs, not the separate multi-agent orchestration implementation.
+
 ## [3.2.74] - 2026-10-22
 
 ### Fixed

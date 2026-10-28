@@ -117,12 +117,12 @@ export class ChatCliConfigService {
     public constructor(private readonly configManager?: ConfigManager) {}
 
     /**
-     * 读取当前生效的 Chat CLI 配置快照。
-     *
-     * @returns 已补齐 cwd、transport 和默认环境变量的配置。
+     * 读取当前生效的 CLI 配置，独立会话按其固定工作区解析文件与目录级设置。
+     * @param workspaceFolder 独立会话所属工作区；省略时保持主聊天原有解析规则。
+     * @returns 已补齐 cwd、transport、MCP 与默认环境变量的配置。
      */
-    public getConfig(): ChatCliConfig {
-        const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE);
+    public getConfig(workspaceFolder?: string): ChatCliConfig {
+        const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE, workspaceFolder ? vscode.Uri.file(workspaceFolder) : undefined);
         const transport = this.normalizeTransport(config.get<string>(CHAT_TRANSPORT_KEY, DEFAULT_TRANSPORT));
         const userEnv = this.normalizeEnv(config.get<Record<string, unknown>>(CHAT_CLI_ENV_KEY, {}));
         const permissionMode = this.normalizePermissionMode(
@@ -133,7 +133,7 @@ export class ChatCliConfigService {
         );
         const strictMcpConfig = config.get<boolean>(CHAT_CLI_STRICT_MCP_CONFIG_KEY, false) === true;
         const includeVscodeMcpJson = config.get<boolean>(CHAT_CLI_INCLUDE_VSCODE_MCP_JSON_KEY, true) !== false;
-        const mergedMcpServers = this.mergeWithVscodeMcpJson(mcpServers, includeVscodeMcpJson);
+        const mergedMcpServers = this.mergeWithVscodeMcpJson(mcpServers, includeVscodeMcpJson, workspaceFolder);
         const skills = this.normalizeSkills(config.get<unknown>(CHAT_CLI_SKILLS_KEY, undefined));
         const compactionMode = readCompactionConfigFromVscode();
         const browserToolsEnabled = config.get<boolean>(CHAT_BROWSER_TOOLS_ENABLED_KEY, true) !== false
@@ -153,7 +153,7 @@ export class ChatCliConfigService {
             cliPath: config.get<string>(CHAT_CLI_PATH_KEY, '').trim(),
             cliArgs: this.normalizeArgs(config.get<unknown[]>(CHAT_CLI_ARGS_KEY, [])),
             model: this.resolveCurrentModelArgument(),
-            cwd: this.resolveCwd(config.get<string>(CHAT_CLI_CWD_KEY, '').trim()),
+            cwd: workspaceFolder ?? this.resolveCwd(config.get<string>(CHAT_CLI_CWD_KEY, '').trim()),
             transport,
             cliEnv: transport === 'streamJsonStdio'
                 ? { ...DEFAULT_STREAM_JSON_ENV, ...userEnv }
@@ -581,14 +581,15 @@ export class ChatCliConfigService {
      *
      * @param extensionServers 扩展配置中读取并已规范化的 server 字典。
      * @param includeVscodeMcpJson 是否合并 VS Code mcp.json。
+     * @param workspaceFolder 独立会话固定工作区；未提供时沿用现有根目录解析。
      * @returns 合并后的 server 字典。
      */
     private mergeWithVscodeMcpJson(
         extensionServers: Record<string, McpServerConfig>,
-        includeVscodeMcpJson: boolean
+        includeVscodeMcpJson: boolean,
+        workspaceFolder = workspaceFolderResolver.resolve()
     ): Record<string, McpServerConfig> {
         if (!includeVscodeMcpJson) return extensionServers;
-        const workspaceFolder = workspaceFolderResolver.resolve();
         const results = loadAllVscodeMcpJsons(workspaceFolder);
         const workspaceServers = results.find((item) => item.source === 'workspace')?.servers;
         const userServers = results.find((item) => item.source === 'user')?.servers;

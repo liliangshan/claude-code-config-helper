@@ -44,6 +44,9 @@ export interface PersistedTaskFlow {
  * 绝不影响主流程或阻塞启动。
  */
 export class TaskFlowStore {
+    private pendingWrite: Promise<void> = Promise.resolve();
+    /** @param explicitFile Optional instance-owned path; omitted for legacy sidebar behavior. */
+    public constructor(private readonly explicitFile?: string) {}
     /**
      * 从磁盘读回任务流快照。
      *
@@ -87,6 +90,12 @@ export class TaskFlowStore {
      * @param snapshot 当前任务流快照。
      */
     public async save(snapshot: LlsTaskSnapshot): Promise<void> {
+        const copy = JSON.parse(JSON.stringify(snapshot)) as LlsTaskSnapshot;
+        const write = this.pendingWrite.then(() => this.writeSnapshot(copy));
+        this.pendingWrite = write.catch(() => {}); await write;
+    }
+    /** Write a detached snapshot in order; prevents close-time flush racing a debounce save. */
+    private async writeSnapshot(snapshot: LlsTaskSnapshot): Promise<void> {
         try {
             const filePath = await this.resolveFilePath();
             const payload: PersistedTaskFlow = {
@@ -151,6 +160,7 @@ export class TaskFlowStore {
      * @returns 文件绝对路径。
      */
     private async resolveFilePath(): Promise<string> {
+        if (this.explicitFile) { await fs.mkdir(path.dirname(this.explicitFile), { recursive: true }); return this.explicitFile; }
         const root = this.resolveRoot();
         const dir = path.join(root, STORE_DIR_NAME);
         await fs.mkdir(dir, { recursive: true });

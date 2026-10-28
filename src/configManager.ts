@@ -323,16 +323,18 @@ export class ConfigManager implements vscode.Disposable {
         return { ...rest, apiKey: apiKey ?? '' };
     }
 
-    /** 新增或更新提供商配置。 */
+    /** 新增或更新提供商；完整密钥仅写入 SecretStorage，展示值仅由宿主生成。 */
     public async saveProvider(provider: ProviderConfigWithoutSecrets, apiKey?: string): Promise<void> {
         const now = Date.now();
+        const providers = this.listProviders();
+        const previous = providers.find((item) => item.id === provider.id);
         const normalized = this.normalizeProvider({
             ...provider,
             updatedAt: now,
             createdAt: provider.createdAt || now,
-            hasApiKey: provider.hasApiKey || !!apiKey
+            hasApiKey: provider.hasApiKey || !!apiKey,
+            maskedApiKey: previous?.maskedApiKey
         });
-        const providers = this.listProviders();
         const index = providers.findIndex((item) => item.id === normalized.id);
         if (index >= 0) {
             providers[index] = normalized;
@@ -340,7 +342,7 @@ export class ConfigManager implements vscode.Disposable {
             providers.push(normalized);
         }
         if (apiKey !== undefined) {
-            await this.saveProviderApiKey(normalized.id, apiKey);
+            normalized.maskedApiKey = await this.saveProviderApiKey(normalized.id, apiKey);
             normalized.hasApiKey = apiKey.trim().length > 0;
         }
         await this.updateProviders(providers);
@@ -538,13 +540,14 @@ export class ConfigManager implements vscode.Disposable {
         this.changeEmitter.fire();
     }
 
-    /** 批量替换提供商列表，供 Webview 保存配置使用。 */
+    /** 批量替换提供商；未更新密钥时保留宿主已有脱敏值，不采信 Webview 提交的展示值。 */
     public async replaceProviders(
         providers: ProviderConfigWithoutSecrets[],
         providerApiKeys?: Record<string, string>
     ): Promise<void> {
-        const previousProviderIds = new Set(this.listProviders().map((provider) => provider.id));
-        const normalizedProviders = providers.map((provider) => this.normalizeProvider(provider));
+        const previous = new Map(this.listProviders().map((provider) => [provider.id, provider]));
+        const previousProviderIds = new Set(previous.keys());
+        const normalizedProviders = providers.map((provider) => this.normalizeProvider({ ...provider, maskedApiKey: previous.get(provider.id)?.maskedApiKey }));
         const nextProviderIds = new Set(normalizedProviders.map((provider) => provider.id));
         for (const providerId of previousProviderIds) {
             if (!nextProviderIds.has(providerId)) {
@@ -557,7 +560,7 @@ export class ConfigManager implements vscode.Disposable {
                     continue;
                 }
                 const apiKey = providerApiKeys[provider.id];
-                await this.saveProviderApiKey(provider.id, apiKey ?? '');
+                provider.maskedApiKey = await this.saveProviderApiKey(provider.id, apiKey ?? '');
                 provider.hasApiKey = !!apiKey?.trim();
             }
         }
@@ -573,13 +576,15 @@ export class ConfigManager implements vscode.Disposable {
         this.changeEmitter.dispose();
     }
 
-    /** 保存提供商密钥到 SecretStorage。 */
-    private async saveProviderApiKey(providerId: string, apiKey: string): Promise<void> {
-        if (apiKey.trim()) {
-            await this.context.secrets.store(this.secretKey(providerId), apiKey.trim());
-        } else {
-            await this.context.secrets.delete(this.secretKey(providerId));
+    /** 保存完整密钥到 SecretStorage，返回仅含星号及末四位的展示值；短密钥不暴露全文。 */
+    private async saveProviderApiKey(providerId: string, apiKey: string): Promise<string | undefined> {
+        const normalized = apiKey.trim();
+        if (normalized) {
+            await this.context.secrets.store(this.secretKey(providerId), normalized);
+            return normalized.length > 4 ? `*${normalized.slice(-4)}` : undefined;
         }
+        await this.context.secrets.delete(this.secretKey(providerId));
+        return undefined;
     }
 
     /** 更新提供商列表并触发变更事件。 */
@@ -636,6 +641,7 @@ export class ConfigManager implements vscode.Disposable {
             createdAt: provider.createdAt || now,
             updatedAt: provider.updatedAt || now,
             hasApiKey: !!provider.hasApiKey,
+            maskedApiKey: provider.hasApiKey && typeof provider.maskedApiKey === 'string' && /^\*[^\s<>"'&]{4}$/u.test(provider.maskedApiKey) ? provider.maskedApiKey : undefined,
             authMode: provider.authMode || 'api_key',
             customHeaders: Array.isArray(provider.customHeaders) ? provider.customHeaders : []
         };

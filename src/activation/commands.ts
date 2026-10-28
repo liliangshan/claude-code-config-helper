@@ -19,8 +19,11 @@ import {
     openLlsCcaiTaskMenu,
     showLlsCcaiTaskProgress
 } from '../taskFlow/taskFlowCommands';
+import { ConfigView } from '../views/configView';
 import { SharedOpenApiCopilotSettingsPanel } from '../views/sharedSettingsView';
 import { openBuiltInChat } from './chatEntry';
+import { renameSidebarChat } from '../chatRuntime/webviewMessages';
+import { openHelp } from './help';
 
 /**
  * 执行一个可能抛错的命令动作，失败时记日志并弹错误提示。
@@ -39,7 +42,7 @@ async function runCommandGuarded(label: string, action: () => Promise<void>): Pr
 }
 
 /**
- * 注册扩展的全部命令，并把 disposable 挂到 context.subscriptions。
+ * 注册扩展的全部命令与官网帮助入口，并把 disposable 挂到 context.subscriptions。
  *
  * @param context 扩展上下文，由 activate 传入。
  */
@@ -48,8 +51,11 @@ export function registerAllCommands(context: vscode.ExtensionContext): void {
     const openConfigPanel = () => vscode.commands.executeCommand(COMMANDS.openConfigPanel);
 
     context.subscriptions.push(
+        vscode.commands.registerCommand(COMMANDS.openHelp, openHelp),
         vscode.commands.registerCommand(COMMANDS.openConfigPanel, async () => {
-            await getConfigViewProvider()?.focus();
+            const provider = getConfigViewProvider();
+            if (provider) { await provider.focus(); return; }
+            const manager = getConfigManager(); if (manager) ConfigView.show(context, manager);
         }),
         vscode.commands.registerCommand(COMMANDS.openSettingsJson, async () => {
             await vscode.commands.executeCommand('workbench.action.openSettingsJson');
@@ -75,6 +81,9 @@ export function registerAllCommands(context: vscode.ExtensionContext): void {
         }),
         vscode.commands.registerCommand(COMMANDS.chatRestart, async () => {
             await runCommandGuarded('重启本地中转与 Chat CLI', restartChatRelayAndCli);
+        }),
+        vscode.commands.registerCommand(COMMANDS.chatRename, async () => {
+            await runCommandGuarded('修改会话标题', renameSidebarChat);
         }),
         vscode.commands.registerCommand(COMMANDS.refreshProviders, () => undefined),
         vscode.commands.registerCommand(COMMANDS.newProvider, openConfigPanel),

@@ -2,7 +2,7 @@
     "name": "claude-code-config-helper",
     "displayName": "%extension.displayName%",
     "description": "%extension.description%",
-    "version": "3.2.74",
+    "version": "3.2.77",
     "publisher": "liliangshan",
     "license": "MIT",
     "repository": {
@@ -25,11 +25,84 @@
         "proxy"
     ],
     "activationEvents": [
-        "onStartupFinished"
+        "onStartupFinished",
+        "onWebviewPanel:claudeRouter.editorChat"
     ],
     "main": "./out/extension.js",
     "contributes": {
         "commands": [
+            {
+                "command": "claudeRouter.help.open",
+                "title": "%command.help.open.title%",
+                "category": "LLS CCAI",
+                "icon": "$(question)"
+            },
+            {
+                "command": "claudeRouter.setup.open",
+                "title": "安装引导 / Setup",
+                "category": "LLS CCAI"
+            },
+            {
+                "command": "claudeRouter.setup.reset",
+                "title": "%command.setup.reset.title%",
+                "category": "LLS CCAI"
+            },
+            {
+                "command": "claudeRouter.setup.download",
+                "title": "下载官方 CLI / Download CLI",
+                "category": "LLS CCAI"
+            },
+            {
+                "command": "claudeRouter.setup.update",
+                "title": "检查 CLI 更新 / Update CLI",
+                "category": "LLS CCAI"
+            },
+            {
+                "command": "claudeRouter.setup.verify",
+                "title": "选择并验证 CLI / Verify CLI",
+                "category": "LLS CCAI"
+            },
+            {
+                "command": "claudeRouter.setup.rollback",
+                "title": "回退 CLI / Rollback CLI",
+                "category": "LLS CCAI"
+            },
+            {
+                "command": "claudeRouter.chat.rename",
+                "title": "%command.chat.rename.title%",
+                "category": "LLS CCAI",
+                "icon": "$(edit)"
+            },
+            {
+                "command": "claudeRouter.chat.left.rename",
+                "title": "%command.chat.rename.title%",
+                "category": "LLS CCAI",
+                "icon": "$(edit)"
+            },
+            {
+                "command": "claudeRouter.chat.left.restart",
+                "title": "%command.chat.restart.title%",
+                "category": "LLS CCAI",
+                "icon": "$(refresh)"
+            },
+            {
+                "command": "claudeRouter.chat.openParallelSessions",
+                "title": "%command.chat.openParallelSessions.title%",
+                "category": "LLS CCAI",
+                "icon": "$(add)"
+            },
+            {
+                "command": "claudeRouter.chat.newEditorSession",
+                "title": "%command.chat.newEditorSession.title%",
+                "category": "LLS CCAI",
+                "icon": "$(add)"
+            },
+            {
+                "command": "claudeRouter.chat.openEditorHistory",
+                "title": "%command.chat.openEditorHistory.title%",
+                "category": "LLS CCAI",
+                "icon": "$(history)"
+            },
             {
                 "command": "claudeRouter.openConfigPanel",
                 "title": "%command.openConfigPanel.title%",
@@ -70,7 +143,8 @@
             {
                 "command": "claudeRouter.chat.restart",
                 "title": "%command.chat.restart.title%",
-                "category": "%command.category%"
+                "category": "%command.category%",
+                "icon": "$(refresh)"
             },
             {
                 "command": "claudeRouter.refreshProviders",
@@ -159,8 +233,7 @@
                 {
                     "id": "claudeRouterChatSecondary",
                     "title": "%view.chat.container.title%",
-                    "icon": "resources/reference-claude-logo.svg",
-                    "when": "!claudeRouter.chat.useActivityBarFallback"
+                    "icon": "resources/reference-claude-logo.svg"
                 }
             ]
         },
@@ -186,6 +259,14 @@
         "configuration": {
             "title": "%configuration.title%",
             "properties": {
+                "claudeCodeConfigHelper.chat.editorSessions.maxOpen": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3,
+                    "default": 3,
+                    "scope": "window",
+                    "description": "%configuration.chat.editorSessions.maxOpen.description%"
+                },
                 "claudeCodeConfigHelper.autoReloadWindow": {
                     "type": "boolean",
                     "default": false,
@@ -444,7 +525,13 @@
                 },
                 "claudeCodeConfigHelper.chat.reasoningEffort": {
                     "type": "string",
-                    "enum": ["auto", "low", "medium", "high", "xhigh"],
+                    "enum": [
+                        "auto",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh"
+                    ],
                     "default": "auto",
                     "scope": "window",
                     "description": "%configuration.chat.reasoningEffort.description%"
@@ -471,6 +558,22 @@
         },
         "menus": {
             "commandPalette": [
+                {
+                    "command": "claudeRouter.chat.left.rename",
+                    "when": "false"
+                },
+                {
+                    "command": "claudeRouter.chat.left.restart",
+                    "when": "false"
+                },
+                {
+                    "command": "claudeRouter.chat.newEditorSession",
+                    "when": "false"
+                },
+                {
+                    "command": "claudeRouter.chat.openEditorHistory",
+                    "when": "false"
+                },
                 {
                     "command": "claudeRouter.openConfigPanel"
                 },
@@ -539,19 +642,54 @@
             ],
             "view/title": [
                 {
-                    "command": "claudeRouter.newProvider",
-                    "when": "view == claudeRouter.providersView",
+                    "command": "claudeRouter.chat.rename",
+                    "when": "view == claudeRouter.chatSidebarSecondary",
+                    "group": "navigation@1"
+                },
+                {
+                    "command": "claudeRouter.chat.openParallelSessions",
+                    "when": "view == claudeRouter.chatSidebarSecondary",
+                    "group": "navigation@2"
+                },
+                {
+                    "command": "claudeRouter.openConfigPanel",
+                    "when": "view == claudeRouter.chatSidebarSecondary",
+                    "group": "navigation@3"
+                },
+                {
+                    "command": "claudeRouter.chat.restart",
+                    "when": "view == claudeRouter.chatSidebarSecondary",
+                    "group": "navigation@4"
+                },
+                {
+                    "command": "claudeRouter.help.open",
+                    "when": "view == claudeRouter.chatSidebarSecondary",
+                    "group": "navigation@5"
+                },
+                {
+                    "command": "claudeRouter.chat.left.rename",
+                    "when": "view == claudeRouter.providersView && claudeRouter.leftChatActive",
                     "group": "navigation@1"
                 },
                 {
                     "command": "claudeRouter.openConfigPanel",
-                    "when": "view == claudeRouter.providersView",
-                    "group": "navigation@2"
+                    "when": "view == claudeRouter.providersView && claudeRouter.leftChatActive",
+                    "group": "navigation@3"
                 },
                 {
-                    "command": "claudeRouter.refreshProviders",
-                    "when": "view == claudeRouter.providersView",
-                    "group": "navigation@3"
+                    "command": "claudeRouter.chat.left.restart",
+                    "when": "view == claudeRouter.providersView && claudeRouter.leftChatActive",
+                    "group": "navigation@4"
+                },
+                {
+                    "command": "claudeRouter.help.open",
+                    "when": "view == claudeRouter.providersView && claudeRouter.leftChatActive",
+                    "group": "navigation@5"
+                },
+                {
+                    "command": "claudeRouter.chat.open",
+                    "when": "view == claudeRouter.providersView && !claudeRouter.leftChatActive",
+                    "group": "navigation@1"
                 }
             ]
         }

@@ -23,6 +23,7 @@ import { Logger } from '../logger';
 import type { AutoContinueScheduler } from '../llsTask/autoContinue';
 import { isLlsCcaiTaskTriggered } from '../llsTask/detector';
 import type { LlsTaskService } from '../llsTask/service';
+import type { RequestUsageRegistry } from '../chatRuntime/requestUsage';
 import { createRequestUsageContext, type RequestUsageContext } from './requestUsage';
 import { isClaudeCompactCommandRequest } from './summCommand';
 import type {
@@ -51,6 +52,8 @@ export interface UpstreamRequestContext {
     outcome?: RequestOutcomeReporter;
     /** 请求入口冻结的统计身份；旧适配器测试可省略，真实路由始终提供。 */
     usageContext?: RequestUsageContext;
+    /** 独立会话提供私有请求关联表，未提供时沿用主聊天关联表。 */
+    usageRegistry?: RequestUsageRegistry;
     /** 原始 HTTP 请求。 */
     req: http.IncomingMessage;
     /** 原始 HTTP 响应。 */

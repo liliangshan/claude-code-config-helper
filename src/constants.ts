@@ -211,6 +211,8 @@ export const CHAT_ROUTE_DEFAULT = 'normal' as const;
  * 与 package.json 的 contributes.commands 保持一致。
  */
 export const COMMANDS = {
+    /** 直接打开固定官网地址，不弹出菜单或附带会话信息。 */
+    openHelp: 'claudeRouter.help.open',
     /** 打开 Webview 配置面板。 */
     openConfigPanel: 'claudeRouter.openConfigPanel',
     /** 在编辑器中打开用户 settings.json */
@@ -227,6 +229,7 @@ export const COMMANDS = {
     chatSelectCli: 'claudeRouter.chat.selectCli',
     /** 重启内置 Chat 的 Claude CLI 长连接进程。 */
     chatRestart: 'claudeRouter.chat.restart',
+    chatRename: 'claudeRouter.chat.rename',
     /** 刷新提供商列表。 */
     refreshProviders: 'claudeRouter.refreshProviders',
     /** 新建提供商。 */
@@ -262,10 +265,10 @@ export const COMMANDS = {
  */
 export const PROVIDERS_VIEW_ID = 'claudeRouter.providersView';
 
-/** 右侧 Secondary Sidebar 中的 Chat WebviewView id。 */
+/** Stable chat view ID, shared by the right secondary sidebar and existing saved session layouts. */
 export const CHAT_SECONDARY_VIEW_ID = 'claudeRouter.chatSidebarSecondary';
 
-/** 右侧 Secondary Sidebar Chat 容器 id。 */
+/** Right secondary-sidebar container for the single main chat instance. */
 export const CHAT_SECONDARY_CONTAINER_ID = 'claudeRouterChatSecondary';
 
 /**

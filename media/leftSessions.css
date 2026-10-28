@@ -1,0 +1,20 @@
+/** Theme-aware left conversation list; narrow panes keep actions and titles readable. */
+body { margin: 0; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font: var(--vscode-font-size)/1.5 var(--vscode-font-family); }
+main { padding: 16px 12px; }
+header, .actions, .session-card__heading { display: flex; align-items: center; gap: 8px; }
+header { justify-content: space-between; flex-wrap: wrap; }
+h1 { margin: 0; font-size: 16px; font-weight: 600; }
+p, small { color: var(--vscode-descriptionForeground); }
+button { font: inherit; cursor: pointer; color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); border: 1px solid var(--vscode-widget-border, transparent); border-radius: 6px; padding: 5px 10px; }
+button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+button:disabled { opacity: .55; cursor: default; }
+.create { width: 100%; margin: 4px 0 14px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+.create:hover { background: var(--vscode-button-hoverBackground); }
+section { display: grid; gap: 8px; }
+.session-card { text-align: start; width: 100%; min-width: 0; padding: 12px; background: var(--vscode-editorWidget-background); }
+.session-card__heading { justify-content: space-between; }
+.session-card strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.session-card small { flex-shrink: 0; font-size: 11px; }
+.session-card__detail { display: block; margin-top: 5px; overflow-wrap: anywhere; font-size: 11px; color: var(--vscode-descriptionForeground); }
+#status { overflow-wrap: anywhere; }
