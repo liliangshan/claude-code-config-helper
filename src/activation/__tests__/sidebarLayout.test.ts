@@ -38,11 +38,11 @@ test('view layout moves once, preserves later customization and settings focus o
     await restorePreferredSidebarLayout(context); assert.equal(moves.length, 2);
     const settings = new ConfigWebviewViewProvider(context, {} as never);
     await settings.focus();
-    assert.deepEqual(moves.slice(2).map(item => item.command), ['workbench.view.extension.claudeRouter', 'claudeRouter.providersView.focus']);
+    assert.deepEqual(moves.slice(2).map(item => item.command), ['claudeRouter.providersView.focus']);
     settings.dispose();
 });
 
-test('Activity Bar settings visibility also reveals main chat without requiring the settings command', async t => {
+test('manual settings-view visibility never activates a sibling main chat after moving either sidebar', async t => {
     const { ConfigWebviewController } = require('../../views/configView') as typeof import('../../views/configView');
     t.mock.method(ConfigWebviewController.prototype as any, 'configureWebview', () => {});
     t.mock.method(ConfigWebviewController.prototype as any, 'renderHtml', () => '<settings>');
@@ -59,9 +59,9 @@ test('Activity Bar settings visibility also reveals main chat without requiring 
     const manager = { onDidChange: () => ({ dispose() {} }), getState: () => ({ providers: [] }) };
     const settings = new ConfigWebviewViewProvider({} as never, manager as any);
     try {
-        settings.resolveWebviewView(view as any); assert.equal(shown, 1);
-        view.visible = false; visibility(); assert.equal(shown, 1);
-        view.visible = true; visibility(); assert.equal(shown, 2);
+        settings.resolveWebviewView(view as any); assert.equal(shown, 0);
+        view.visible = false; visibility(); assert.equal(shown, 0);
+        view.visible = true; visibility(); assert.equal(shown, 0, 'Selecting the moved view must not switch to the main chat');
     } finally { runtime.setChatViewHost(undefined); settings.dispose(); }
 });
 
@@ -72,9 +72,71 @@ test('opening settings reveals the main chat first and returns focus to settings
     const settings = new ConfigWebviewViewProvider({} as never, {} as never);
     try {
         await settings.focus();
-        assert.deepEqual(calls, ['reveal-main-chat', 'workbench.view.extension.claudeRouter', 'claudeRouter.providersView.focus']);
+        assert.deepEqual(calls, ['reveal-main-chat', 'claudeRouter.providersView.focus']);
         calls.length = 0; fail = true;
         await settings.focus();
-        assert.deepEqual(calls, ['reveal-main-chat', 'workbench.view.extension.claudeRouter', 'claudeRouter.providersView.focus']);
+        assert.deepEqual(calls, ['reveal-main-chat', 'claudeRouter.providersView.focus']);
     } finally { runtime.setChatViewHost(undefined); settings.dispose(); }
+});
+
+/** Simulate shared-sidebar tabs and swapped containers without conflating view placement with session identity. */
+test('moved main and parallel views remain independently selectable without resetting runtime or saved layout', async t => {
+    const { ChatViewHost } = require('../../chat/chatViewHost') as typeof import('../../chat/chatViewHost');
+    const editorEntry = require('../../editorChat/entry') as typeof import('../../editorChat/entry');
+    const { ConfigWebviewController } = require('../../views/configView') as typeof import('../../views/configView');
+    t.mock.method(ConfigWebviewController.prototype as any, 'configureWebview', () => {});
+    t.mock.method(ConfigWebviewController.prototype as any, 'renderHtml', () => '<settings>');
+    t.mock.method(ConfigWebviewController.prototype as any, 'loadAd', async () => {});
+    t.mock.method(ConfigWebviewController.prototype as any, 'registerVisibilityRefresh', () => {});
+    for (const placement of ['same-secondary-sidebar', 'main-left-parallel-right']) {
+        let active = ''; let visibility: (() => void) | undefined; let mounts = 0; let detached = 0;
+        const commands: string[] = []; const shown: string[] = []; const posted: unknown[] = [];
+        const savedLayout = new Map<string, unknown>([['claudeRouter.sidebarLayout.rightChat.v1', true]]);
+        const context = { workspaceState: { get: (key: string, fallback?: unknown) => savedLayout.get(key) ?? fallback,
+            update: async (key: string, value: unknown) => { savedLayout.set(key, value); } } } as any;
+        const manager = { onDidChange: () => ({ dispose() {} }), getState: () => ({ providers: [] }) } as any;
+        const main = new ChatViewHost(context);
+        const mainMessages = [{ id: 'main-history', role: 'user', segments: [], createdAt: 1 }] as import('../../chat/protocol').ChatMessage[];
+        const parallelIdentity = { conversationId: 'parallel-identity', cliSessionId: 'parallel-cli', messages: ['original history'] };
+        t.mock.method(editorEntry, 'getLeftChatView', () => ({ mount: () => {
+            mounts++; return { dispose: () => { detached++; } };
+        }, session: parallelIdentity } as any));
+        const mainView = { visible: true, show: (preserve: boolean) => {
+            shown.push(`main:${preserve}`); mainView.visible = true; active = 'main';
+            if (placement === 'same-secondary-sidebar') { parallelView.visible = false; visibility?.(); }
+        } };
+        const parallelView = { visible: false, show: (preserve: boolean) => {
+            shown.push(`parallel:${preserve}`); parallelView.visible = true; active = 'parallel';
+            if (placement === 'same-secondary-sidebar') mainView.visible = false;
+            visibility?.();
+        }, webview: { html: '', onDidReceiveMessage: () => ({ dispose() {} }), postMessage: async () => true },
+            onDidDispose: () => ({ dispose() {} }),
+            onDidChangeVisibility: (listener: () => void) => { visibility = listener; return { dispose() {} }; } };
+        (main as any).target = { view: mainView, webview: { postMessage: async (message: unknown) => { posted.push(message); return true; } } };
+        (main as any).initialMessages = mainMessages;
+        runtime.setChatViewHost(main);
+        Object.assign(vscode.commands, { executeCommand: async (command: string) => {
+            commands.push(command);
+            assert.equal(command.startsWith('workbench.view.extension.'), false, 'Never activate an original container after a move');
+            assert.notEqual(command, 'vscode.moveViews', 'Opening a conversation cannot move either view');
+        } });
+        const provider = new ConfigWebviewViewProvider(context, manager);
+        try {
+            provider.resolveWebviewView(parallelView as any);
+            await provider.showSessions(); await new Promise(resolve => setImmediate(resolve));
+            assert.equal(active, 'parallel', placement); assert.equal(mounts, 1); assert.equal(detached, 0);
+            if (placement === 'main-left-parallel-right') mainView.visible = false;
+            await main.ensureVisible(false); assert.equal(active, 'main');
+            parallelView.show(false); await new Promise(resolve => setImmediate(resolve));
+            assert.equal(active, 'parallel', 'Manual selection cannot reveal main through a visibility callback');
+            await provider.showSessions(); await new Promise(resolve => setImmediate(resolve));
+            assert.equal(active, 'parallel'); assert.equal(mounts, 1); assert.equal(detached, 0);
+            assert.equal((main as any).initialMessages, mainMessages); assert.deepEqual(posted, []);
+            assert.deepEqual(parallelIdentity, { conversationId: 'parallel-identity', cliSessionId: 'parallel-cli', messages: ['original history'] });
+            assert.equal(savedLayout.get('claudeRouter.sidebarLayout.rightChat.v1'), true);
+            await provider.focus(); await new Promise(resolve => setImmediate(resolve));
+            assert.equal(active, 'parallel', 'Explicit settings ends at its current view, not the default side');
+            assert.equal(parallelView.webview.html, '<settings>'); assert.ok(shown.includes('parallel:false'));
+        } finally { provider.dispose(); main.dispose(); runtime.setChatViewHost(undefined); }
+    }
 });

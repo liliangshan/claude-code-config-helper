@@ -180,16 +180,17 @@ export function sanitizePersistedChatMessages(messages: ChatMessage[]): ChatMess
 }
 
 /**
- * 读取 Claude Code 原始 JSONL 会话文件并转换为 ChatMessage 数组。
- *
- * 只处理 user / assistant 类型的记录；忽略 isSidechain=true 记录和纯 tool_result 的 user 消息。
+ * Read native CLI history, accepting text strings and content-block arrays without replaying tasks.
+ * @param jsonlPath Requested session's native history file.
+ * @param options.strict Reject missing, unreadable or empty history before an explicit switch changes chat state.
  */
-export async function parseSessionJsonl(jsonlPath: string): Promise<ChatMessage[]> {
+export async function parseSessionJsonl(jsonlPath: string, options: { strict?: boolean } = {}): Promise<ChatMessage[]> {
     let raw: string;
     try {
         raw = await fs.readFile(jsonlPath, 'utf8');
     } catch (e) {
         Logger.warn(`[parseSessionJsonl] 读取文件失败：path=${jsonlPath} err=${e instanceof Error ? e.message : String(e)}`);
+        if (options.strict) throw e;
         return [];
     }
 
@@ -206,6 +207,7 @@ export async function parseSessionJsonl(jsonlPath: string): Promise<ChatMessage[
         if (!trimmed) continue;
         let rec: Record<string, unknown>;
         try { rec = JSON.parse(trimmed); } catch { continue; }
+        if (!rec || typeof rec !== 'object' || Array.isArray(rec)) continue;
 
         if (rec['isSidechain']) { skippedSidechain++; continue; }
         const recType = rec['type'] as string;
@@ -213,23 +215,26 @@ export async function parseSessionJsonl(jsonlPath: string): Promise<ChatMessage[
 
         const msg = rec['message'] as {
             role?: string;
-            content?: Array<{ type: string; text?: string; name?: string; id?: string; input?: unknown }>;
+            content?: string | Array<{ type: string; text?: string; name?: string; id?: string; input?: unknown }>;
             model?: string;
         } | undefined;
-        if (!msg || !Array.isArray(msg.content)) { skippedNoContent++; continue; }
+        if (!msg || (typeof msg.content !== 'string' && !Array.isArray(msg.content))) { skippedNoContent++; continue; }
+        const content = typeof msg.content === 'string' ? [{ type: 'text', text: msg.content }] : msg.content;
 
-        const ts = typeof rec['timestamp'] === 'string' ? new Date(rec['timestamp'] as string).getTime() : Date.now();
+        const timestamp = typeof rec['timestamp'] === 'string' ? Date.parse(rec['timestamp'] as string) : rec['timestamp'];
+        const ts = typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : Date.now();
         const uuid = typeof rec['uuid'] === 'string' ? rec['uuid'] as string : `hist_${Date.now()}_${messages.length}`;
 
         if (recType === 'user') {
-            const textItems = msg.content.filter(c => c.type === 'text' && c.text);
+            const textItems = content.filter(c => c && c.type === 'text' && typeof c.text === 'string' && c.text);
             if (textItems.length === 0) { skippedEmptyUser++; continue; }
             const text = textItems.map(c => c.text!).join('\n');
             messages.push({ id: uuid, role: 'user', segments: [{ kind: 'text', text }], text, createdAt: ts });
         } else {
             const segments: ChatSegment[] = [];
-            for (const c of msg.content) {
-                if (c.type === 'text' && c.text) {
+            for (const c of content) {
+                if (!c || typeof c !== 'object') continue;
+                if (c.type === 'text' && typeof c.text === 'string' && c.text) {
                     segments.push({ kind: 'markdown', text: c.text });
                 } else if (c.type === 'tool_use' && c.name) {
                     const inputStr = c.input ? JSON.stringify(c.input, null, 2) : '';
@@ -246,6 +251,7 @@ export async function parseSessionJsonl(jsonlPath: string): Promise<ChatMessage[
     }
 
     Logger.info(`[parseSessionJsonl] path=${jsonlPath} totalLines=${lines.length} parsed=${messages.length} skip{sidechain=${skippedSidechain},type=${skippedType},noContent=${skippedNoContent},emptyUser=${skippedEmptyUser},emptyAssistant=${skippedEmptyAssistant}}`);
+    if (options.strict && messages.length === 0) throw new Error('The selected history contains no readable conversation messages.');
     return messages.slice(-MAX_IN_MEMORY_CHAT_MESSAGES);
 }
 

@@ -29,6 +29,7 @@ import {
     restartChatCliPair,
     restartChatRelayAndCli,
     selectChatCli,
+    stopSidebarForHistorySwitch,
     postNativeCompactionState,
     scheduleNativeCompactionRefresh
 } from './cliLifecycle';
@@ -347,64 +348,37 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
         }
         case 'session/resume': {
             const targetSessionId = message.sessionId;
+            if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetSessionId)) throw new Error('Invalid history session ID');
             const editorHistory = await import('../editorChat/entry');
             if (await editorHistory.isEditorCliSessionOwned(targetSessionId)) {
                 await showChatToast('warn', '该会话正在左侧或编辑区使用，请先停止对应会话再恢复。'); return;
             }
-            Logger.info(`[session/resume] 切换到历史会话：sessionId=${targetSessionId}`);
-            requestUsageRegistry.clearRequestUsageBindings();
-            chatSessionState.messages = [];
-            chatSessionState.activeAssistantMessageId = undefined;
+            const config = getChatCliConfigService()?.getConfig();
+            const cwd = config?.cwd ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+            const jsonlPath = path.join(resolveClaudeProjectDir(cwd, config?.cliEnv.CLAUDE_CONFIG_DIR), `${targetSessionId}.jsonl`);
+            Logger.info(`[session/resume] 解析历史 JSONL：cwd=${cwd} path=${jsonlPath}`);
+            // Read and validate before stopping the old process or replacing any cached transcript.
+            const historyMessages = await parseSessionJsonl(jsonlPath, { strict: true });
+            const resumeTitle = await extractSessionTitle(jsonlPath);
             requireDeps().clearHttpExpectation('session_resume');
             requireDeps().cancelPendingResend('session_resume');
-
-            // 先尝试从 JSONL 加载历史消息
-            let historyMessages: ChatMessage[] = [];
-            let resumeTitle = '';
-            try {
-                const resumeCwd = getChatCliConfigService()?.getConfig().cwd
-                    ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-                    ?? process.cwd();
-                const historyConfig = getChatCliConfigService()?.getConfig();
-                const jsonlPath = path.join(resolveClaudeProjectDir(resumeCwd, historyConfig?.cliEnv.CLAUDE_CONFIG_DIR), `${targetSessionId}.jsonl`);
-                Logger.info(`[session/resume] 解析历史 JSONL：cwd=${resumeCwd} path=${jsonlPath}`);
-                historyMessages = await parseSessionJsonl(jsonlPath);
-                resumeTitle = await extractSessionTitle(jsonlPath);
-                Logger.info(`[session/resume] 已加载历史消息：${historyMessages.length} 条，标题="${resumeTitle}"`);
-            } catch (e) {
-                Logger.warn('[session/resume] 加载历史消息失败：' + (e instanceof Error ? e.message : String(e)));
-            }
-
+            await stopSidebarForHistorySwitch();
+            await getChatCliSessionStore()?.writeSessionId(cwd, targetSessionId, 'normal');
+            requestUsageRegistry.clearRequestUsageBindings();
+            routes.normal.sessionId = targetSessionId;
+            routes.taskFlow.sessionId = targetSessionId;
+            chatSessionRouteById.clear(); chatSessionRouteById.set(targetSessionId, 'normal');
             chatSessionState.messages = historyMessages;
-            chatSessionState.sessionId = targetSessionId;
-            chatSessionState.cwd = getChatCliConfigService()?.getConfig().cwd;
+            chatSessionState.activeAssistantMessageId = undefined;
+            chatSessionState.sessionId = targetSessionId; chatSessionState.cwd = cwd;
             await flushPersistedChatSession();
-            // 立即渲染历史消息到 webview
-            Logger.info(`[session/resume] 推送 session/init 到 webview：messages=${chatSessionState.messages.length} host=${getChatViewHost() ? 'ready' : 'null'}`);
-            await getChatViewHost()?.postMessage({
-                type: 'session/init',
-                messages: chatSessionState.messages,
-                cliPath: getChatCliConfigService()!.getConfig().cliPath ?? ''
-            });
-            await getChatViewHost()?.postMessage({
-                type: 'session/title',
-                title: resumeTitle,
-                sessionId: targetSessionId ?? ''
-            });
-
-            try {
-                const cwd = getChatCliConfigService()?.getConfig().cwd;
-                if (cwd && targetSessionId) {
-                    await getChatCliSessionStore()?.writeSessionId(cwd, targetSessionId, 'normal');
-                    routes.normal.sessionId = '';
-                    routes.taskFlow.sessionId = '';
-                    chatSessionRouteById.clear();
-                    Logger.info(`[session/resume] 已写入目标 sessionId，准备重启 CLI`);
-                    await restartChatCliPair({ silent: true });
-                }
-            } catch (err) {
-                Logger.warn('[session/resume] 切换历史会话失败：' + (err instanceof Error ? err.message : String(err)));
-                await showChatToast('error', '切换历史会话失败：' + (err instanceof Error ? err.message : String(err)));
+            Logger.info(`[session/resume] 推送历史消息：sessionId=${targetSessionId}, messages=${historyMessages.length}`);
+            await getChatViewHost()?.postMessage({ type: 'session/init', messages: historyMessages, cliPath: config?.cliPath ?? '', replace: true });
+            await getChatViewHost()?.postMessage({ type: 'session/title', title: resumeTitle, sessionId: targetSessionId });
+            try { await restartChatCliPair({ silent: true }); }
+            catch (error) {
+                Logger.warn('[session/resume] 历史已载入，但 CLI 重启失败：' + (error instanceof Error ? error.message : String(error)));
+                await showChatToast('error', '历史已载入，但 CLI 重启失败：' + (error instanceof Error ? error.message : String(error)));
             }
             return;
         }

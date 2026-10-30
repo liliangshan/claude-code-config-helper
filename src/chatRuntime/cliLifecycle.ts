@@ -380,6 +380,24 @@ export async function startChatCliPair(options: { forceRestart?: boolean } = {})
     return run;
 }
 
+/** Stop and detach the previous main CLI before replacing its displayed transcript or saved session identity. */
+export async function stopSidebarForHistorySwitch(): Promise<void> {
+    const action = cliStartQueue.then(async () => {
+        if (!routes.normal.process) return;
+        chatCliCancelState.requested = true;
+        requireDeps().cancelPendingResend('session_resume');
+        requireDeps().clearHttpExpectation('session_resume');
+        routes.normal.adapterSubscription?.dispose(); routes.normal.adapterSubscription = undefined;
+        routes.normal.adapter?.dispose(); routes.normal.adapter = undefined;
+        pendingAskUserRequests.clear();
+        await routes.normal.process.stop();
+        resetAllRouteBusy();
+        await requireDeps().finishActiveAssistantMessage();
+    });
+    cliStartQueue = action.catch(() => undefined);
+    await action;
+}
+
 /** Drain previously admitted startup and stop the sidebar without permitting automatic task replay.
  * @returns Whether a live sidebar was stopped and must be restored by the update coordinator.
  * @throws If the old process cannot be confirmed stopped; the caller must not replace it.

@@ -40,7 +40,7 @@ test('left conversation list has complete labels in seven languages and the plus
 });
 
 /** Both entry points show the conversation directly; settings replacement never stops its runtime. */
-test('left entry renders chat directly without list controls and repeated clicks preserve the current page', async t => {
+test('left entry opens chat directly with its own history drawer and repeated clicks preserve the current page', async t => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'left-chat-'));
     stub.workspaceFolderFsPath = cwd;
     const data: EditorConversation = { version: 1, conversationId: randomUUID(), cwd, title: 'Saved left chat',
@@ -75,11 +75,12 @@ test('left entry renders chat directly without list controls and repeated clicks
     let mount: import('vscode').Disposable | undefined;
     try {
         await left.showConversation();
-        assert.deepEqual(commands, ['workbench.view.extension.claudeRouter', 'claudeRouter.providersView.focus']);
+        assert.deepEqual(commands, ['claudeRouter.providersView.focus']);
         mount = left.mount(view as any); await (left as any).rendering;
         assert.equal(left.session.activeId, data.conversationId);
         assert.ok(html.includes('<body class="left-chat">'));
-        for (const role of ['left-session-list', 'open-sessions', 'session-list']) assert.equal(html.includes(`data-role="${role}"`), false);
+        assert.equal(html.includes('data-role="left-session-list"'), false, 'Do not restore the intermediate independent-session list');
+        for (const role of ['open-sessions', 'session-list']) assert.equal((html.match(new RegExp(`data-role="${role}"`, 'g')) || []).length, 1);
         assert.equal(html.includes('leftSessions.js'), false);
         assert.equal(/{{\w+}}/.test(html), false, 'Every shared chat resource must resolve for the left host');
         const writes = htmlWrites;
@@ -96,9 +97,14 @@ test('left entry renders chat directly without list controls and repeated clicks
         t.mock.method(left.session, 'receive', async (message: { type: string }) => { toolbarActions.push(message.type); });
         await left.runToolbarAction('rename'); await left.runToolbarAction('restart');
         assert.deepEqual(toolbarActions, ['left-rename', 'cli/restart']);
+        const commandsBeforeHistory = commands.length;
+        await (left as any).receive({ type: 'sessions/list' });
+        await (left as any).receive({ type: 'session/resume', sessionId: 'saved-left' });
+        assert.deepEqual(toolbarActions, ['left-rename', 'cli/restart', 'sessions/list', 'session/resume']);
+        assert.equal(commands.length, commandsBeforeHistory, 'Native history stays in the left runtime instead of reopening a list or the main chat');
         mount.dispose(); mount = undefined;
         await left.runToolbarAction('restart');
-        assert.deepEqual(toolbarActions, ['left-rename', 'cli/restart'], 'Settings mode cannot dispatch a hidden chat action');
+        assert.deepEqual(toolbarActions, ['left-rename', 'cli/restart', 'sessions/list', 'session/resume'], 'Settings mode cannot dispatch a hidden chat action');
     } finally {
         mount?.dispose(); left.dispose(); config.dispose(); runtime.setConfigViewProvider(undefined);
         await left.session.shutdown(); await fs.rm(cwd, { recursive: true, force: true });
@@ -118,7 +124,7 @@ test('shared left provider switches between settings and chat without touching t
     const context = { workspaceState: { get: (_key: string, fallback: unknown) => fallback, update: async () => {} } } as any;
     const manager = { getState: () => ({ providers: [] }), onDidChange: () => ({ dispose() {} }) } as any;
     const provider = new ConfigWebviewViewProvider(context, manager);
-    const view = { visible: true, webview: { html: '', onDidReceiveMessage: () => ({ dispose() {} }), postMessage: async () => true },
+    const view = { visible: true, show: () => {}, webview: { html: '', onDidReceiveMessage: () => ({ dispose() {} }), postMessage: async () => true },
         onDidDispose: () => ({ dispose() {} }), onDidChangeVisibility: () => ({ dispose() {} }) };
     runtime.setChatViewHost({ ensureVisible: async () => { reveals++; } } as any);
     const toolbarContexts: unknown[][] = [];

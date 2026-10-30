@@ -264,10 +264,10 @@ export class EditorChatRuntime {
             used, limit, threshold: Math.floor(limit * .9), source: 'api' });
     }
 
-    /** Rehydrate the bound Webview with saved history, settings and outstanding confirmation requests. */
-    public async ready(): Promise<void> {
+    /** Rehydrate this view; explicit history selection can force replacement of a matching cached transcript. */
+    public async ready(replace = false): Promise<void> {
         this.post({ type: 'i18n/update', language: this.manager.getResolvedUiLanguage() });
-        this.post({ type: 'session/init', messages: this.data.messages, cliPath: new ChatCliConfigService(this.manager).getConfig(this.data.cwd).cliPath });
+        this.post({ type: 'session/init', messages: this.data.messages, cliPath: new ChatCliConfigService(this.manager).getConfig(this.data.cwd).cliPath, ...(replace ? { replace: true } : {}) });
         this.post({ type: 'session/title', title: this.data.title, sessionId: this.data.conversationId });
         this.post({ type: 'editorSession/mode', conversationId: this.data.conversationId, cwd: this.data.cwd, draft: this.data.draft });
         const recovery = this.recovery.getSnapshot();
@@ -458,10 +458,10 @@ export class EditorChatRuntime {
         this.service.clear(); this.data.lastRunState = 'idle';
         await this.persist(); await this.ensureCli(); await this.ready();
     }
-    /** Restore a selected native transcript into this tab without sending any task again. */
+    /** Load even the currently selected native history, publish it before CLI startup and never replay a task. */
     private async resumeNativeHistory(sessionId: string): Promise<void> {
         assertConversationId(sessionId);
-        if (sessionId === this.data.cliSessionId) return;
+        if (this.isBusy()) throw new Error('Stop the current task before loading conversation history.');
         const { routes } = await import('../chatRuntime/routeState');
         if (Object.values(routes).some(route => route.sessionId === sessionId && route.process?.isRunning())) throw new Error('该历史正在主区使用，请先停止对应主区会话。');
         const entries = await EditorConversationStore.list(this.data.cwd);
@@ -469,14 +469,14 @@ export class EditorChatRuntime {
         const file = path.join(editorProjectHistory(this.data.cwd, this.historyConfigDir()), `${sessionId}.jsonl`);
         const stat = await fs.lstat(file); if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Invalid CLI history file');
         await fs.access(file);
-        const messages = await parseSessionJsonl(file); const title = await extractSessionTitle(file) || 'Chat';
+        const messages = await parseSessionJsonl(file, { strict: true }); const title = await extractSessionTitle(file) || 'Chat';
         if (this.closed) return;
         await this.cancel(); await this.archiveContext();
         this.relay.usageRegistry.clearRequestUsageBindings();
         this.data.cliSessionId = sessionId; this.data.messages = messages; this.assistant = undefined;
         this.data.title = title; this.panel.title = title; this.data.draft = { text: '', attachments: [] };
         this.service.clear(); this.data.lastRunState = 'idle';
-        await this.persist(); await this.ensureCli(); await this.ready();
+        await this.persist(); await this.ready(true); await this.ensureCli();
     }
     /** Serialize settings and sends; every saved setting belongs only to this conversation. */
     private async dispatch(m: Record<string, any>): Promise<void> {

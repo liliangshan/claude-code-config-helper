@@ -69,6 +69,20 @@ test('revealing main chat preserves focus and history without duplicate initiali
     } finally { host.dispose(); }
 });
 
+/** A not-yet-resolved main chat follows its view ID instead of opening its former sidebar container. */
+test('opening an unresolved moved main chat focuses only its stable view ID and preserves supplied history', async () => {
+    const commands: string[] = [];
+    Object.assign(vscode.commands, { executeCommand: async (command: string) => { commands.push(command); } });
+    const host = new ChatViewHost({} as import('vscode').ExtensionContext);
+    const history = [{ id: 'moved-history', role: 'user', segments: [], createdAt: 1 }] as import('../protocol').ChatMessage[];
+    try {
+        await host.open(history, '/existing/cli');
+        assert.deepEqual(commands, ['claudeRouter.chatSidebarSecondary.focus']);
+        assert.equal((host as any).initialMessages, history);
+        assert.equal((host as any).cliPath, '/existing/cli');
+    } finally { host.dispose(); }
+});
+
 test('main chat restart button and legacy alias reuse the original toolbar relay-and-CLI restart', async t => {
     let cliRestarts = 0; let fullRestarts = 0;
     const cancelled: string[] = [];

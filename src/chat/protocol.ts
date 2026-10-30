@@ -278,7 +278,11 @@ export type ExtensionToWebview =
           /** chat.tools.global.autoApprove 是否已开启。 */
           enabled: boolean;
       }
-    | { type: 'session/init'; messages: ChatMessage[]; cliPath: string }
+    | {
+          type: 'session/init'; messages: ChatMessage[]; cliPath: string;
+          /** Explicit history selection replaces the visible transcript even when message IDs match the cache. */
+          replace?: boolean;
+      }
     | { type: 'session/title'; title: string; sessionId: string }
     | { type: 'session/edit-title'; title: string; sessionId: string }
     | { type: 'sessions/list/result'; sessions: SessionListItem[] }

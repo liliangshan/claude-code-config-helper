@@ -36,18 +36,19 @@
     };
 
 
-    /** 会话列表入口、抽屉标题与空状态在七种语言下统一显示，不更改历史恢复协议。 */
+    /** 左右会话复用历史列表及七语言状态文案，不改变各自的历史恢复协议。 */
     const sessionListTranslations = {
-        en: ['Conversation list', 'Loading…', 'No conversations found.'],
-        'zh-cn': ['会话列表', '加载中…', '暂无会话。'],
-        'zh-tw': ['會話列表', '載入中…', '暫無會話。'],
-        ja: ['会話一覧', '読み込み中…', '会話がありません。'],
-        ko: ['대화 목록', '불러오는 중…', '대화가 없습니다.'],
-        fr: ['Liste des conversations', 'Chargement…', 'Aucune conversation.'],
-        de: ['Unterhaltungsliste', 'Wird geladen…', 'Keine Unterhaltungen gefunden.']
+        en: ['Conversation list', 'Loading…', 'No conversations found.', 'Close conversation list', 'Today', 'Yesterday', 'This week', 'This month'],
+        'zh-cn': ['会话列表', '加载中…', '暂无会话。', '关闭会话列表', '今天', '昨天', '本周', '本月'],
+        'zh-tw': ['會話列表', '載入中…', '暫無會話。', '關閉會話列表', '今天', '昨天', '本週', '本月'],
+        ja: ['会話一覧', '読み込み中…', '会話がありません。', '会話一覧を閉じる', '今日', '昨日', '今週', '今月'],
+        ko: ['대화 목록', '불러오는 중…', '대화가 없습니다.', '대화 목록 닫기', '오늘', '어제', '이번 주', '이번 달'],
+        fr: ['Liste des conversations', 'Chargement…', 'Aucune conversation.', 'Fermer la liste des conversations', 'Aujourd’hui', 'Hier', 'Cette semaine', 'Ce mois-ci'],
+        de: ['Unterhaltungsliste', 'Wird geladen…', 'Keine Unterhaltungen gefunden.', 'Unterhaltungsliste schließen', 'Heute', 'Gestern', 'Diese Woche', 'Dieser Monat']
     };
     Object.entries(sessionListTranslations).forEach(([language, labels]) => {
-        Object.assign(chatTranslations[language], { sessions: labels[0], sessionsTitle: labels[0], sessionsLoading: labels[1], sessionsEmpty: labels[2] });
+        Object.assign(chatTranslations[language], { sessions: labels[0], sessionsTitle: labels[0], sessionsLoading: labels[1], sessionsEmpty: labels[2],
+            sessionsClose: labels[3], sessionsToday: labels[4], sessionsYesterday: labels[5], sessionsWeek: labels[6], sessionsMonth: labels[7] });
     });
 
     /** 并行会话入口直接显示左侧独立会话，不展示列表或创建编辑区标签。 */
@@ -633,6 +634,7 @@
     let sessionTitleEditing = false;
     const restartCliEl = document.querySelector('[data-role="restart-cli"]');
     const newSessionEl = document.querySelector('[data-role="new-session"]');
+    const openSessionsEl = document.querySelector('[data-role="open-sessions"]');
     const sessionListDialogEl = document.querySelector('[data-role="session-list"]');
     const sessionListContentEl = document.querySelector('[data-role="session-list-content"]');
     const sessionListCloseEls = document.querySelectorAll('[data-role="session-list-close"]');
@@ -1884,25 +1886,34 @@
         }
     }
 
+    /** Open this Webview's native CLI history and request a fresh list without switching either chat. */
     function openSessions() {
         if (!(sessionListDialogEl instanceof HTMLElement)) return;
         if (sessionListContentEl) {
-            sessionListContentEl.innerHTML = '<p class="session-panel__loading" data-i18n="sessionsLoading">Loading…</p>';
+            sessionListContentEl.innerHTML = '<p class="session-panel__loading" data-i18n="sessionsLoading">' + escapeHtml(t('sessionsLoading')) + '</p>';
         }
+        sessionListDialogEl.inert = false;
         sessionListDialogEl.setAttribute('aria-hidden', 'false');
+        openSessionsEl?.setAttribute('aria-expanded', 'true');
+        sessionListDialogEl.querySelector('button[data-role="session-list-close"]')?.focus();
         post({ type: 'sessions/list' });
     }
 
+    /** Close the history drawer and restore focus without resetting history, models or the current CLI. */
     function closeSessionList() {
         if (sessionListDialogEl instanceof HTMLElement) {
             sessionListDialogEl.setAttribute('aria-hidden', 'true');
+            sessionListDialogEl.inert = true;
+            openSessionsEl?.setAttribute('aria-expanded', 'false');
+            openSessionsEl?.focus();
         }
     }
 
+    /** Render escaped native-history entries and resume only the selected history in this originating Webview. */
     function renderSessionList(sessions) {
         if (!sessionListContentEl) return;
         if (!sessions || sessions.length === 0) {
-            sessionListContentEl.innerHTML = '<p class="session-list__empty">No past conversations found.</p>';
+            sessionListContentEl.innerHTML = '<p class="session-panel__empty" data-i18n="sessionsEmpty">' + escapeHtml(t('sessionsEmpty')) + '</p>';
             return;
         }
         var now = Date.now();
@@ -1942,25 +1953,26 @@
         });
     }
 
+    /** Group histories in the active UI language using local calendar days, including daylight-saving changes. */
     function getSessionDateGroup(ts, now) {
         var d = new Date(ts);
         var n = new Date(now);
-        var dDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-        var nDay = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
+        var dDay = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+        var nDay = Date.UTC(n.getFullYear(), n.getMonth(), n.getDate());
         var diff = nDay - dDay;
-        if (diff === 0) return 'Today';
-        if (diff === 86400000) return 'Yesterday';
-        if (diff < 7 * 86400000) return 'This week';
-        if (diff < 30 * 86400000) return 'This month';
+        if (diff === 0) return t('sessionsToday');
+        if (diff === 86400000) return t('sessionsYesterday');
+        if (diff < 7 * 86400000) return t('sessionsWeek');
+        if (diff < 30 * 86400000) return t('sessionsMonth');
         return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
     }
 
+    /** Format relative history timestamps with the current chat language rather than hard-coded English suffixes. */
     function formatTimeAgo(ts, now) {
-        var diff = Math.floor((now - ts) / 1000);
-        if (diff < 60) return diff + 's ago';
-        if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-        if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-        return Math.floor(diff / 86400) + 'd ago';
+        var diff = Math.max(0, Math.floor((now - ts) / 1000));
+        var value = diff < 60 ? diff : diff < 3600 ? Math.floor(diff / 60) : diff < 86400 ? Math.floor(diff / 3600) : Math.floor(diff / 86400);
+        var unit = diff < 60 ? 'second' : diff < 3600 ? 'minute' : diff < 86400 ? 'hour' : 'day';
+        return new Intl.RelativeTimeFormat(currentLanguage, { numeric: 'always', style: 'short' }).format(value === 0 ? 0 : -value, unit);
     }
 
     function escapeHtml(str) {
@@ -5512,6 +5524,7 @@
         if (state && state.state === 'waiting_recovery') recoveryViewTimer = setInterval(renderRequestRecoveryStatus, 1000);
     }
 
+    /** Apply host state, replacing transcripts only for explicit history reloads and preserving ordinary init deduplication. */
     function handleExtensionMessage(event) {
         let message = event.data;
         if (!message || typeof message !== 'object') return;
@@ -5560,13 +5573,13 @@
                 var initMessages = message.messages || [];
                 var initSignature = buildSessionInitSignature(initMessages);
                 renderedMessagesCache = cloneMessagesForCache(initMessages);
-                if (initSignature === lastSessionInitSignature && messagesEl && messagesEl.querySelector('.message_07S1Yg')) {
+                if (!message.replace && initSignature === lastSessionInitSignature && messagesEl && messagesEl.querySelector('.message_07S1Yg')) {
                     // 重复 init 不清空、不重绘。其它伴随状态（model/options、权限、默认附件）
                     // 会由独立 postMessage 更新，这里只跳过消息列表重建，避免滚动闪跳。
                     break;
                 }
                 lastSessionInitSignature = initSignature;
-                var incrementalStart = findIncrementalInitStart(initMessages);
+                var incrementalStart = message.replace ? -1 : findIncrementalInitStart(initMessages);
                 if (incrementalStart >= 0) {
                     // DOM 已是 incoming 的前缀：只追加缺失的尾部消息，避免清空重绘
                     // 导致滚动条先跳顶再回底。
@@ -6282,6 +6295,7 @@
     newSessionEl?.addEventListener('click', () => { applySessionTitle('', ''); post({ type: 'session/clear' }); });
     document.querySelector('[data-role="session-title-edit"]')?.addEventListener('click', beginSessionTitleEdit);
     sessionTitleEl?.addEventListener('click', beginSessionTitleEdit);
+    openSessionsEl?.addEventListener('click', openSessions);
     sessionListCloseEls.forEach((el) => {
         if (el instanceof HTMLElement) el.addEventListener('click', closeSessionList);
     });

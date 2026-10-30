@@ -99,6 +99,22 @@ test('parallel editor messages, settings, closing and resume do not affect anoth
         await restored.runtime.receive({ type: 'session/resume', sessionId: sid });
         assert.equal(restored.value.cliSessionId, sid);
         assert.ok(restored.value.messages.some(message => message.text === 'old question'));
+        assert.equal(restored.received.filter(item => item.message.type === 'session/init').at(-1)?.message.replace, true);
+        await fs.appendFile(path.join(dir, `${sid}.jsonl`), '\n' + JSON.stringify({ type: 'assistant', uuid: randomUUID(), message: { role: 'assistant', content: 'History appended outside the Webview' } }));
+        await restored.runtime.receive({ type: 'session/resume', sessionId: sid });
+        assert.ok(restored.value.messages.some(message => message.segments.some(segment => segment.text === 'History appended outside the Webview')), 'Reselecting the current session rereads its native transcript');
+        await fs.appendFile(path.join(dir, `${sid}.jsonl`), '\n' + JSON.stringify({ type: 'assistant', uuid: randomUUID(), message: { role: 'assistant', content: 'History visible even if CLI restart fails' } }));
+        const beforeFailedRestart = restored.received.length;
+        const failedHistoryRestart = t.mock.method(restored.runtime as any, 'ensureCli', async () => { throw new Error('synthetic history restart failure'); });
+        try {
+            await assert.rejects(restored.runtime.receive({ type: 'session/resume', sessionId: sid }), /synthetic history restart failure/);
+            const init = restored.received.slice(beforeFailedRestart).find(item => item.message.type === 'session/init')?.message;
+            assert.equal(init?.replace, true);
+            assert.ok(init.messages.some((message: any) => message.segments.some((segment: any) => segment.text === 'History visible even if CLI restart fails')), 'Loaded history is published before process startup');
+        } finally { failedHistoryRestart.mock.restore(); }
+        const historyBeforeMissing = JSON.stringify(restored.value.messages);
+        await assert.rejects(restored.runtime.receive({ type: 'session/resume', sessionId: randomUUID() }), { code: 'ENOENT' });
+        assert.equal(JSON.stringify(restored.value.messages), historyBeforeMissing, 'Unreadable history cannot clear the current conversation');
         assert.equal(restored.value.conversationId, conversationId);
         assert.equal(JSON.stringify(b.value.messages), bHistoryAfterRestart);
         const { setCliUpdateInProgress } = await import('../../setup/gate');

@@ -25,7 +25,9 @@ test('empty cache reloads native history and manual resume persists identity bef
     runtime.setExtensionContext(context); runtime.setChatViewHost(host);
     t.mock.method(lifecycle, 'getChatCliConfigService', () => ({ getConfig: () => ({ cwd, cliPath: '/synthetic/cli', cliEnv: { CLAUDE_CONFIG_DIR: configDir } }) } as any));
     t.mock.method(lifecycle, 'getChatCliSessionStore', () => store);
-    t.mock.method(lifecycle, 'restartChatCliPair', async () => {});
+    let stopped = 0; let restarted = 0;
+    t.mock.method(lifecycle, 'stopSidebarForHistorySwitch', async () => { stopped++; });
+    t.mock.method(lifecycle, 'restartChatCliPair', async () => { restarted++; });
     const directory = sessions.resolveClaudeProjectDir(cwd, configDir); await fs.mkdir(directory, { recursive: true });
     /** Create isolated native history; it never invokes a CLI or upstream API. */
     const history = (title: string) => [
@@ -52,6 +54,20 @@ test('empty cache reloads native history and manual resume persists identity bef
         assert.equal(state.get('claudeRouter.chat.session.v1').sessionId, second);
         assert.equal(state.get('claudeRouter.chat.session.v1').messages.length, 2);
         assert.equal(posted.filter(item => item.type === 'session/title').at(-1)?.title, 'Second task');
+        assert.equal(posted.filter(item => item.type === 'session/init').at(-1)?.replace, true);
+        assert.equal(stopped, 1); assert.equal(restarted, 1);
+        const originalMessages = sessions.chatSessionState.messages;
+        const stopFailure = t.mock.method(lifecycle, 'stopSidebarForHistorySwitch', async () => { throw new Error('synthetic history stop failure'); });
+        try {
+            await assert.rejects(messages.handleChatWebviewMessage({ type: 'session/resume', sessionId: sid }), /synthetic history stop failure/);
+            assert.equal(sessions.chatSessionState.messages, originalMessages);
+            assert.equal(await store.readSessionId(cwd, 'normal'), second, 'A failed stop cannot publish or persist another session');
+        } finally { stopFailure.mock.restore(); }
+        await assert.rejects(messages.handleChatWebviewMessage({ type: 'session/resume', sessionId: randomUUID() }), { code: 'ENOENT' });
+        assert.equal(sessions.chatSessionState.messages, originalMessages); assert.equal(stopped, 1);
+        assert.equal(await store.readSessionId(cwd, 'normal'), second, 'Failed reads preserve the previous persisted history');
+        await messages.handleChatWebviewMessage({ type: 'session/resume', sessionId: second });
+        assert.equal(stopped, 2); assert.equal(restarted, 2, 'Selecting the same native history reloads it instead of returning early');
         sessions.restorePersistedChatSession(); await sessions.ensureSidebarHistoryRestored();
         assert.equal(sessions.chatSessionState.sessionId, second); assert.equal(sessions.chatSessionState.messages.length, 2);
         const stale = state.get('claudeRouter.chat.session.v1'); stale.sessionId = sid;

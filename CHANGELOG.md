@@ -2,6 +2,52 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.80] - 2026-10-30
+
+### Fixed
+
+- Selecting the settings/parallel view after moving it no longer automatically reveals the main chat through visibility callbacks. Both conversations remain independently selectable when placed in the same sidebar or moved to opposite sides.
+- Main-chat and parallel-chat opening now address their stable view IDs or existing WebviewView instances instead of activating their original containers. User-selected placement remains authoritative; opening a conversation does not move either view or replace its session identity.
+- Explicit settings opening still attempts to reveal the main chat, then returns focus to the settings view at its current location. Ordinary visibility changes and parallel-chat opening do not activate the other conversation.
+
+### Known Issues and Validation Scope
+
+- The pre-existing `requestUsageBinding` regression (`true !== false`) and the separate reused-response-ID usage-association limitation remain unresolved.
+- Regression tests simulate both chats in one sidebar, swapped sidebar placement, manual visibility changes, unresolved view opening, preserved histories and repeated switching without remounting the independent runtime. Actual drag-and-drop behavior still requires manual acceptance in a real VS Code window.
+
+## [3.2.79] - 2026-10-29
+
+### Fixed
+
+- Explicit history selection now replaces the visible transcript even when its message IDs match the Webview cache. Ordinary initialization retains incremental rendering and duplicate-init suppression.
+- Selecting the currently active left/editor CLI history rereads its native transcript instead of returning early. Loaded messages are persisted and displayed before restarting that conversation's CLI, so a startup failure does not hide successfully loaded history.
+- Native history parsing accepts both string content and content-block arrays, preserves numeric timestamps, and skips malformed non-message records. Explicit loads reject missing, unreadable or empty transcripts instead of silently replacing the current conversation with an empty list; automatic startup reads remain tolerant.
+- Main-chat history switching validates the requested UUID and transcript before detaching and stopping the old CLI. The selected identity and transcript are then persisted and published with an explicit replacement flag, preventing a startup history check from reverting to the old session.
+- A busy left/editor task must be stopped before selecting another native history, rather than being silently interrupted.
+
+### Known Issues and Validation Scope
+
+- The pre-existing `requestUsageBinding` regression (`true !== false`) and the separate reused-response-ID usage-association limitation remain unresolved.
+- Regression coverage includes mixed native message formats, reselecting the current history, unreadable-history preservation, failed-stop protection, display before CLI startup and explicit replacement of matching message IDs. An isolated browser check confirmed updated transcript rendering while ordinary duplicate initialization remains unchanged; real-workspace acceptance is still required.
+
+## [3.2.78] - 2026-10-29
+
+### Fixed
+
+- Restored the Conversation list button and native CLI history drawer in both left and right chat views. Each view requests its own history and resumes only the selected session in that originating conversation; the independent editor-session picker is not restored.
+- Loading and empty states, close-button labels, date groups and relative timestamps now follow all seven chat UI languages instead of showing hard-coded English text.
+- Opening the drawer focuses its close control and updates the entry button's expanded state. Closing through the button, backdrop or Escape restores entry-button focus and makes the hidden drawer inert.
+
+### Unchanged
+
+- Parallel session and the native plus action still open the independent left conversation directly, without an intermediate list or new editor tab. Listing or dismissing history does not reset messages, switch models, restart a CLI or affect the opposite chat.
+- Direct website Help actions, private MCP bridges and existing history persistence remain unchanged.
+
+### Known Issues and Validation Scope
+
+- The pre-existing `requestUsageBinding` regression (`true !== false`) and the separate reused-response-ID usage-association limitation remain unresolved.
+- Automated tests exercise the actual drawer functions, all seven locales, selected-history routing, close controls, HTML escaping and left-view isolation. Real-window history selection still requires manual acceptance.
+
 ## [3.2.77] - 2026-10-28
 
 ### Added

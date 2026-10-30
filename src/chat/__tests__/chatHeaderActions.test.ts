@@ -14,7 +14,7 @@ test('editor and main chat share the existing restart action with progress, not 
     assert.ok(secondary.includes('data-role="session-title-edit"'));
     assert.equal(primary.includes('data-role="session-title-edit"'), false);
     assert.equal(html.includes('data-role="restart-cli-only"'), false);
-    for (const role of ['restart-cli', 'editor-session-new', 'new-session', 'help-open']) assert.ok(secondary.includes(`data-role="${role}"`));
+    for (const role of ['restart-cli', 'editor-session-new', 'open-sessions', 'new-session', 'help-open']) assert.ok(secondary.includes(`data-role="${role}"`));
     assert.equal(primary.includes('data-role="editor-session-new"'), false);
     for (const role of ['editor-session-new', 'extension-settings']) {
         assert.match(html, new RegExp(`<button[^>]*class="sidebar-only"[^>]*data-role="${role}"`));
@@ -38,7 +38,7 @@ test('editor and main chat share the existing restart action with progress, not 
     assert.match(source, /restartCliEl\?\.addEventListener\('click', \(\) => post\(\{ type: 'cli\/restart' \}\)\)/);
 });
 
-test('chat no longer exposes conversation-list controls while preserved history translations remain localized', () => {
+test('each chat exposes one native-history button and drawer with seven-language labels', () => {
     const start = source.indexOf('    const sessionListTranslations = {');
     const end = source.indexOf('\n    /**', start);
     assert.ok(start >= 0 && end > start);
@@ -48,13 +48,15 @@ test('chat no longer exposes conversation-list controls while preserved history 
     assert.equal(translations['zh-tw'].sessions, '會話列表');
     for (const values of Object.values(translations)) {
         assert.ok(values.sessions); assert.equal(values.sessionsTitle, values.sessions);
-        assert.ok(values.sessionsLoading); assert.ok(values.sessionsEmpty);
+        assert.ok(values.sessionsLoading); assert.ok(values.sessionsEmpty); assert.ok(values.sessionsClose);
+        for (const key of ['sessionsToday', 'sessionsYesterday', 'sessionsWeek', 'sessionsMonth']) assert.ok(values[key]);
     }
     const html = readFileSync(resolve(__dirname, '../../../media/chat/index.html'), 'utf8');
-    for (const role of ['open-sessions', 'session-list', 'editor-session-list', 'left-session-list']) {
-        assert.equal(html.includes(`data-role="${role}"`), false);
-    }
-    assert.equal(source.includes('openSessionsEl?.addEventListener'), false);
+    for (const role of ['open-sessions', 'session-list']) assert.equal((html.match(new RegExp(`data-role="${role}"`, 'g')) || []).length, 1);
+    for (const role of ['editor-session-list', 'left-session-list']) assert.equal(html.includes(`data-role="${role}"`), false);
+    const button = html.match(/<button[^>]*data-role="open-sessions"[^>]*>/)?.[0] || '';
+    assert.ok(button.includes('data-i18n="sessions"')); assert.equal(button.includes('sidebar-only'), false);
+    assert.match(source, /openSessionsEl\?\.addEventListener\('click', openSessions\)/);
 });
 
 /** Minimal dialog DOM drives the actual title editor rather than a copied implementation. */

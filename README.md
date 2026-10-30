@@ -1,6 +1,6 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.77
+**Version:** 3.2.80
 
 **Website: [www.zhineng.dev](https://www.zhineng.dev/)**
 
@@ -37,6 +37,30 @@ When the Responses stream converter detects malformed tool arguments, it automat
 Files share the existing 20-snapshot error retention limit across date directories. Detection compares the upstream final arguments with the actual emitted argument fragments, including `__unparsedToolInput` wrappers and late fragments. The recorder also retains up to eight recent tool responses in memory (64 MiB total) to correlate a subsequent CLI `InputValidationError` by call ID. If the original response has expired or the extension was reloaded, the fallback file explicitly marks `originalResponseUnavailable`; it never substitutes an unrelated response.
 
 Request bodies, URLs and authentication headers are not included in these diagnostics, but **raw model responses and tool arguments can contain sensitive content**; review them before sharing. Token limits remain unchanged, and arguments are never repaired by guessing missing JSON characters.
+
+## What's New in 3.2.80
+
+- **Moved conversations stay selectable.** The parallel/settings view no longer reopens the main chat whenever it becomes visible. Both conversations can be selected independently when moved into the same sidebar or placed on opposite sides.
+- **View identity, not default placement.** Chat-opening actions focus the registered view or existing WebviewView rather than its original container. Moving a view does not exchange its history, model settings or CLI identity; repeated switching does not remount the parallel runtime.
+- **Settings keep their intended focus.** Explicit settings opening may reveal the main chat first, but finishes at the settings view's current location. Manual visibility changes and opening the parallel conversation never force main-chat activation.
+
+**Known issue:** the existing `requestUsageBinding` failure (`true !== false`) and the reused-response-ID association limitation remain unresolved. Simulated layout regressions pass; real-window drag-and-drop still requires manual acceptance.
+
+## What's New in 3.2.79
+
+- **Selected history actually reloads.** Explicit history selection replaces the visible transcript even when cached message IDs match. Reselecting the current left/editor history rereads its native file; ordinary duplicate initialization still avoids unnecessary redraws.
+- **Broader native transcript support.** String messages and content-block arrays are both recognized. Missing, unreadable or empty selected histories report failure without silently clearing the current chat.
+- **Safe switching and earlier display.** The main chat reads and validates history before stopping its previous CLI and saving the selected identity. The left/editor chat publishes loaded history before process startup, keeping it visible even if that startup fails. Stop an active left/editor task before selecting history; interrupted prompts are never automatically replayed.
+
+**Known issue:** the existing `requestUsageBinding` failure (`true !== false`) and the reused-response-ID association limitation remain unresolved. The reload behavior is covered by regression tests and an isolated browser check; manual acceptance in real workspaces is still required.
+
+## What's New in 3.2.78
+
+- **Conversation history is back on both sides.** Each chat header includes a Conversation list button that opens its native CLI history drawer. Selecting a history resumes it only in the originating left or right conversation; listing or dismissing history does not reset either chat.
+- **Localized and keyboard-friendly.** Loading/empty states, close controls, date groups and relative timestamps follow the selected UI language. Close through the button, backdrop or Escape; focus returns to the history button and the closed drawer is inert.
+- **Parallel entry stays direct.** Parallel session and the native plus action still open the left conversation without an intermediate list or editor tab. This restores native CLI history, not the separate independent-session picker. Website Help continues to open the homepage directly.
+
+**Known issue:** the existing `requestUsageBinding` failure (`true !== false`) and the reused-response-ID association limitation remain unresolved. Real-window history selection still requires manual acceptance.
 
 ## What's New in 3.2.77
 
@@ -283,7 +307,7 @@ This release is a hardening pass over the Chat CLI, the relay server, and shutdo
 6. Use the main chat's **Parallel session** button or native title-bar **＋** to open the left independent conversation directly. It reuses the active left session, otherwise restores its saved selection or earliest history; without history it creates one conversation. No intermediate list or editor tab is opened.
 7. The left conversation initially copies the main chat's saved settings and then keeps its own models, reasoning, permissions, history and usage. Opening settings or hiding its view does not stop its task. The left native toolbar provides Edit title, Settings and Restart CLI, without a plus; restarting one side does not restart the other.
 
-Independent conversation checkpoints remain under `<workspace>/.LLSOAI/editor-sessions/<conversationId>/`; the main chat retains its existing `.LLSOAI/chat-session.json` CLI identity. Conversation-list controls are no longer shown in chat. The former editor multi-session implementation, saved histories and serializer are preserved, but its creation/history commands are hidden from the usual UI. Restoring a conversation never resends its previous prompt.
+Independent conversation checkpoints remain under `<workspace>/.LLSOAI/editor-sessions/<conversationId>/`; the main chat retains its existing `.LLSOAI/chat-session.json` CLI identity. Each chat's **Conversation list** button opens native CLI histories for that conversation's working directory and CLI configuration; selecting an entry resumes it only on that side. Parallel session and the native plus action still open the left chat directly. The former editor multi-session implementation, saved histories and serializer are preserved, but its creation/history commands remain hidden from the usual UI. Restoring a conversation never resends its previous prompt.
 
 Full development notes: [onboarding and CLI management](docs/onboarding-cli-install-left-chat-plan.md) and [independent editor sessions](docs/editor-chat-multi-session-plan.md).
 
@@ -389,7 +413,7 @@ Command titles may be localized according to your configured UI language.
 
 ### Option 1: Install from a local VSIX
 
-Install the packaged `claude-code-config-helper-3.2.77.vsix` using VS Code's **Extensions → … → Install from VSIX…** action. Reload the window when ready to activate the installed build; reload interrupts currently running extension CLIs. To build a package yourself, install the repository dependencies, run `npm run compile`, then package with `@vscode/vsce`.
+Install the packaged `claude-code-config-helper-3.2.80.vsix` using VS Code's **Extensions → … → Install from VSIX…** action. Reload the window when ready to activate the installed build; reload interrupts currently running extension CLIs. To build a package yourself, install the repository dependencies, run `npm run compile`, then package with `@vscode/vsce`.
 
 ### CLI installation through setup
 

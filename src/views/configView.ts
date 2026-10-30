@@ -522,14 +522,14 @@ export class ConfigWebviewViewProvider implements vscode.WebviewViewProvider, vs
         private readonly manager: ConfigManager
     ) { this.sessionsRequested = context.workspaceState?.get<boolean>('claudeRouter.leftPage.sessions', false) ?? false; }
 
-    /** Route one left-side Webview to onboarding or settings from the explicit global installation state. */
+    /** Resolve the shared settings/parallel view without revealing a different conversation after a sidebar move. */
     public resolveWebviewView(webviewView: vscode.WebviewView): void {
         this.releasePage();
         this.pageSubscription?.dispose(); this.visibilitySubscription?.dispose();
         this.view = webviewView;
         this.pageSubscription = getSetupController()?.onDidChangePage(() => this.renderPage());
         this.visibilitySubscription = webviewView.onDidChangeVisibility(() => {
-            if (webviewView.visible) { this.renderPage(); this.activateWizardIfNeeded(); void this.revealMainChat(); }
+            if (webviewView.visible) { this.renderPage(); this.activateWizardIfNeeded(); }
         });
         webviewView.onDidDispose(() => {
             if (this.view !== webviewView) return;
@@ -537,7 +537,7 @@ export class ConfigWebviewViewProvider implements vscode.WebviewViewProvider, vs
             this.pageSubscription?.dispose(); this.visibilitySubscription?.dispose();
         });
         this.renderPage();
-        if (webviewView.visible) { this.activateWizardIfNeeded(); void this.revealMainChat(); }
+        if (webviewView.visible) this.activateWizardIfNeeded();
     }
 
     /** Focus onboarding when an uninstalled environment opens the left view, without launching a CLI or download. */
@@ -583,24 +583,27 @@ export class ConfigWebviewViewProvider implements vscode.WebviewViewProvider, vs
         catch (error) { Logger.warn(`显示主聊天视图失败：${String(error)}`); }
     }
 
-    /** Reveal the left conversation without creating editor tabs or altering the right main conversation. */
+    /** Reveal the independent conversation at its current location without activating the main chat or a default container. */
     public async showSessions(): Promise<void> {
         this.sessionsRequested = true;
         await this.context.workspaceState?.update('claudeRouter.leftPage.sessions', true);
-        await this.revealMainChat();
-        await vscode.commands.executeCommand('workbench.view.extension.claudeRouter');
-        await vscode.commands.executeCommand(`${PROVIDERS_VIEW_ID}.focus`);
         this.renderPage();
+        await this.revealCurrentView();
     }
 
-    /** Show both views and leave keyboard focus in the left settings view without stopping a hidden task. */
+    /** Reveal settings deliberately, returning to its current view even if both conversations now share a sidebar. */
     public async focus(): Promise<void> {
         this.sessionsRequested = false;
         await this.context.workspaceState?.update('claudeRouter.leftPage.sessions', false);
         await this.revealMainChat();
-        await vscode.commands.executeCommand('workbench.view.extension.claudeRouter');
-        await vscode.commands.executeCommand(`${PROVIDERS_VIEW_ID}.focus`);
         this.renderPage();
+        await this.revealCurrentView();
+    }
+
+    /** Address the registered view, never its original container, so drag-and-drop placement remains authoritative. */
+    private async revealCurrentView(): Promise<void> {
+        if (this.view) { this.view.show(false); return; }
+        await vscode.commands.executeCommand(`${PROVIDERS_VIEW_ID}.focus`);
     }
 
     /** Release the shared view controllers and mode/visibility subscriptions. */

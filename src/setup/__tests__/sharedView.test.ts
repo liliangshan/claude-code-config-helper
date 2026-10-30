@@ -46,7 +46,7 @@ test('one settings view loads wizard for missing global state and switches in pl
     const setup = entry.getSetupController()!; const settings = new ConfigWebviewViewProvider(context, manager);
     runtime.setConfigViewProvider(settings); runtime.setChatViewHost({ ensureVisible: async () => { opened++; } } as any);
     const htmlWrites: string[] = []; let currentHtml = '';
-    const view = { title: '', visible: true, webview: {
+    const view = { title: '', visible: true, show: () => {}, webview: {
         get html() { return currentHtml; },
         set html(value: string) { htmlWrites.push(value); currentHtml = value; },
         cspSource: 'vscode-webview:', asWebviewUri: (uri: any) => uri.fsPath,

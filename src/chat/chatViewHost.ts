@@ -3,7 +3,7 @@
 import * as fs from 'fs/promises';
 import * as vscode from 'vscode';
 
-import { CHAT_SECONDARY_CONTAINER_ID, CHAT_SECONDARY_VIEW_ID } from '../constants';
+import { CHAT_SECONDARY_VIEW_ID } from '../constants';
 import { Logger } from '../logger';
 import type { ChatMessage, ExtensionToWebview, WebviewToExtension } from './protocol';
 
@@ -247,14 +247,8 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
         this.messageEmitter.dispose();
     }
 
-    /**
-     * 打开右侧 Secondary Sidebar 容器中的主聊天视图。
-     *
-     * VS Code 按需解析唯一的主聊天视图；既有视图 ID 保持不变以保留历史和用户布局。
-     */
+    /** Focus the stable main-chat view ID wherever VS Code restored or the user moved it. */
     private async revealSidebarView(): Promise<void> {
-        await vscode.commands.executeCommand('setContext', 'claudeRouter.chat.useActivityBarFallback', false);
-        await vscode.commands.executeCommand(`workbench.view.extension.${CHAT_SECONDARY_CONTAINER_ID}`);
         await vscode.commands.executeCommand(`${CHAT_SECONDARY_VIEW_ID}.focus`);
     }
 
