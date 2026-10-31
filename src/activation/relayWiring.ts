@@ -9,6 +9,7 @@
  */
 import * as vscode from 'vscode';
 
+import { handleImageRelay } from '../imageTools/httpBridge';
 import { createBrowserToolRelayHandler } from '../browserTools/httpBridge';
 import { BrowserSessionStore } from '../browserTools/sessionStore';
 import { handleUpstreamTimeoutAutoContinue, sendHiddenUserMessageToCli } from '../chatRuntime/chatMessaging';
@@ -209,6 +210,7 @@ export function setupRelayPipeline(
 
     relayServer.setHandler(async (req, res) => {
         if (req.method === 'GET' && req.url === '/_lls/health') { res.writeHead(204); res.end(); return; }
+        if (await handleImageRelay(req, res)) return;
         if (await browserToolRelayHandler(req, res)) return;
         if (await vscodeToolRelayHandler(req, res)) return;
         if (await wakeupToolRelayHandler(req, res)) return;

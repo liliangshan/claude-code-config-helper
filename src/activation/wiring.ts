@@ -12,6 +12,7 @@ import * as vscode from 'vscode';
 import { BROWSER_BRIDGE } from '../browserTools/bridge';
 import { VSCODE_BRIDGE } from '../vscodeTools/bridge';
 import { WAKEUP_BRIDGE } from '../wakeupTools/bridge';
+import { IMAGE_BRIDGE } from '../imageTools/bridge';
 import { appendAssistantSegments, configureChatSession, finishActiveAssistantMessage, getTokenBudgetServiceRef } from '../chatRuntime/chatSession';
 import {
     appendUserMessageAndSend,
@@ -133,7 +134,7 @@ export function configureRuntimeModules(): void {
         notifyPermissionDeniedToUser,
         getCompactionService: getTokenBudgetServiceRef,
         logMcpInjection: (config) => {
-            for (const descriptor of [BROWSER_BRIDGE, VSCODE_BRIDGE, WAKEUP_BRIDGE]) {
+            for (const descriptor of [BROWSER_BRIDGE, VSCODE_BRIDGE, WAKEUP_BRIDGE, IMAGE_BRIDGE]) {
                 logMcpInjection(config, descriptor);
             }
             logMcpToolsBeforeCliStart();

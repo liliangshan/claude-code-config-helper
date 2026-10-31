@@ -14,6 +14,8 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { promises as fs } from 'fs';
 
+import { receiveImageMessage, resetImageIdentity } from '../imageTools/entry';
+import type { ImageWebviewRequest } from '../imageTools/types';
 import { COMMANDS, CONFIG_NAMESPACE, type ChatCacheTtl } from '../constants';
 import type { ChatMessage, ChatModelOption, LlsTaskSnapshotPayload, ChatQuickPermissionMode, ChatRoute, ChatRoutedModelSelection, ChatUiLanguage, SessionListItem, WebviewToExtension } from '../chat/protocol';
 import { requestUsageRegistry } from './requestUsage';
@@ -135,6 +137,7 @@ export async function switchChatRoute(route: ChatRoute, reason: string): Promise
  * @param message WebviewToExtension 协议消息。
  */
 export function handleChatWebviewMessage(message: WebviewToExtension): Promise<void> {
+    if (message.type.startsWith('imageGeneration/')) return receiveImageMessage('main', message as ImageWebviewRequest);
     // 在入队前取消恢复，避免旧恢复趁附件读取或会话切换排队期间发送。
     if (['user/send', 'user/resend', 'user/cancel', 'session/clear', 'session/resume', 'model/select'].includes(message.type)) {
         requireDeps().cancelPendingResend(`webview:${message.type}`);
@@ -291,6 +294,7 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
             await handleUserResend(message.id, message.text);
             return;
         case 'session/clear':
+            await resetImageIdentity(getChatCliConfigService()?.getConfig().cwd ?? '', 'main');
             requestUsageRegistry.clearRequestUsageBindings();
             chatSessionState.messages = [];
             chatSessionState.activeAssistantMessageId = undefined;
@@ -363,6 +367,7 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
             requireDeps().clearHttpExpectation('session_resume');
             requireDeps().cancelPendingResend('session_resume');
             await stopSidebarForHistorySwitch();
+            await resetImageIdentity(cwd, 'main');
             await getChatCliSessionStore()?.writeSessionId(cwd, targetSessionId, 'normal');
             requestUsageRegistry.clearRequestUsageBindings();
             routes.normal.sessionId = targetSessionId;

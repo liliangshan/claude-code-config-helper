@@ -6,6 +6,7 @@
  * {@link configureCliLifecycle} 注入的回调完成，避免形成循环 import。
  */
 import * as vscode from 'vscode';
+import { issueImageCapability } from '../imageTools/entry';
 import { isCliUpdateInProgress } from '../setup/gate';
 import { StreamJsonCliAdapter, type ParsedCliEvent } from '../chat/cli/cliAdapter';
 import { getRecoveryAdapterIdentity, bindRecoveryAdapter, requestRecoveryController } from './selfHealing';
@@ -480,6 +481,8 @@ async function performStartChatCliPair(options: { forceRestart?: boolean }): Pro
             return;
         }
         deps?.getCompactionService?.()?.releaseCliCompactions(getSessionIdForRoute('normal'), 'CLI restarted');
+        const imageBridge = normalLaunchConfig.mcpServers?.llsccaiImage;
+        if (imageBridge) imageBridge.env = { ...imageBridge.env, LLS_IMAGE_TOOL_CAPABILITY: issueImageCapability('main', normalLaunchConfig.cwd ?? '') };
         await routes.normal.process.start(normalLaunchConfig);
         rebuildNormalAdapter();
     }
@@ -529,6 +532,8 @@ async function performRecoveryCliStart(context: Readonly<RecoveryContext>, signa
     if (getSessionIdForRoute('normal') !== context.sessionId) throw new Error('Recovery session changed');
     deps?.getCompactionService?.()?.releaseCliCompactions(context.sessionId, 'CLI recovery restart');
     resetAllRouteBusy();
+    const imageBridge = configs.normal.mcpServers?.llsccaiImage;
+    if (imageBridge) imageBridge.env = { ...imageBridge.env, LLS_IMAGE_TOOL_CAPABILITY: issueImageCapability('main', configs.normal.cwd ?? '') };
     await process.start({ ...configs.normal, resumeSessionId: context.sessionId });
     appliedNativePolicy = configs.normal.nativeCompaction;
     appliedNativeModel = configs.normal.model || '';

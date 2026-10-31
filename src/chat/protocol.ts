@@ -44,6 +44,8 @@ export interface ChatSegment {
     language?: string;
     /** 文件引用路径。 */
     filePath?: string;
+    /** Host-authored generated image reference; opening always revalidates task ownership and the saved path. */
+    generatedImage?: { taskId: string; imageId: string; scopeId: string };
     /** 文件引用起始行号。 */
     startLine?: number;
     /** 文件引用起始列号。 */
@@ -264,6 +266,7 @@ export type RequestRecoveryViewState = Omit<import('../chatRuntime/requestRecove
 
 /** 扩展宿主发送给 Webview 的消息。 */
 export type ExtensionToWebview =
+    | import('../imageTools/types').ImageWebviewMessage
     | {
           /** 通知 Webview 切换语言并重绘本地动态 UI。 */
           type: 'i18n/update';
@@ -534,6 +537,7 @@ export interface LlsTaskSnapshotPayload {
 
 /** Webview 发送给扩展宿主的消息。 */
 export type WebviewToExtension =
+    | import('../imageTools/types').ImageWebviewRequest
     | { type: 'webview/ready' }
     | { type: 'request/retry'; identity: import('../chatRuntime/requestRecovery').RecoveryIdentity }
     | { type: 'user/send'; text: string; attachments?: ChatComposerAttachment[] }

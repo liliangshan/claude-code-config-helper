@@ -124,7 +124,7 @@ export class LeftChatView {
         const nonce = randomUUID().replace(/-/g, '');
         let html = await fs.readFile(vscode.Uri.joinPath(root, 'index.html').fsPath, 'utf8');
         const replacements: Record<string, string> = { cspSource: view.webview.cspSource, nonce };
-        for (const [key, file] of Object.entries({ styleUri: 'style.css', cacheSolutionScriptUri: 'cacheSolution.js', clipboardUri: 'clipboard.js', scriptUri: 'main.js' })) {
+        for (const [key, file] of Object.entries({ imageStyleUri: 'imageGeneration.css', imageScriptUri: 'imageGeneration.js', styleUri: 'style.css', cacheSolutionScriptUri: 'cacheSolution.js', clipboardUri: 'clipboard.js', scriptUri: 'main.js' })) {
             replacements[key] = String(view.webview.asWebviewUri(vscode.Uri.joinPath(root, file)));
         }
         html = html.replace(/{{(\w+)}}/g, (match, key: string) => replacements[key] ?? match)

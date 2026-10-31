@@ -193,6 +193,8 @@
 
 以上均带 `@anthropic-ai/` scope。按主包声明的版本关系读取对应平台包元数据，不假设不同平台的 latest 永远一致。
 
+Linux libc 检测不能只依赖 `process.report`：部分 VS Code/Electron 扩展宿主未提供报告。按运行时 glibc/共享库证据、`getconf GNU_LIBC_VERSION`、`ldd --version`（含 stderr）、ldd 脚本及已知 loader 文件依次识别 glibc/musl；探测命令使用无 shell、有超时和输出上限的本机调用。缺少报告不等于 musl；仍无明确结果或证据冲突时提示选择已有 CLI，不猜包、不自动安装系统 libc。
+
 主 npm 包当前声明 Node.js ≥22；下载原生平台二进制与运行 `npm install` 是两条不同路径，不能把“直接下载”宣传成运行 npm 安装。实施前核对平台包布局、原生系统要求与官方分发条款；未知格式、缺包或不支持平台时明确失败并提供手动选择，不猜文件名。
 
 ### 6.1.1 安装源与页内进度（补充）

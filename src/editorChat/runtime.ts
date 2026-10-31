@@ -30,6 +30,11 @@ import { buildPromptWithAttachments, buildUserDisplaySegments, sanitizeUploadFil
 import { readClipboardImage } from '../chatRuntime/clipboardImages';
 import type { RequestUsageSummary } from '../relay/requestUsage';
 import type { UsageReport } from '../relay/usageReporter';
+import { attachImageView, getImageService, imageScope, receiveImageMessage, resetImageIdentity } from '../imageTools/entry';
+import type { ImageScope, ImageTask, ImageWebviewRequest } from '../imageTools/types';
+import { imageResultMessage, imageResultPrompt } from '../imageTools/results';
+import { ImageResultReceipts } from '../imageTools/delivery';
+import { getExtensionContext } from '../runtime';
 
 /** Minimal presentation host shared by preserved editor tabs and the independent left-side conversation. */
 export interface IndependentChatHost {
@@ -70,6 +75,9 @@ export class EditorChatRuntime {
     private readonly diagnostics = new DiagnosticsHost();
     private readonly wakeupStore: WakeupStore;
     private readonly wakeups: WakeupScheduler;
+    private readonly imageSubscription: vscode.Disposable;
+    private readonly imageReceipts?: ImageResultReceipts;
+    private imageResultSending = false;
     private readonly wakeupHost: WakeupHost;
     private readonly wakeupQueue: string[] = [];
     private readonly checkpoint = setInterval(() => { if (!this.closed && this.busy) void this.persist().catch(error => this.post({ type: 'toast', level: 'error', text: String(error) })); }, 5000);
@@ -77,6 +85,11 @@ export class EditorChatRuntime {
     public constructor(public readonly data: EditorConversation, private readonly store: EditorConversationStore,
         private readonly panel: IndependentChatHost, private readonly manager: ConfigManager,
         private readonly openNew: () => Promise<void>, private readonly history: () => Promise<void>) {
+        const context = getExtensionContext(); if (context) this.imageReceipts = new ImageResultReceipts(context.workspaceState);
+        this.imageSubscription = attachImageView(this.data.conversationId, {
+            scope: () => this.imageTaskScope(), post: message => this.post(message), delivered: (scope, task) => this.imageReceipts?.has(scope, task) ?? false,
+            complete: (scope, task) => this.appendImageResult(scope, task)
+        });
         this.opener = new EditorAutoOpener(() => [{ uri: vscode.Uri.file(data.cwd), name: path.basename(data.cwd), index: 0 }], () => !this.closed && data.settings.codePreviewEnabled);
         this.service = new LlsTaskService(manager, new TaskFlowStore(path.join(data.cwd, '.LLSOAI/editor-sessions', data.conversationId, 'task-flow.json')));
         this.wakeupStore = new WakeupStore(path.join(data.cwd, '.LLSOAI/editor-sessions', data.conversationId, 'wakeups.json'));
@@ -106,7 +119,7 @@ export class EditorChatRuntime {
         this.relay.onRequest = id => { if (this.recoveryIdentity) { this.requestIdentities.set(id, this.recoveryIdentity); this.recovery.onRelayRequestStarted(this.recoveryIdentity, id); } };
         this.relay.onOutcome = outcome => { const id = outcome.context?.requestId; const identity = id && this.requestIdentities.get(id); if (!id || !identity) return;
             this.requestIdentities.delete(id); this.recovery.onRelayRequestFinished(identity, id, outcome.status === 'error' ? { status: outcome.upstreamStatus ?? outcome.mappedStatus, code: outcome.code, stage: outcome.stage, retryAfter: outcome.retryAfter } : undefined); };
-        this.relay.toolHandler = async (bridge, name, args) => {
+        this.relay.toolHandler = async (bridge, name, args, requestId) => {
             if (this.closed) throw new Error('Editor closed');
             if (bridge === 'llsccaiBrowser') {
                 // Force new pages so another conversation's current page is not silently adopted.
@@ -114,6 +127,11 @@ export class EditorChatRuntime {
             }
             if (bridge === 'llsccaiVscode') return this.diagnostics.execute(name as any, args);
             if (bridge === 'llsccaiWakeup') return this.wakeupHost.execute(name as any, args);
+            if (bridge === 'llsccaiImage') {
+                const service = getImageService(); if (!service || !requestId) throw new Error('IMAGE_CONFIG_REQUIRED');
+                const generation = this.generation; const sessionId = this.data.cliSessionId;
+                return service.execute(await this.imageTaskScope(), name, args, requestId, () => !this.closed && generation === this.generation && sessionId === this.data.cliSessionId);
+            }
             throw new Error('Unknown editor bridge');
         };
         this.relay.onIdle = () => { this.queueEvent(async () => { await this.finishTurn(); }); };
@@ -127,7 +145,7 @@ export class EditorChatRuntime {
         if (this.data.lastRunState === 'running') this.data.lastRunState = 'interrupted';
         await this.persist(); await this.ready();
     }
-    /** Safe event delivery to this panel only. */
+    /** Deliver messages to this presentation only; never mutate Webview resource options during history initialization. */
     private post(message: ExtensionToWebview | Record<string, unknown>): void {
         if (!this.closed) void this.panel.webview.postMessage({ type: 'from-extension', message }).then(undefined, () => {});
     }
@@ -194,8 +212,8 @@ export class EditorChatRuntime {
         const url = this.relay.configure(settings);
         this.relay.sessionId = this.data.cliSessionId ?? this.data.conversationId;
         // Legacy builtin bridges target the sidebar. Never inject them into an independent editor.
-        const mcpServers = Object.fromEntries(Object.entries(base.mcpServers ?? {}).filter(([name]) => !['llsccaiBrowser', 'llsccaiVscode', 'llsccaiWakeup'].includes(name)));
-        for (const name of ['llsccaiBrowser', 'llsccaiVscode', 'llsccaiWakeup']) if (base.mcpServers?.[name]) {
+        const mcpServers = Object.fromEntries(Object.entries(base.mcpServers ?? {}).filter(([name]) => !['llsccaiBrowser', 'llsccaiVscode', 'llsccaiWakeup', 'llsccaiImage'].includes(name)));
+        for (const name of ['llsccaiBrowser', 'llsccaiVscode', 'llsccaiWakeup', 'llsccaiImage']) if (base.mcpServers?.[name]) {
             mcpServers[name] = { type: 'stdio', command: process.execPath, args: ['-e', `require(${JSON.stringify(require.resolve('./mcp'))}).startEditorBridge()`],
                 env: { ELECTRON_RUN_AS_NODE: '1', LLS_EDITOR_BRIDGE: name, LLS_EDITOR_TOOL_URL: `${url}/tools` } };
         }
@@ -294,30 +312,42 @@ export class EditorChatRuntime {
         this.post({ type: 'codePreview/current', enabled: s.codePreviewEnabled });
         this.post({ type: 'browser/autoApproveState', supported: false, enabled: false });
     }
-    /** Send one prompt to this CLI only; no side effects are replayed on history restoration. */
-    public async send(text: string, attachments?: import('../chat/protocol').ChatComposerAttachment[], continuation = false): Promise<void> {
+    /** Send one user or continuation turn; image-result turns preserve the draft and claim a receipt before transport. */
+    public async send(text: string, attachments?: import('../chat/protocol').ChatComposerAttachment[], continuation = false, imageResult?: { scope: ImageScope; task: ImageTask }): Promise<void> {
         if ((await import('../setup/gate')).isCliUpdateInProgress()) throw new Error('CLI update in progress; send again after restart');
         if (this.restarting) throw new Error('CLI restart in progress');
         if (this.closed || this.busy) throw new Error('会话忙碌或已关闭');
         if (!text.trim() && !attachments?.length) return;
         const prompt = buildPromptWithAttachments(text, attachments); if (!continuation) this.flowPaused = false;
         await this.ensureCli(); if (this.closed) return;
-        const user: ChatMessage = { id: randomUUID(), role: 'user', text: prompt, segments: await buildUserDisplaySegments(prompt, attachments), createdAt: Date.now() };
+        const displaySegments = imageResult ? undefined : await buildUserDisplaySegments(prompt, attachments);
+        if (imageResult) {
+            const current = await this.imageTaskScope();
+            if (current.id !== imageResult.scope.id || current.cwd !== imageResult.scope.cwd || this.imageDeliveryBusy() || !this.imageReceipts) throw new Error('IMAGE_RESULT_DEFERRED');
+            if (!await this.imageReceipts.claim(imageResult.scope, imageResult.task)) throw new Error('IMAGE_RESULT_ALREADY_DELIVERED');
+            const latest = await this.imageTaskScope();
+            if (latest.id !== imageResult.scope.id || latest.cwd !== imageResult.scope.cwd || this.imageDeliveryBusy()) throw new Error('IMAGE_RESULT_DELIVERY_CHANGED');
+        }
+        const user: ChatMessage = imageResult ? imageResultMessage(imageResult.task, this.manager.getResolvedUiLanguage(), this.data.cwd)
+            : { id: randomUUID(), role: 'user', text: prompt, segments: displaySegments!, createdAt: Date.now() };
+        const existing = imageResult ? this.data.messages.findIndex(message => message.id === user.id) : -1;
+        if (existing >= 0) this.data.messages.splice(existing, 1);
         this.data.messages.push(user); this.post({ type: 'message/append', message: user });
         this.assistant = { id: randomUUID(), role: 'assistant', segments: [], createdAt: Date.now(), pending: true };
         this.data.messages.push(this.assistant); this.post({ type: 'message/append', message: this.assistant });
         this.recoveryIdentity = this.recovery.beginTurn({ turnId: randomUUID(), sessionId: this.data.cliSessionId ?? '', cliInstanceId: String(this.generation), route: 'normal', originalPrompt: prompt, deliveryState: 'not_sent' });
         this.busy = true; this.turnFinished = false; this.turnFailed = false; this.relay.active = true;
-        const requestGeneration = this.generation;
-        this.data.draft = { text: '', attachments: [] };
+        const requestGeneration = this.generation, requestSessionId = this.data.cliSessionId;
+        if (!imageResult) this.data.draft = { text: '', attachments: [] };
         this.data.lastRunState = 'running'; await this.persist();
-        if (this.closed || requestGeneration !== this.generation) return;
+        if (this.closed || requestGeneration !== this.generation || (imageResult && requestSessionId !== this.data.cliSessionId)) return;
         this.post({ type: 'chat/running', running: true });
         try { await this.adapter!.sendUserMessage(prompt); } catch (error) { await this.cancel(); throw error; }
     }
     /** Merge CLI public events into this panel, rejecting stale process generations at the subscription. */
     private async onEvent(event: ParsedCliEvent): Promise<void> {
         if (event.type === 'session/init') {
+            if (getImageService()) await imageScope(this.data.cwd, this.data.conversationId, event.sessionId, this.data.title).catch(() => {});
             this.data.cliSessionId = event.sessionId; this.relay.sessionId = event.sessionId;
             if (this.recoveryIdentity) this.recoveryIdentity = this.recovery.bindSession(this.recoveryIdentity, event.sessionId) ?? this.recoveryIdentity;
             await this.persist();
@@ -425,10 +455,37 @@ export class EditorChatRuntime {
     /** Report whether switching this host to another conversation would interrupt active work. */
     public isBusy(): boolean { return this.busy || this.background.size > 0 || !!this.starting || this.restarting; }
 
-    /** Route UI operations to this host; help opens immediately without joining task/settings queues. */
+    /** Defer result delivery until the entire owned CLI turn, recovery and compaction have settled. */
+    private imageDeliveryBusy(): boolean {
+        return this.closed || this.isBusy() || this.relay.inFlight > 0 || this.permissions.size > 0 || this.recovery.hasPendingRecovery();
+    }
+    /** Send a terminal image result as a user continuation once, without clearing drafts or targeting another history. */
+    private async appendImageResult(scope: ImageScope, task: ImageTask): Promise<boolean> {
+        if (this.closed || this.imageResultSending) return false;
+        const current = await this.imageTaskScope();
+        if (current.id !== scope.id || current.cwd !== scope.cwd) return false;
+        const existing = this.data.messages.find(message => message.id === `image-result-${task.taskId}`);
+        if (this.imageReceipts?.has(scope, task)) {
+            if (existing?.role === 'user') this.post({ type: 'message/append', message: existing });
+            return true;
+        }
+        if (this.imageDeliveryBusy() || !this.imageReceipts) return false;
+        this.imageResultSending = true;
+        try {
+            await this.send(imageResultPrompt(task, scope.cwd), undefined, true, { scope, task }); return true;
+        } catch {
+            return this.imageReceipts.has(scope, task);
+        } finally { this.imageResultSending = false; }
+    }
+    /** Resolve persistent image task identity independently of global image model selection. */
+    private imageTaskScope(): Promise<ImageScope> {
+        return imageScope(this.data.cwd, this.data.conversationId, this.data.cliSessionId, this.data.title);
+    }
+    /** Route UI operations to this host; help and global image settings do not join task/settings queues. */
     public async receive(message: WebviewToExtension | Record<string, any>): Promise<void> {
         if (this.closed) return;
         const m = message as Record<string, any>;
+        if (m.type.startsWith('imageGeneration/')) { await receiveImageMessage(this.data.conversationId, m as ImageWebviewRequest); return; }
         if (m.type === 'help/open') { await vscode.commands.executeCommand(COMMANDS.openHelp); return; }
         if (m.type === 'askUser/answers') {
             const input = this.permissions.get(m.requestId); if (!input) return;
@@ -452,6 +509,7 @@ export class EditorChatRuntime {
     /** Start fresh in the current tab, retaining its settings and preserving the old history archive. */
     private async newChat(): Promise<void> {
         await this.cancel(); await this.archiveContext();
+        await resetImageIdentity(this.data.cwd, this.data.conversationId);
         this.relay.usageRegistry.clearRequestUsageBindings();
         this.data.cliSessionId = undefined; this.data.messages = []; this.assistant = undefined;
         this.data.draft = { text: '', attachments: [] }; this.data.title = 'Chat'; this.panel.title = this.data.title;
@@ -472,6 +530,7 @@ export class EditorChatRuntime {
         const messages = await parseSessionJsonl(file, { strict: true }); const title = await extractSessionTitle(file) || 'Chat';
         if (this.closed) return;
         await this.cancel(); await this.archiveContext();
+        await resetImageIdentity(this.data.cwd, this.data.conversationId);
         this.relay.usageRegistry.clearRequestUsageBindings();
         this.data.cliSessionId = sessionId; this.data.messages = messages; this.assistant = undefined;
         this.data.title = title; this.panel.title = title; this.data.draft = { text: '', attachments: [] };
@@ -581,11 +640,12 @@ export class EditorChatRuntime {
     /** Close is idempotent and immediate admission stop; await process shutdown before unlocking history. */
     public close(): Promise<void> {
         if (this.closePromise) return this.closePromise;
-        this.closed = true; clearInterval(this.checkpoint); this.recovery.dispose(); this.flowPaused = true; this.continuation.disposeAll(); this.wakeups.dispose(); this.wakeupQueue.length = 0;
+        this.closed = true; this.imageSubscription.dispose(); clearInterval(this.checkpoint); this.recovery.dispose(); this.flowPaused = true; this.continuation.disposeAll(); this.wakeups.dispose(); this.wakeupQueue.length = 0;
         for (const requestId of this.permissions.keys()) this.adapter?.respondToToolPermission(requestId, { behavior: 'deny', message: 'Editor conversation closed', interrupt: true });
         if (this.continuationTimer) clearTimeout(this.continuationTimer);
         this.relay.abort();
         this.closePromise = (async () => {
+            if (getImageService()) await getImageService()?.closing(await this.imageTaskScope()).catch(() => {});
             await this.starting?.catch(() => {}); await this.stopProcess(); await this.settingsQueue; await this.events;
             this.data.lastRunState = this.busy || this.background.size ? 'interrupted' : 'closed';
             if (this.assistant) this.assistant.pending = false;

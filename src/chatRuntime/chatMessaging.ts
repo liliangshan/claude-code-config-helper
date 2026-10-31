@@ -543,14 +543,19 @@ async function waitForCompactionBeforeSend(text: string, hidden: boolean): Promi
  * 统一挂在 normal 一路；`forceRoute: 'taskFlow'` 是任务流唯一入口。
  *
  * @param text 用户输入文本。
+ * @param options 可选路由、恢复身份及自动通知的投递前守卫；守卫失败不创建新回合。
  */
-export async function sendUserMessageToCli(text: string, options: { hidden?: boolean; suppressResponse?: boolean; forceRoute?: ChatRoute; recovery?: Readonly<RecoveryContext>; signal?: AbortSignal } = {}): Promise<void> {
+export async function sendUserMessageToCli(text: string, options: { hidden?: boolean; suppressResponse?: boolean; forceRoute?: ChatRoute; recovery?: Readonly<RecoveryContext>; signal?: AbortSignal; beforeSend?: () => Promise<void>; isTargetCurrent?: () => boolean } = {}): Promise<void> {
     if ((await import('../setup/gate')).isCliUpdateInProgress()) throw new Error('CLI update in progress');
     // 压缩在途时先等它结束再发：任务流续推、自愈重发、超时 Continue 都走这里，
     // 若不拦截，新请求会与压缩摘要请求并发，压缩结果也可能被新一轮覆盖。
     await waitForCompactionBeforeSend(text, options.hidden === true);
     options.signal?.throwIfAborted();
     if (options.recovery && getSessionIdForRoute('normal') !== options.recovery.sessionId) throw new Error('Recovery session changed');
+    if (options.beforeSend) {
+        await ensureChatCliStarted();
+        await options.beforeSend();
+    }
     chatCliCancelState.requested = false;
     chatSessionState.activeAssistantMessageId = undefined;
 
@@ -589,6 +594,7 @@ export async function sendUserMessageToCli(text: string, options: { hidden?: boo
         } else if (options.recovery) bindRecoveryAdapter(adapter, options.recovery);
         noteCliTurn(1);
         try {
+            if (options.isTargetCurrent && !options.isTargetCurrent()) throw new Error('Automatic notification target changed');
             await adapter.sendUserMessage(outgoingText);
         } catch (error) {
             noteCliTurn(-1);

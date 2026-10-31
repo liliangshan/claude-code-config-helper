@@ -2,7 +2,8 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { platformPackage, verifyIntegrity, extractPlatformArchive } from './archive';
+import { verifyIntegrity, extractPlatformArchive } from './archive';
+import { resolveHostPlatformPackage } from './platform';
 import { downloadOfficial } from './download';
 import { CLI_REGISTRIES, validateRegistryUrl, type CliInstallSource } from './sources';
 import { probeCliVersion, clearCliVersionCache } from '../chat/cli/nativeCompactionProbe';
@@ -14,11 +15,9 @@ export interface InstallerDependencies {
     download: typeof downloadOfficial;
     verify: (executable: string) => Promise<string | undefined>;
 }
-/** Detect libc only on the actual extension host. */
+/** Detect the actual extension host package, including Electron-safe Linux libc fallbacks. */
 export function hostPlatformPackage(): string {
-    const report = process.platform === 'linux' ? process.report?.getReport() as { header?: { glibcVersionRuntime?: string } } : undefined;
-    if (process.platform === 'linux' && !report?.header) throw new Error('Unable to determine Linux libc');
-    return platformPackage(process.platform, process.arch, process.platform === 'linux' && !report?.header?.glibcVersionRuntime);
+    return resolveHostPlatformPackage(process.platform, process.arch);
 }
 /** Side-by-side managed installation never edits an external/global npm installation. */
 export class CliInstaller {

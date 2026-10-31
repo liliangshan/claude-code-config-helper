@@ -131,8 +131,9 @@ export class LeftChatSession {
     /** Detach a hidden list/settings page without cancelling the independent CLI. */
     public detach(): void { this.host = undefined; }
 
-    /** Serialize state changes while allowing help to open immediately without waiting for a task or restart. */
+    /** Serialize conversation changes while global image settings and help remain immediately accessible. */
     public receive(message: Record<string, any>): Promise<void> {
+        if (message.type?.startsWith('imageGeneration/')) return this.runtime?.receive(message) ?? Promise.resolve();
         if (message.type === 'help/open') return Promise.resolve(vscode.commands.executeCommand(COMMANDS.openHelp)).then(() => {});
         const runtime = this.runtime;
         const action = this.operations.then(async () => { if (this.runtime === runtime) await runtime?.receive(message); });

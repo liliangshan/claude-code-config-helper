@@ -8,6 +8,7 @@ import * as http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { installVscodeStub } from '../../chat/__tests__/testUtils/vscodeStub';
 import { EditorConversationStore, type EditorConversation } from '../store';
+import { ImageResultReceipts } from '../../imageTools/delivery';
 const stub = installVscodeStub({ values: { claudeCodeConfigHelper: {} } });
 const { EditorChatRuntime } = require('../runtime') as typeof import('../runtime');
 const { ChatCliConfigService } = require('../../chat/cli/cliConfig') as typeof import('../../chat/cli/cliConfig');
@@ -44,6 +45,31 @@ test('parallel editor messages, settings, closing and resume do not affect anoth
         assert.notEqual(a.value.cliSessionId, b.value.cliSessionId);
         assert.ok(a.value.messages.some(m => m.segments.some(s => s.text === 'Reply A')));
         assert.ok(!a.value.messages.some(m => m.segments.some(s => s.text === 'Reply B')));
+        const imageScope = { cwd, id: 'a'.repeat(64), title: 'Chat' };
+        const generatedImageId = randomUUID();
+        const imageTask = { version: 1, taskId: `20261002T081530123Z_${randomUUID()}`, scopeId: imageScope.id, operation: 'generate', prompt: 'image', model: 'test-image', size: '1x1', configRevision: 1, status: 'succeeded', createdAt: 1, finishedAt: 2,
+            images: [{ id: generatedImageId, relativePath: `images/${generatedImageId}.png`, mimeType: 'image/png', bytes: 8 }] };
+        const receipts = new Map<string, boolean>();
+        (a.runtime as any).imageReceipts = new ImageResultReceipts({ get: (key: string, fallback: boolean) => receipts.get(key) ?? fallback, update: async (key: string, value: boolean) => { receipts.set(key, value); } } as any);
+        const scopeStub = t.mock.method(a.runtime as any, 'imageTaskScope', async () => imageScope);
+        try {
+            const cliBefore = (a.runtime as any).cli, otherBefore = JSON.stringify(b.value.messages);
+            a.value.draft = { text: 'unsent draft', attachments: [] };
+            (a.runtime as any).busy = true; assert.equal(await (a.runtime as any).appendImageResult(imageScope, imageTask), false); (a.runtime as any).busy = false;
+            assert.equal(await (a.runtime as any).appendImageResult(imageScope, imageTask), true); await idle(a.value);
+            assert.equal(await (a.runtime as any).appendImageResult(imageScope, imageTask), true);
+            assert.equal(a.value.messages.filter(message => message.id === `image-result-${imageTask.taskId}`).length, 1);
+            assert.equal(a.value.messages.find(message => message.id === `image-result-${imageTask.taskId}`)?.role, 'user');
+            assert.ok(a.value.messages.some(message => message.role === 'assistant' && message.segments.some(segment => segment.text?.includes('Reply [image-generation-result]'))));
+            const completed = a.value.messages.find(message => message.id === `image-result-${imageTask.taskId}`)!;
+            const event = JSON.parse(completed.text!.slice('[image-generation-result]\n'.length));
+            assert.equal(event.workspacePath, cwd); assert.equal(event.images[0].absolutePath, path.join(cwd, '.LLSOAI/openapi-image-generation/images', `${generatedImageId}.png`));
+            assert.equal(event.images[0].fileUri, require('node:url').pathToFileURL(event.images[0].absolutePath).toString());
+            assert.equal((a.runtime as any).cli, cliBefore); assert.equal(a.value.draft?.text, 'unsent draft');
+            assert.equal(JSON.stringify(b.value.messages), otherBefore);
+            assert.ok((await new EditorConversationStore(cwd, a.value.conversationId).load()).messages.some(message => message.id === `image-result-${imageTask.taskId}`));
+            assert.equal(await (a.runtime as any).appendImageResult({ ...imageScope, id: 'b'.repeat(64) }, imageTask), false);
+        } finally { scopeStub.mock.restore(); }
         await a.runtime.receive({ type: 'reasoningEffort/select', effort: 'high' }); assert.equal(b.value.settings.reasoningEffort, 'auto');
         await Promise.all([a.runtime.send('slow A'), b.runtime.send('slow B')]); await a.runtime.close(); await idle(b.value);
         assert.ok(b.value.messages.some(m => m.segments.some(s => s.text === 'Reply slow B')));

@@ -27,6 +27,8 @@ import { readCompactionConfigFromVscode } from '../../chatRuntime/compactionConf
 import { BROWSER_BRIDGE } from '../../browserTools/bridge';
 import { VSCODE_BRIDGE } from '../../vscodeTools/bridge';
 import { WAKEUP_BRIDGE } from '../../wakeupTools/bridge';
+import { IMAGE_BRIDGE } from '../../imageTools/bridge';
+import { currentImageCapability } from '../../imageTools/entry';
 import type { McpBridgeDescriptor } from '../../mcpKit/registry';
 import {
     loadAllVscodeMcpJsons,
@@ -142,7 +144,8 @@ export class ChatCliConfigService {
         const builtinMcpEnabled: ReadonlyArray<[McpBridgeDescriptor, boolean]> = [
             [BROWSER_BRIDGE, browserToolsEnabled],
             [VSCODE_BRIDGE, vscodeToolsGetErrorsEnabled],
-            [WAKEUP_BRIDGE, true]
+            [WAKEUP_BRIDGE, true],
+            [IMAGE_BRIDGE, true]
         ];
         const finalMcpServers = builtinMcpEnabled.reduce<ChatCliConfig['mcpServers']>(
             (servers, [descriptor, enabled]) => injectBuiltinMcpServer(servers, descriptor, enabled, undefined),
@@ -234,7 +237,8 @@ export class ChatCliConfigService {
         const builtinMcpEnabled: ReadonlyArray<[McpBridgeDescriptor, boolean]> = [
             [BROWSER_BRIDGE, browserToolsEnabled],
             [VSCODE_BRIDGE, vscodeToolsGetErrorsEnabled],
-            [WAKEUP_BRIDGE, wakeupToolsEnabled]
+            [WAKEUP_BRIDGE, wakeupToolsEnabled],
+            [IMAGE_BRIDGE, true]
         ];
         const normal: ChatCliConfig = {
             ...baseConfig,
@@ -245,6 +249,8 @@ export class ChatCliConfigService {
             appendSystemPrompt: dispatcherPrompt
         };
 
+        const image = normal.mcpServers?.[IMAGE_BRIDGE.serverName];
+        if (image) image.env = { ...image.env, LLS_IMAGE_TOOL_CAPABILITY: currentImageCapability('main', normal.cwd ?? '') };
         return { normal };
     }
 
@@ -620,7 +626,7 @@ function injectBuiltinMcpServer(
     }
     const { serverName, relayPortEnv } = descriptor;
     const next: NonNullable<ChatCliConfig['mcpServers']> = { ...(mcpServers ?? {}) };
-    if (!next[serverName]) {
+    if (!next[serverName] || serverName === IMAGE_BRIDGE.serverName) {
         next[serverName] = {
             type: 'stdio',
             command: process.execPath,

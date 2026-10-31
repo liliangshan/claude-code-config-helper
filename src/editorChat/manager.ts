@@ -155,7 +155,7 @@ export class EditorChatManager {
             const root = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'chat');
             let html = await fs.readFile(vscode.Uri.joinPath(root, 'index.html').fsPath, 'utf8');
             const replacements: Record<string, string> = { cspSource: panel.webview.cspSource, nonce: randomUUID().replace(/-/g, '') };
-            for (const [key, file] of Object.entries({ styleUri: 'style.css', bridgeUri: 'bridge.js', cacheSolutionScriptUri: 'cacheSolution.js', clipboardUri: 'clipboard.js', scriptUri: 'main.js' })) replacements[key] = String(panel.webview.asWebviewUri(vscode.Uri.joinPath(root, file)));
+            for (const [key, file] of Object.entries({ imageStyleUri: 'imageGeneration.css', imageScriptUri: 'imageGeneration.js', styleUri: 'style.css', bridgeUri: 'bridge.js', cacheSolutionScriptUri: 'cacheSolution.js', clipboardUri: 'clipboard.js', scriptUri: 'main.js' })) replacements[key] = String(panel.webview.asWebviewUri(vscode.Uri.joinPath(root, file)));
             html = html.replace(/{{(\w+)}}/g, (match, key: string) => replacements[key] ?? match);
             // Persist identity before asynchronous CLI startup or an early window reload.
             const identity = JSON.stringify({ editorConversationId: data.conversationId, cwd: data.cwd }).replace(/</g, '\\u003c');

@@ -14,6 +14,7 @@ import { createRequestUsageContext } from '../relay/requestUsage';
 import type { UsageReport } from '../relay/usageReporter';
 import type { LlsTaskService } from '../llsTask/service';
 import type { EditorContinuation } from './continuation';
+import { readImageRequest } from '../imageTools/transport';
 import type { EditorSettings } from './store';
 
 /** One authenticated network listener belongs to one runtime; closing it never affects the sidebar. */
@@ -28,7 +29,7 @@ export class EditorRelay {
     public onIdle?: () => void;
     public onRequest?: (id: string) => void;
     public onOutcome?: (outcome: RelayRequestOutcome) => void;
-    public toolHandler?: (bridge: string, name: string, args: Record<string, unknown>) => Promise<unknown>;
+    public toolHandler?: (bridge: string, name: string, args: Record<string, unknown>, requestId?: string) => Promise<unknown>;
     public url = '';
     /** Inject provider access, isolated workflow state and a session-specific usage sink. */
     public constructor(private readonly manager: ConfigManager, private readonly service: LlsTaskService,
@@ -51,13 +52,17 @@ export class EditorRelay {
     /** Resolve a trusted model snapshot, never the currently focused window's settings. */
     private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
         const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
-        if (req.method !== 'POST' || ![`/${this.token}/v1/messages`, `/${this.token}/tools`].includes(pathname) || !this.settings || !this.active) { res.writeHead(403); res.end(); return; }
+        if (req.method !== 'POST' || ![`/${this.token}/v1/messages`, `/${this.token}/tools`, `/${this.token}/tools/image`].includes(pathname) || !this.settings || !this.active) { res.writeHead(403); res.end(); return; }
         this.inFlight++;
         try {
-            const body = JSON.parse(await readRequestBody(req)) as Record<string, unknown>;
-            if (pathname.endsWith('/tools')) {
+            const imageRequest = pathname.endsWith('/tools/image');
+            const rawBody = await (imageRequest ? readImageRequest(req) : readRequestBody(req));
+            const body = JSON.parse(rawBody) as Record<string, unknown>;
+            if (pathname.endsWith('/tools') || imageRequest) {
                 if (!this.toolHandler) throw new Error('Editor tools unavailable');
-                const result = await this.toolHandler(String(body.bridge), String(body.name), (body.arguments ?? {}) as Record<string, unknown>);
+                if ((body.bridge === 'llsccaiImage') !== imageRequest) throw new Error('IMAGE_PERMISSION_DENIED');
+                if (body.bridge === 'llsccaiImage' && (Buffer.byteLength(rawBody) > 4 * 1024 * 1024 || typeof body.requestId !== 'string' || !/^[a-f0-9-]{36}$/.test(body.requestId))) throw new Error('IMAGE_PAYLOAD_TOO_LARGE');
+                const result = await this.toolHandler(String(body.bridge), String(body.name), (body.arguments ?? {}) as Record<string, unknown>, typeof body.requestId === 'string' ? body.requestId : undefined);
                 res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(result)); return;
             }
             const triggered = !this.service.hasActiveWorkflow() && isLlsCcaiTaskTriggered(body.messages);

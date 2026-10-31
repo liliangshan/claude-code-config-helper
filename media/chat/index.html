@@ -5,6 +5,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {{cspSource}} https: data:; style-src {{cspSource}} 'nonce-{{nonce}}'; script-src 'nonce-{{nonce}}'; font-src {{cspSource}}; connect-src 'none';">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link nonce="{{nonce}}" rel="stylesheet" href="{{styleUri}}">
+    <link nonce="{{nonce}}" rel="stylesheet" href="{{imageStyleUri}}">
     <title>LLS CLAUDE CHAT</title>
 </head>
 <body>
@@ -63,6 +64,10 @@
                         <button type="button" class="composer-model-chip" data-role="composer-taskflow-chip" data-i18n-title="openModelPicker" title="Choose models">
                             <span class="composer-model-chip__label" data-i18n="modelsBarTaskFlow">Task flow:</span>
                             <span class="composer-model-chip__name" data-role="composer-taskflow-chip-name">—</span>
+                        </button>
+                        <button type="button" class="composer-model-chip" data-role="composer-image-chip" title="Image generation (global)" aria-haspopup="dialog">
+                            <span class="composer-model-chip__label" data-image-label>Image:</span>
+                            <span class="composer-model-chip__name" data-role="composer-image-chip-name">—</span>
                         </button>
                         <select class="model-select" data-role="reasoning-effort-select" data-i18n-title="reasoningTitle" data-i18n-aria-label="reasoningAria" title="Reasoning effort: saved to workspace; applies to the next request without restarting" aria-label="Reasoning effort">
                             <option value="auto" data-i18n="reasoningAuto">Reasoning: Auto</option>
@@ -190,6 +195,7 @@
     </dialog>
     <script nonce="{{nonce}}" src="{{cacheSolutionScriptUri}}"></script>
     <script nonce="{{nonce}}" src="{{clipboardUri}}"></script>
+    <script nonce="{{nonce}}" src="{{imageScriptUri}}"></script>
     <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
 </body>
 </html>

@@ -9,6 +9,7 @@
  * 避免反向 import 造成循环依赖。
  */
 import * as vscode from 'vscode';
+import { getImageService, imageScope } from '../imageTools/entry';
 
 import type { ParsedCliEvent, ToolPermissionRequestEvent } from '../chat/cli/cliAdapter';
 import { buildAskUserUpdatedInput, parseAskUserQuestions as parseAskUserQuestionsPure } from '../chat/askUserQuestion';
@@ -167,6 +168,7 @@ export async function handleParsedCliEvent(event: ParsedCliEvent, source: ChatRo
             await requireDeps().showChatToast('error', event.detail ? `${event.message}：${event.detail}` : event.message);
             return;
         case 'session/init':
+            if (getImageService()) await imageScope(event.cwd, 'main', event.sessionId, 'Chat').catch(() => {});
             await getChatCliSessionStore()?.writeSessionId(event.cwd, event.sessionId, source);
             chatSessionRouteById.set(event.sessionId, source);
             // taskFlow 复用 normal CLI 进程，session_id 同时记到两条路由，

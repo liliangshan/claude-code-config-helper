@@ -17,6 +17,7 @@ import type { RequestUsageSummary } from '../relay/requestUsage';
 import { getChatViewHost, getExtensionContext } from '../runtime';
 import { currentChatCliSessionIdSync, getChatCliConfigService, getChatCliSessionStore } from './cliLifecycle';
 import { chatRouteState } from './routeState';
+import { imageResultMessageFromPrompt } from '../imageTools/results';
 
 /** chatSession 对尚未拆出的上层模块的依赖，由 activate 在装配期注入。 */
 export interface ChatSessionDeps {
@@ -229,7 +230,8 @@ export async function parseSessionJsonl(jsonlPath: string, options: { strict?: b
             const textItems = content.filter(c => c && c.type === 'text' && typeof c.text === 'string' && c.text);
             if (textItems.length === 0) { skippedEmptyUser++; continue; }
             const text = textItems.map(c => c.text!).join('\n');
-            messages.push({ id: uuid, role: 'user', segments: [{ kind: 'text', text }], text, createdAt: ts });
+            messages.push(imageResultMessageFromPrompt(text, vscode.env.language.toLowerCase(), ts)
+                ?? { id: uuid, role: 'user', segments: [{ kind: 'text', text }], text, createdAt: ts });
         } else {
             const segments: ChatSegment[] = [];
             for (const c of content) {

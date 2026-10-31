@@ -567,6 +567,7 @@
         Object.assign(chatTranslations[language], { usageInput: labels[0], usageRead: labels[1], usageWrite: labels[2], usageOutput: labels[3], usageHit: labels[4], usageInterrupted: labels[5], usageUnknown: '—' });
     });
     const vscode = acquireVsCodeApi();
+    const imageGenerationUi = window.createImageGenerationUi?.(post);
     const messagesEl = document.querySelector('[data-role="messages"]');
     const chatClipboard = window.installChatClipboard(vscode, messagesEl, function (key) { return t(key); });
     const composerShellEl = document.querySelector('[data-role="composer-shell"]');
@@ -695,6 +696,7 @@
 
     /** 对聊天页静态 DOM 应用当前语言。 */
     function applyI18n() {
+        imageGenerationUi?.language(currentLanguage);
         document.documentElement.lang = currentLanguage;
         document.querySelectorAll('[data-i18n]').forEach(function (el) { el.textContent = t(el.dataset.i18n); });
         document.querySelectorAll('[data-i18n-title]').forEach(function (el) { el.setAttribute('title', t(el.dataset.i18nTitle)); });
@@ -1778,6 +1780,7 @@
      * 打开模型选择弹窗：先刷新普通/任务流/压缩三栏列表，再调用原生 dialog.showModal。
      */
     function openModelPicker() {
+        document.querySelector('[data-role="image-picker"]')?.close();
         if (!(modelPickerDialogEl instanceof HTMLDialogElement)) return;
         renderModelPickerNormalList();
         renderModelPickerTaskFlowList();
@@ -2932,11 +2935,11 @@
         });
         // 图片 ![alt](url)
         escaped = escaped.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, function (_, alt, url) {
-            return stash('<img src="' + url + '" alt="' + alt + '">');
+            return stash('<img src="' + url.replace(/"/g, '&quot;') + '" alt="' + alt.replace(/"/g, '&quot;') + '">');
         });
         // 链接 [text](url)
-        escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function (_, t, url) {
-            return stash('<a href="' + url + '">' + t + '</a>');
+        escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function (_, text, url) {
+            return stash('<a href="' + url.replace(/"/g, '&quot;') + '">' + text + '</a>');
         });
         // 纯文本 URL 自动识别（http/https 以及裸 www.）
         escaped = escaped.replace(/(\bhttps?:\/\/[^\s<]+|\bwww\.[^\s<]+)/gi, function (raw) {
@@ -3357,19 +3360,18 @@
         container.appendChild(codeWrapper);
     }
 
-    /**
-     * 渲染可点击文件引用片段。
-     *
-     * @param {HTMLElement} container 消息内容容器。
-     * @param {any} segment fileRef 片段。
-     */
+    /** Render ordinary file links or ownership-checked generated-image actions without loading remote image URLs. */
     function appendFileRef(container, segment) {
         if (!segment.filePath) return;
         const link = document.createElement('button');
         link.type = 'button';
         link.className = 'file-ref';
-        link.textContent = segment.text || segment.filePath;
+        link.textContent = segment.generatedImage ? (segment.text || '') + ' · ' + segment.filePath : segment.text || segment.filePath;
         link.addEventListener('click', () => {
+            if (segment.generatedImage) {
+                post({ type: 'imageGeneration/imageOpen', requestId: crypto.randomUUID(), taskId: segment.generatedImage.taskId,
+                    imageId: segment.generatedImage.imageId, scopeId: segment.generatedImage.scopeId }); return;
+            }
             post({
                 type: 'file/open',
                 path: segment.filePath,
@@ -5144,7 +5146,7 @@
         if (message.role === 'user') {
             var userMsg = document.createElement('div');
             userMsg.className = 'userMessage_07S1Yg';
-            if (message.text) {
+            if (message.text && !String(message.id || '').startsWith('image-result-')) {
                 // 直接按原文渲染，不做 trim 过滤
                 appendUserText(userMsg, String(message.text));
             } else if (message.segments) {
@@ -5162,7 +5164,7 @@
             item.appendChild(userMsg);
             // 在 user 消息下方追加"重发"操作按钮：点击后扩展端会截断该消息
             // 及其之后所有上下文，再以同样文本作为新一轮 user 消息重新发送。
-            item.appendChild(buildUserActionsBar(message, item, userMsg));
+            if (!String(message.id || '').startsWith('image-result-')) item.appendChild(buildUserActionsBar(message, item, userMsg));
             messagesEl.appendChild(item);
             // 若当前发送动作正在等待 pending assistant 占位，则不要在 user 消息阶段
             // 抢先滚动；最终滚动交给 pending 动画渲染后的 assistant 分支处理。
@@ -5533,6 +5535,8 @@
             message = message.message;
         }
         if (typeof message.type !== 'string') return;
+        imageGenerationUi?.receive(message);
+        if (message.type.startsWith('imageGeneration/')) return;
         // 调试日志：在浏览器开发者工具中追踪每一条到达 Webview 的扩展消息。
         // 出现"宿主发了消息但聊天区不渲染"时，可立刻定位是消息根本没到、type 不识别、
         // 还是 segments 列表为空。
@@ -5621,6 +5625,8 @@
                 }
                 break;
             case 'message/append':
+                if (String(message.message?.id || '').startsWith('image-result-')
+                    && renderedMessagesCache.some(function (item) { return item.id === message.message.id && item.role === message.message.role; })) break;
                 cacheAppendedMessage(message.message);
                 appendMessage(message.message);
                 syncSessionInitSignatureFromDom();

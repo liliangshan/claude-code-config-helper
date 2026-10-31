@@ -25,6 +25,7 @@ import { ChatCliConfigService } from './chat/cli/cliConfig';
 import { configureSetup } from './setup/entry';
 import { applyPendingSetupReset } from './setup/resetRequest';
 import { requireSetup } from './setup/gate';
+import { configureImages } from './imageTools/entry';
 import { configureEditorChat } from './editorChat/entry';
 import { ChatViewHost } from './chat/chatViewHost';
 import { createCliLifecycleServices, registerChatCliStatusHandlers } from './chatRuntime/cliLifecycle';
@@ -146,6 +147,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     restorePersistedChatSession();
 
     const services = createCoreServices(context);
+    await configureImages(context, services.configManager).catch(() => Logger.warn('Image configuration initialization failed; open image settings for details.'));
     configureSetup(context, services.configManager);
     configureEditorChat(context, services.configManager);
     configureRuntimeModules();

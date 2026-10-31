@@ -1,6 +1,6 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.80
+**Version:** 3.2.81
 
 **Website: [www.zhineng.dev](https://www.zhineng.dev/)**
 
@@ -37,6 +37,16 @@ When the Responses stream converter detects malformed tool arguments, it automat
 Files share the existing 20-snapshot error retention limit across date directories. Detection compares the upstream final arguments with the actual emitted argument fragments, including `__unparsedToolInput` wrappers and late fragments. The recorder also retains up to eight recent tool responses in memory (64 MiB total) to correlate a subsequent CLI `InputValidationError` by call ID. If the original response has expired or the extension was reloaded, the fallback file explicitly marks `originalResponseUnavailable`; it never substitutes an unrelated response.
 
 Request bodies, URLs and authentication headers are not included in these diagnostics, but **raw model responses and tool arguments can contain sensitive content**; review them before sharing. Token limits remain unchanged, and arguments are never repaired by guessing missing JSON characters.
+
+## What's New in 3.2.81
+
+- **Built-in image tools.** The Image chip after Task flow opens a compact, seven-language global connection dialog. Choose an existing compatible provider/model or configure Base URL, API key and model independently; all chat views share the selection without replacing their ordinary models.
+- **Background generation, automatic results.** `llsccaiImage` provides six tools for generation, JSON editing, task lookup, listing, prompt search and configuration information. Models submit the image size per call. Results return to the originating conversation as a user message and CLI continuation once it is idle; routine polling is unnecessary.
+- **Files stay in the workspace.** Task records and images go into `.LLSOAI/openapi-image-generation/tasks/` and `images/`. Completion events give the model the workspace path, relative/absolute file paths and complete `fileUri`, with instructions to use that URI verbatim in output. No thumbnail/URL conversion or dynamic Webview file access is installed; inline `file://` previews are not guaranteed.
+- **Direct submission with existing safeguards.** Image tools add no billing confirmation popup. The global switch, configuration checks, conversation capabilities, limits and no-automatic-regeneration policy remain. Image requests and the model turn handling completion may incur charges.
+- **Linux installer compatibility.** CLI package detection falls back to local libc probes when VS Code/Electron does not expose `process.report`, distinguishing glibc/musl without blindly assuming either.
+
+**Known issues and acceptance:** the existing `requestUsageBinding` failure (`true !== false`) and reused-response-ID association limitation remain unresolved. JSON editing and supported sizes depend on the provider; real Linux/remote installation and the previously reported chat-refresh behavior require manual rechecking. See [CHANGELOG.md](./CHANGELOG.md) for validation details.
 
 ## What's New in 3.2.80
 
@@ -330,7 +340,7 @@ Full walkthrough: [`docs/taskflow-usage-guide.md`](./docs/taskflow-usage-guide.m
 
 ## Model Roles
 
-The model picker exposes three roles, accessible from either model chip in the composer; setup step 3 also configures these roles:
+The model picker exposes three conversational roles, accessible from the Normal or Task flow model chip in the composer; setup step 3 also configures these roles. The separate Image chip configures the global image connection and does not select a conversational role:
 
 | Role | Setting | Used for |
 | --- | --- | --- |
@@ -339,6 +349,37 @@ The model picker exposes three roles, accessible from either model chip in the c
 | Compaction | `claudeCodeConfigHelper.chat.compactionMode.*` | The `/compact` summary request. |
 
 This replaces the older on-demand expert / plan / review routing. The `chat.expertMode`, `chat.planMode`, `chat.reviewMode` and `chat.expert*` keys are no longer registered; if they linger in your `settings.json` they simply show up as unknown settings and can be deleted.
+
+## Built-in Image Generation
+
+Click **Image**, immediately after the **Task flow** model chip, to edit the global image connection. The dialog supports English, Simplified Chinese, Traditional Chinese, Japanese, Korean, French and German. It is disabled until explicitly enabled with a valid connection.
+
+- **Existing provider:** select an enabled model from an OpenAI-compatible or Responses provider. Reusing its connection does not prove that the provider/model supports the Images API; add a missing image model in provider settings if necessary.
+- **Independent connection:** enter an Images API Base URL, model ID and API key. The model field accepts manual input and existing model suggestions. The key is stored in SecretStorage, never filled back into the dialog; leaving it blank preserves the saved key. Local unauthenticated services require the explicit no-authentication choice and must satisfy the current connection policy.
+- **Global selection:** main, parallel and retained editor chats use the same configuration within the current VS Code profile/extension-host storage environment. Saving updates subsequent tool calls, not already accepted tasks, without restarting the CLI. This is not automatic cross-device or local/remote synchronization.
+- **Per-request dimensions:** the model supplies `size` as `widthxheight`, for example `1024x1024`, according to your request and provider capabilities. There is no global size or advanced-settings form.
+
+The bundled MCP server is `llsccaiImage`; installing a separate image MCP package is unnecessary.
+
+| Tool | Purpose |
+| --- | --- |
+| `openapi_generate_image` | Submit one asynchronous image-generation request with `prompt` and `size`. |
+| `openapi_edit_image` | Submit a provider-compatible JSON edit using `prompt`, `image` and `size`; this is not multipart editing. |
+| `openapi_get_image_task` | Inspect an owned task on explicit request or for diagnostics, not routine polling. |
+| `openapi_list_images` | List this conversation's tasks, including pending and failed tasks. |
+| `openapi_search_images` | Search original task prompts using a case-insensitive literal substring. |
+| `openapi_image_generation_info` | Read non-sensitive model, enablement and limit information. |
+
+After acceptance, continue other work or finish the turn: completion is automatically delivered to the originating conversation. Delivery waits for that conversation to become idle, adds a user bubble and sends a structured result through CLI stdin. Persistent receipts prevent automatic resending after an attempted/uncertain delivery; returning to history supplements the display without regenerating images. A busy dialog is not required, and unrelated conversations do not receive the result.
+
+Output is stored under the conversation's workspace:
+
+- `.LLSOAI/openapi-image-generation/tasks/<taskId>.json`
+- `.LLSOAI/openapi-image-generation/images/<imageId>.png` (or `.jpg` / `.webp`)
+
+The model receives `workspacePath`, each image's relative `path`, `absolutePath` and complete `fileUri`. Completion guidance asks for that URI verbatim when returning an image or open-original link, rather than rewriting it as a relative path. The chat keeps a compact localized summary with a checked open-image action; it does not expose a public download URL, rewrite Markdown resource addresses or guarantee inline file previews.
+
+**Costs and data:** generation/editing are submitted without an extra extension billing popup after the global configuration and request checks pass; CLI-native permission settings still apply. Provider image requests and the completion chat-model turn may be charged. Editing sends the supplied source images to the provider; inline sources can also appear in CLI history. Prompts and results are saved in the workspace. The tool does not read arbitrary local source paths or upload files to a third-party image host. Timeouts and local stops cannot guarantee remote cancellation or refunds. No failed generation is automatically retried, and restart recovery marks unfinished tasks interrupted rather than replaying them.
 
 ## Built-in Chat and Claude CLI Transport
 
@@ -413,7 +454,7 @@ Command titles may be localized according to your configured UI language.
 
 ### Option 1: Install from a local VSIX
 
-Install the packaged `claude-code-config-helper-3.2.80.vsix` using VS Code's **Extensions → … → Install from VSIX…** action. Reload the window when ready to activate the installed build; reload interrupts currently running extension CLIs. To build a package yourself, install the repository dependencies, run `npm run compile`, then package with `@vscode/vsce`.
+Install the packaged `claude-code-config-helper-3.2.81.vsix` using VS Code's **Extensions → … → Install from VSIX…** action. Reload the window when ready to activate the installed build; reload interrupts currently running extension CLIs. To build a package yourself, install the repository dependencies, run `npm run compile`, then package with `@vscode/vsce`.
 
 ### CLI installation through setup
 
@@ -549,7 +590,7 @@ npm test
 
 ### Built-in MCP bridges
 
-The extension ships three built-in MCP servers — `llsccaiBrowser`, `llsccaiVscode` and `llsccaiWakeup` — that the Claude CLI launches as Node subprocesses. Those subprocesses have no `vscode` runtime, so tool calls are forwarded over HTTP to a relay inside the extension host.
+The extension ships four built-in MCP servers — `llsccaiBrowser`, `llsccaiVscode`, `llsccaiWakeup` and `llsccaiImage` — that the Claude CLI launches as Node subprocesses. Those subprocesses have no `vscode` runtime, so tool calls are forwarded over HTTP to a relay inside the extension host. The image bridge uses a conversation-bound capability; independent conversations use their own private relay rather than the main chat's state.
 
 Their shared machinery (stdio JSON-RPC server, HTTP relay handler, tool-name guards, CLI injection and startup logging) lives in `src/mcpKit/`. Each bridge only declares a descriptor — server name, HTTP path, relay port environment variable and tool schemas — in its own `bridge.ts`.
 

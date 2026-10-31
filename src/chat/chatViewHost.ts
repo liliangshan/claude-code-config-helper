@@ -5,6 +5,19 @@ import * as vscode from 'vscode';
 
 import { CHAT_SECONDARY_VIEW_ID } from '../constants';
 import { Logger } from '../logger';
+import { attachImageView, imageScope } from '../imageTools/entry';
+import { imageResultMessage, imageResultPrompt } from '../imageTools/results';
+import { ImageResultReceipts } from '../imageTools/delivery';
+import { sendUserMessageToCli } from '../chatRuntime/chatMessaging';
+import { requestRecoveryController } from '../chatRuntime/selfHealing';
+import { getTokenBudgetServiceRef } from '../chatRuntime/chatSession';
+import { isCliUpdateInProgress } from '../setup/gate';
+import { flushPersistedChatSession, trimInMemoryChatMessages } from '../chatRuntime/chatSession';
+import { getConfigManager } from '../runtime';
+import type { ImageScope, ImageTask } from '../imageTools/types';
+import { getChatCliConfigService } from '../chatRuntime/cliLifecycle';
+import { chatSessionState } from '../chatRuntime/chatSession';
+import { routes, isAnyRouteBusy, pendingAskUserRequests } from '../chatRuntime/routeState';
 import type { ChatMessage, ExtensionToWebview, WebviewToExtension } from './protocol';
 
 /** 内置 Chat WebviewPanel 的 viewType，保留给旧会话或调试兜底使用。 */
@@ -21,6 +34,10 @@ type ChatWebviewTarget = { view: vscode.WebviewView; webview: vscode.Webview };
  * 不直接包含 CLI 协议、任务流注入或解析器业务逻辑。
  */
 export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposable {
+    private readonly imageReceipts: ImageResultReceipts;
+    private imageResultSending = false;
+    private disposed = false;
+    private imageSubscription?: vscode.Disposable;
     private pendingSetupView?: vscode.WebviewView;
     private pendingSetupMessages?: vscode.Disposable;
     private pendingSetupVisibility?: vscode.Disposable;
@@ -66,7 +83,7 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
      *
      * @param context VS Code 扩展上下文，用于解析扩展资源路径。
      */
-    public constructor(private readonly context: vscode.ExtensionContext) {}
+    public constructor(private readonly context: vscode.ExtensionContext) { this.imageReceipts = new ImageResultReceipts(context.workspaceState); }
 
     /**
      * Resolve the right chat and automatically activate the shared wizard when setup is incomplete.
@@ -99,6 +116,13 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
             ]
         };
         this.target = { view: webviewView, webview: webviewView.webview };
+        this.imageSubscription?.dispose();
+        this.imageSubscription = attachImageView('main', {
+            scope: () => imageScope(getChatCliConfigService()?.getConfig().cwd ?? '', 'main', routes.normal.sessionId || chatSessionState.sessionId, this.sessionTitle.title || 'Chat'),
+            post: message => { void this.postMessage(message); },
+            delivered: (scope, task) => this.imageReceipts.has(scope, task),
+            complete: (scope, task) => this.appendImageResult(scope, task)
+        });
         this.updateNativeTitle();
         webviewView.webview.html = await this.buildHtml(webviewView.webview);
         webviewView.webview.onDidReceiveMessage((message: WebviewToExtension | Record<string, unknown>) => {
@@ -115,6 +139,7 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
         });
         webviewView.onDidDispose(() => {
             if (this.target?.view === webviewView) {
+                this.imageSubscription?.dispose(); this.imageSubscription = undefined;
                 this.target = undefined;
             }
         });
@@ -153,6 +178,50 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
             return;
         }
         await vscode.commands.executeCommand(`${CHAT_SECONDARY_VIEW_ID}.focus`, { preserveFocus });
+    }
+
+    /** Check turn-level idleness; relay gaps are not safe to inject an image-result user turn. */
+    private imageDeliveryBusy(): boolean {
+        return this.disposed || isCliUpdateInProgress() || isAnyRouteBusy() || pendingAskUserRequests.size > 0
+            || requestRecoveryController.hasPendingRecovery()
+            || !!getTokenBudgetServiceRef()?.isCompactionInFlight(routes.normal.sessionId);
+    }
+    /** Send an image completion through the same user-input channel as task-flow continuation, once and only when idle. */
+    private async appendImageResult(scope: ImageScope, task: ImageTask): Promise<boolean> {
+        if (this.imageResultSending || this.disposed) return false;
+        const current = await imageScope(getChatCliConfigService()?.getConfig().cwd ?? '', 'main', routes.normal.sessionId || chatSessionState.sessionId, this.sessionTitle.title || 'Chat');
+        if (current.id !== scope.id || current.cwd !== scope.cwd) return false;
+        const result = imageResultMessage(task, getConfigManager()?.getResolvedUiLanguage() ?? 'en', scope.cwd);
+        const existing = chatSessionState.messages.find(message => message.id === result.id);
+        if (this.imageReceipts.has(scope, task)) {
+            if (existing?.role === 'user') await this.postMessage({ type: 'message/append', message: existing });
+            return true;
+        }
+        if (this.imageDeliveryBusy()) return false;
+        this.imageResultSending = true;
+        const targetMessages = chatSessionState.messages, targetSessionId = routes.normal.sessionId || chatSessionState.sessionId;
+        const isTargetCurrent = () => !this.disposed && targetMessages === chatSessionState.messages
+            && targetSessionId === (routes.normal.sessionId || chatSessionState.sessionId) && scope.cwd === getChatCliConfigService()?.getConfig().cwd
+            && routes.normal.pendingTurns <= 1 && !routes.normal.busy && !routes.taskFlow.busy;
+        try {
+            await sendUserMessageToCli(imageResultPrompt(task, scope.cwd), { isTargetCurrent, beforeSend: async () => {
+                const latest = await imageScope(getChatCliConfigService()?.getConfig().cwd ?? '', 'main', routes.normal.sessionId || chatSessionState.sessionId, this.sessionTitle.title || 'Chat');
+                if (!isTargetCurrent() || latest.id !== scope.id || latest.cwd !== scope.cwd || this.imageDeliveryBusy()) throw new Error('IMAGE_RESULT_DEFERRED');
+                if (!await this.imageReceipts.claim(scope, task)) throw new Error('IMAGE_RESULT_ALREADY_DELIVERED');
+                const owner = await imageScope(getChatCliConfigService()?.getConfig().cwd ?? '', 'main', routes.normal.sessionId || chatSessionState.sessionId, this.sessionTitle.title || 'Chat');
+                if (owner.id !== scope.id || owner.cwd !== scope.cwd || this.imageDeliveryBusy()) throw new Error('IMAGE_RESULT_DELIVERY_CHANGED');
+                const index = chatSessionState.messages.findIndex(message => message.id === result.id);
+                if (index >= 0) chatSessionState.messages.splice(index, 1);
+                chatSessionState.messages.push(result); trimInMemoryChatMessages();
+                await this.postMessage({ type: 'message/append', message: result }); await flushPersistedChatSession();
+                if (!isTargetCurrent() || this.imageDeliveryBusy()) throw new Error('IMAGE_RESULT_DELIVERY_CHANGED');
+            } });
+            return true;
+        } catch (error) {
+            if (!this.imageReceipts.has(scope, task)) return false;
+            Logger.warn(`Image result delivery was attempted; not replaying: task=${task.taskId}`);
+            return true;
+        } finally { this.imageResultSending = false; }
     }
 
     /** Return the full current title and identity for the native title-bar rename action. */
@@ -239,6 +308,8 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
      * 释放 WebviewPanel 与事件资源。
      */
     public dispose(): void {
+        this.disposed = true;
+        this.imageSubscription?.dispose(); this.imageSubscription = undefined;
         this.releaseSetupPlaceholder();
         this.flushPatchQueue();
         if (this.patchFlushTimer) clearTimeout(this.patchFlushTimer);
@@ -339,6 +410,8 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
             .replace('<body>', '<body class="sidebar-chat">')
             .replace(/{{cspSource}}/g, webview.cspSource)
             .replace(/{{nonce}}/g, nonce)
+            .replace(/{{imageStyleUri}}/g, String(webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'imageGeneration.css'))))
+            .replace(/{{imageScriptUri}}/g, String(webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'imageGeneration.js'))))
             .replace(/{{styleUri}}/g, String(styleUri))
             .replace(/{{bridgeUri}}/g, String(bridgeUri))
             .replace(/{{cacheSolutionScriptUri}}/g, String(cacheSolutionScriptUri))

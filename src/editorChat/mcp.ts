@@ -4,14 +4,17 @@ import { McpStdioServer } from '../mcpKit/stdioServer';
 import { BROWSER_BRIDGE } from '../browserTools/bridge';
 import { VSCODE_BRIDGE } from '../vscodeTools/bridge';
 import { WAKEUP_BRIDGE } from '../wakeupTools/bridge';
+import { IMAGE_BRIDGE } from '../imageTools/bridge';
+import { forwardImageTool } from '../imageTools/transport';
 
 /** Launch a bridge with a revocable editor capability, without importing VS Code into the subprocess. */
 export function startEditorBridge(): void {
-    const descriptor = [BROWSER_BRIDGE, VSCODE_BRIDGE, WAKEUP_BRIDGE].find(item => item.serverName === process.env.LLS_EDITOR_BRIDGE);
+    const descriptor = [BROWSER_BRIDGE, VSCODE_BRIDGE, WAKEUP_BRIDGE, IMAGE_BRIDGE].find(item => item.serverName === process.env.LLS_EDITOR_BRIDGE);
     const endpoint = new URL(process.env.LLS_EDITOR_TOOL_URL ?? 'http://127.0.0.1:0/');
     if (!descriptor || endpoint.hostname !== '127.0.0.1' || endpoint.protocol !== 'http:') throw new Error('Invalid editor bridge');
     new McpStdioServer({ descriptor, host: { execute: async (name, args) => {
         try {
+            if (descriptor.serverName === IMAGE_BRIDGE.serverName) return await forwardImageTool(new URL(endpoint.toString() + '/image'), name, args ?? {}, descriptor.serverName);
             const payload = JSON.stringify({ bridge: descriptor.serverName, name, arguments: args });
             return await new Promise<any>((resolve, reject) => {
                 const request = http.request(endpoint, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } }, response => {

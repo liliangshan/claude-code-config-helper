@@ -2,6 +2,35 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.81] - 2026-10-30
+
+### Added
+
+- Built-in image generation and provider-compatible JSON image editing through the `llsccaiImage` MCP server. Six tools cover generation, editing, task lookup, task listing, prompt search and non-sensitive configuration information; no separate image MCP package is required.
+- A compact seven-language Image configuration chip immediately after Task flow. Main, parallel and retained editor conversations share one global connection, selected from an enabled OpenAI-compatible/Responses provider model or configured independently with Base URL, API key and model ID. Independent keys remain in SecretStorage; revision checks prevent stale forms from overwriting newer saves.
+- Workspace-wide asynchronous task scheduling with bounded concurrency, queue capacity, request/response sizes and raster validation. Task JSON files and generated PNG/JPEG/WebP files are stored directly in `.LLSOAI/openapi-image-generation/tasks/` and `images/`; conversation ownership is checked from metadata instead of separate output directories. External image MCP records are not recovered or rewritten.
+- Automatic completion delivery to the originating chat as a visible user message and a CLI user-input turn, allowing the model to continue the original work without routine task polling. Busy conversations defer delivery; persistent one-shot receipts prevent automatic replay after an attempted or uncertain send. Terminal failures and partial results are reported without retrying image generation.
+- Completion events include the workspace path and each image's workspace-relative path, absolute path and complete `fileUri`. Model guidance asks for the supplied file URI verbatim in image and open-original Markdown links, preserving encoding and the `file:///` prefix.
+
+### Changed
+
+- Image dimensions are required tool-call parameters chosen by the model, not saved dialog settings. The dialog has no separate model-filter input, size field or advanced controls; generation and JSON editing use the same connection/model with internal safety defaults.
+- Image generation and editing submit directly after configuration, workspace, capability and input checks. The extension adds no per-call or per-session billing confirmation dialog; provider charges and CLI-native permission policies still apply. Closing a conversation with pending work retains the background/stop choice.
+- Removed experimental generated-image URL rewriting, thumbnail injection, resource mapping and dynamic Webview file grants. The extension returns file identities and retains its checked open-image action; it does not run a public file server or guarantee inline `file://` preview support. Saving image settings does not restart the CLI or modify normal/task-flow model choices.
+
+### Fixed
+
+- Linux native CLI package selection no longer relies solely on `process.report`. When the report is missing or disabled in a VS Code/Electron host, bounded local `getconf`, `ldd`, script and loader probes identify glibc or musl. Missing report fields are not treated as proof of musl; ambiguous detection reports a useful error and offers using an existing CLI instead of guessing a package.
+- Main and independent CLI startup, restart and recovery paths include the image bridge without loading VS Code modules into its subprocess. Conversation-bound capabilities remain separate from provider credentials and are rotated on actual process replacement rather than ordinary configuration reads.
+
+### Known Issues and Validation Scope
+
+- The pre-existing `requestUsageBinding` regression (`true !== false`) and the separate reused-response-ID usage-association limitation remain unresolved.
+- Image APIs, supported dimensions and JSON editing compatibility depend on the selected provider. Editing is not multipart, and a timeout or local stop does not establish that the provider stopped or waived charges. Inline source images can be recorded in the CLI's own history; prompts and generated files remain in the workspace.
+- Automatic result delivery starts a normal chat-model turn, which may incur model usage. File-URI output guidance is a prompt, not a rendering guarantee. The experimental preview conversion remains removed, and the reported real-window refresh behavior requires manual rechecking.
+- Release checks: VS Code diagnostics, TypeScript compilation, front-end syntax checks and package-version consistency passed. The full suite ran 611 tests: 599 passed, 11 skipped, and the previously documented `requestUsageBinding` assertion failed (`true !== false`).
+- Validation uses temporary files, synthetic local HTTP services, child-process MCP/CLI fixtures, Linux-libc probe fixtures and an isolated browser. These checks do not replace acceptance on real Linux/remote hosts or every provider; release verification does not send paid API requests.
+
 ## [3.2.80] - 2026-10-30
 
 ### Fixed

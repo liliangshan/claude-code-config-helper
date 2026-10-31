@@ -1,0 +1,71 @@
+/** Compact theme-aware image connection editor, independent of ordinary model-dialog sizing. */
+.image-picker {
+    width: min(520px, calc(100vw - 28px)); max-height: min(860px, calc(100dvh - 32px)); padding: 0;
+    box-sizing: border-box; overflow: hidden; border: 1px solid var(--vscode-widget-border, var(--lls-border, #454545));
+    border-radius: 14px; background: var(--vscode-editorWidget-background, #252526); color: var(--vscode-foreground, #ccc);
+    font: 13px/1.5 var(--vscode-font-family, system-ui, sans-serif); box-shadow: 0 20px 64px #0007;
+}
+.image-picker::backdrop { background: #0008; backdrop-filter: blur(3px); }
+.image-picker *, .image-picker *::before, .image-picker *::after { box-sizing: border-box; }
+.image-picker .image-picker__form { display: flex; flex-direction: column; margin: 0; max-height: min(860px, calc(100dvh - 32px)); }
+.image-picker .image-picker__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 22px 16px; flex: 0 0 auto; }
+.image-picker h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.2px; }
+.image-picker p { margin: 0; overflow-wrap: anywhere; }
+.image-picker .image-picker__subtitle { margin-top: 4px; color: var(--vscode-descriptionForeground, #999); font-size: 12px; }
+.image-picker .image-picker__body { padding: 0 22px 18px; overflow-y: auto; min-height: 0; scrollbar-width: thin; }
+.image-picker .image-picker__enable-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; padding: 12px 14px; border-radius: 9px; background: color-mix(in srgb, var(--vscode-button-background, #0e639c) 12%, transparent); border: 1px solid color-mix(in srgb, var(--vscode-focusBorder, #3794ff) 22%, transparent); }
+.image-picker .image-picker__field { display: flex; flex-direction: column; gap: 7px; margin: 0; min-width: 0; }
+.image-picker .image-picker__field > span { font-size: 12px; font-weight: 500; color: var(--vscode-foreground, #ccc); }
+.image-picker .image-picker__fields { display: grid; gap: 14px; padding: 0; margin: 16px 0 0; border: 0; min-width: 0; }
+.image-picker input:not([type="checkbox"]):not([type="radio"]), .image-picker select {
+    width: 100%; min-width: 0; height: 36px; padding: 7px 10px; border-radius: 6px;
+    border: 1px solid var(--vscode-input-border, #454545); background: var(--vscode-input-background, #1d1d1d);
+    color: var(--vscode-input-foreground, #ddd); font: inherit; font-size: 12px;
+}
+.image-picker input::placeholder { color: var(--vscode-input-placeholderForeground, #888); opacity: 1; }
+.image-picker .image-picker__toggle { flex-direction: row; align-items: center; gap: 9px; cursor: pointer; }
+.image-picker input[type="checkbox"] { width: 14px; height: 14px; flex: 0 0 auto; margin: 0; accent-color: var(--vscode-button-background, #0e639c); }
+.image-picker input[role="switch"] { appearance: none; width: 30px; height: 18px; padding: 2px; border: 1px solid var(--vscode-input-border, #666); border-radius: 12px; background: var(--vscode-input-background, #333); cursor: pointer; }
+.image-picker input[role="switch"]::before { content: ""; display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--vscode-foreground, #ddd); transition: transform .15s; }
+.image-picker input[role="switch"]:checked { background: var(--vscode-button-background, #0e639c); border-color: transparent; }
+.image-picker input[role="switch"]:checked::before { transform: translateX(12px); background: var(--vscode-button-foreground, #fff); }
+.image-picker .image-picker__section-title { margin: 0 0 9px; font-size: 12px; font-weight: 500; color: var(--vscode-descriptionForeground, #aaa); }
+.image-picker .image-picker__source { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 3px; border-radius: 8px; border: 1px solid var(--vscode-input-border, #444); background: var(--vscode-input-background, #1d1d1d); gap: 3px; }
+.image-picker .image-picker__source-option { position: relative; display: flex; min-width: 0; cursor: pointer; }
+.image-picker .image-picker__source-option input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.image-picker .image-picker__source-option span { width: 100%; padding: 7px 8px; text-align: center; border-radius: 5px; font-size: 12px; overflow-wrap: anywhere; }
+.image-picker .image-picker__source-option input:checked + span { color: var(--vscode-button-foreground, #fff); background: var(--vscode-button-background, #0e639c); box-shadow: 0 1px 3px #0003; }
+.image-picker .image-picker__source-option input:focus-visible + span { outline: 1px solid var(--vscode-focusBorder, #3794ff); outline-offset: 1px; }
+.image-picker .image-picker__hint, .image-picker .image-picker__summary { color: var(--vscode-descriptionForeground, #999); font-size: 11px; }
+.image-picker .image-picker__summary { font-family: var(--vscode-editor-font-family, monospace); }
+.image-picker .image-picker__key-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; margin-top: -7px; }
+.image-picker .image-picker__note { margin-top: 18px; padding: 12px 14px; border: 1px solid var(--vscode-widget-border, #3a3a3a); border-radius: 8px; background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 60%, transparent); }
+.image-picker .image-picker__note > p:first-child { margin-bottom: 9px; font-size: 11px; color: var(--vscode-descriptionForeground, #aaa); }
+.image-picker .image-picker__note code { display: block; margin-top: 3px; font: 11px/1.5 var(--vscode-editor-font-family, monospace); overflow-wrap: anywhere; color: var(--vscode-textLink-foreground, #75beff); }
+.image-picker .image-picker__feedback { font-size: 12px; padding-top: 12px; color: var(--vscode-inputValidation-warningForeground, #d7ba7d); }
+.image-picker .image-picker__feedback:empty { display: none; }
+.image-picker .image-picker__tasks { border-top: 1px solid var(--vscode-widget-border, #3a3a3a); margin-top: 16px; padding-top: 12px; }
+.image-picker summary { cursor: pointer; font-size: 12px; color: var(--vscode-descriptionForeground, #aaa); }
+.image-picker .image-picker__task { padding: 12px 0; border-bottom: 1px solid var(--vscode-widget-border, #3a3a3a); overflow-wrap: anywhere; }
+.image-picker .image-picker__task strong { font-size: 12px; }
+.image-picker .image-picker__task p { margin: 6px 0; font-size: 12px; }
+.image-picker .image-picker__footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 22px; border-top: 1px solid var(--vscode-widget-border, #3a3a3a); flex: 0 0 auto; }
+.image-picker .image-picker__actions { display: flex; gap: 8px; }
+.image-picker button { cursor: pointer; font-family: inherit; }
+.image-picker .image-picker__button { min-height: 32px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--vscode-button-border, #505050); background: transparent; color: inherit; font-size: 12px; white-space: normal; }
+.image-picker .image-picker__button:hover { background: var(--vscode-toolbar-hoverBackground, #ffffff0d); }
+.image-picker .image-picker__button--primary { background: var(--vscode-button-background, #0e639c); color: var(--vscode-button-foreground, #fff); border-color: transparent; }
+.image-picker .image-picker__button--primary:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
+.image-picker .image-picker__close, .image-picker .image-picker__reload { border: 0; background: transparent; color: var(--vscode-descriptionForeground, #aaa); width: 26px; height: 26px; border-radius: 5px; padding: 0; font-size: 19px; line-height: 1; flex: 0 0 auto; }
+.image-picker .image-picker__close:hover, .image-picker .image-picker__reload:hover { color: inherit; background: var(--vscode-toolbar-hoverBackground, #ffffff0d); }
+.image-picker .image-picker__text-button { border: 0; background: transparent; color: var(--vscode-textLink-foreground, #75beff); padding: 3px 0; font-size: 11px; }
+.image-picker button:disabled { opacity: .5; cursor: default; }
+.image-picker :focus-visible { outline: 1px solid var(--vscode-focusBorder, #3794ff); outline-offset: 2px; }
+.image-picker [hidden] { display: none !important; }
+[data-role="composer-image-chip"] { max-width: 210px; }
+@media (max-width: 420px) {
+    .image-picker .image-picker__header { padding: 16px 16px 12px; }
+    .image-picker .image-picker__body { padding: 0 16px 14px; }
+    .image-picker .image-picker__footer { padding: 12px 16px; flex-wrap: wrap; }
+    .image-picker .image-picker__actions { margin-left: auto; }
+}
