@@ -1,6 +1,6 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.83
+**Version:** 3.2.85
 
 **Website: [www.zhineng.dev](https://www.zhineng.dev/)**
 
@@ -37,6 +37,23 @@ When the Responses stream converter detects malformed tool arguments, it automat
 Files share the existing 20-snapshot error retention limit across date directories. Detection compares the upstream final arguments with the actual emitted argument fragments, including `__unparsedToolInput` wrappers and late fragments. The recorder also retains up to eight recent tool responses in memory (64 MiB total) to correlate a subsequent CLI `InputValidationError` by call ID. If the original response has expired or the extension was reloaded, the fallback file explicitly marks `originalResponseUnavailable`; it never substitutes an unrelated response.
 
 Request bodies, URLs and authentication headers are not included in these diagnostics, but **raw model responses and tool arguments can contain sensitive content**; review them before sharing. Token limits remain unchanged, and arguments are never repaired by guessing missing JSON characters.
+
+## What's New in 3.2.85
+
+- **Correct JSON image-edit payload.** Requests to `/images/edits` use `images: [{ "image_url": "data:<MIME>;base64,..." }]` for both single and multiple sources, with explicit `n: 1` matching the supplied provider example. The obsolete top-level HTTP `image` field is no longer sent. `model`, `prompt` and per-request `size` are retained.
+- **Tool inputs remain local paths.** The MCP tool still accepts `image` as one local path or a path array; the host converts these paths into the upstream `images` array. No public image upload, multipart fallback or automatic paid retry is introduced. Pure text-to-image requests keep their existing fields.
+- **Response diagnostics remain available.** Failures show HTTP status and a redacted response prefix of up to 500 characters in task details and completion messages.
+
+**Upgrade note:** reload VS Code, or restart an extension development host, to load the new image client. Reloading interrupts active extension CLI tasks. The provider example uses HTTPS image URLs; acceptance of embedded Data URLs still depends on the provider and has not been verified with a paid request. Known `requestUsageBinding` and reused-response-ID limitations remain unchanged.
+
+## What's New in 3.2.84
+
+- **Built-in HTTP requests.** `mcp__llsccaiHttp__http_fetch` accepts a complete URL plus optional method, headers and string body, then executes native fetch in the extension host. No login helper, saved connection or business environment variables are needed. Trusted main and independent chats receive their own bridge access; startup disables built-in WebFetch only when the replacement is injected, leaving WebSearch unchanged.
+- **Readable webpages and bounded redirects.** HTML/XHTML responses become readable text without tags, scripts, styles or comments; JSON/plain text and binary results retain their existing representation. HTTP 301/302 follows up to five validated hops within a single 60-second deadline. Cross-origin headers are dropped, POST becomes GET without its body, and unsafe or unsupported redirects remain inspectable. HTTP error responses remain available; failures do not trigger automatic retries.
+- **Local image paths, not inline bytes.** `openapi_edit_image.image` now accepts one local path or up to 16 paths, including readable files outside the workspace and symlink targets. The host reads and converts each file into a complete Base64 Data URL for the JSON image API. Models must not supply HTTP URLs, Base64 or Data URIs. There is no added path-authorization popup; OS permissions, file/aggregate size limits and remote-host path semantics still apply.
+- **Useful image failure details.** Image task cards and completion messages include the HTTP status and a redacted response excerpt of at most 500 Unicode characters. These diagnostics survive task/history restoration without retaining full provider responses or request credentials; old failures cannot recover missing response data retroactively.
+
+**Upgrade note:** restart the relevant chat CLI after loading this version so it receives the new HTTP tool and path-only image schema. Separately configured external image MCP packages are not modified. This release does not change Linux working-directory permission policy. Known `requestUsageBinding` and reused-response-ID association limitations remain documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## What's New in 3.2.83
 
@@ -385,6 +402,18 @@ Structured source URLs and citation titles are returned as CLI-compatible server
 
 Search depends on provider/model capabilities and can incur provider charges. Source titles fall back to their URLs when absent; no Anthropic encrypted snippets or source URLs are fabricated. Local fixture tests cover conversion, stream completion, failures and real CLI 2.1.312 round trips for Responses, Chat structured sources and Chat text-only replies without paid API calls.
 
+## Built-in HTTP Requests
+
+The `llsccaiHttp` MCP server exposes `http_fetch` (`mcp__llsccaiHttp__http_fetch`) in trusted workspaces. The model supplies the complete `url` plus optional `options.method`, `options.headers` and string `options.body`, matching the JSON-serializable subset of native `fetch(url, options)`. Query parameters belong in the URL; JSON/form bodies must already be serialized. GET/HEAD cannot include a body. No login helper, saved configuration, Base URL or business environment variables are required.
+
+Requests execute in the extension host, including remote hosts. The result contains `url`, `status`, `statusText`, `ok`, response `headers`, `body`, `encoding`, `bytes`, `truncated` and `redirectFollowed`. HTTP 4xx/5xx responses retain their status and response content rather than becoming transport exceptions. HTML/XHTML responses are parsed into readable text: tags, comments, scripts, styles, templates and explicitly hidden content are removed; paragraph/list/table boundaries and preformatted code text are retained, and HTML entities are decoded. HTML results add `bodyFormat: "html-text"` and an optional page `title`; the original response headers and pre-extraction byte count are preserved. JSON/plain text and other non-HTML content remain unchanged; binary content is explicitly Base64. No webpage scripts, stylesheets or subresources are executed/fetched, and no extra summarization-model request is made. JavaScript-rendered pages may consequently have an empty body. This is static text extraction, not a prompt-injection filter or a browser rendering engine.
+
+- A 60-second deadline covers request and response reading; request bodies are limited to 1 MiB and returned response bytes to 2 MiB, with truncation indicated. Runtime fetch/network availability still applies.
+- 301/302 responses follow up to five hops within the same 60-second deadline, accepting relative or absolute Location values and revalidating each destination. POST follows as GET without its body/content headers; HEAD remains HEAD. Same-origin headers are preserved. Across origins all explicitly supplied headers are dropped, and methods/body that could mutate a different origin are not forwarded. HTTPS-to-HTTP downgrade, invalid/blocked targets, hop-limit exhaustion and 303/307/308 remain inspectable 3xx responses. Results report the final `url`, `redirectFollowed`, `redirectCount` and optional `redirectStopped`; following a redirect is not an error retry.
+- No ambient browser cookies or provider keys are added, response cookies are not reused, and no requests are automatically retried. Cancellation/timeout does not prove a remote mutation was rolled back. Explicit headers and response data can appear in CLI history; do not pass secrets without permission.
+- Only HTTP/HTTPS is accepted, URL-embedded credentials and transport-control headers are rejected, and known literal link-local/metadata endpoints are blocked. Local development API URLs remain supported. This is not a general DNS-based SSRF firewall or a bypass for enterprise egress policies; use only authorized targets.
+- Main chat uses a capability-protected relay; independent chats use their own private capability URLs and owned cancellation. When the replacement MCP is injected, CLI startup excludes only built-in `WebFetch`, leaving `WebSearch` and existing deny rules intact. Untrusted workspaces or user-supplied `--mcp-config` overrides do not trigger that automatic exclusion. Restart the relevant CLI after installing an updated extension to refresh its tool list.
+
 ## Built-in Image Generation
 
 Click **Image**, immediately after the **Task flow** model chip, to edit the global image connection. The dialog supports English, Simplified Chinese, Traditional Chinese, Japanese, Korean, French and German. It is disabled until explicitly enabled with a valid connection.
@@ -399,11 +428,15 @@ The bundled MCP server is `llsccaiImage`; installing a separate image MCP packag
 | Tool | Purpose |
 | --- | --- |
 | `openapi_generate_image` | Submit one asynchronous image-generation request with `prompt` and `size`. |
-| `openapi_edit_image` | Submit a provider-compatible JSON edit using `prompt`, `image` and `size`; this is not multipart editing. |
+| `openapi_edit_image` | Submit a provider-compatible JSON edit with `prompt`, `size` and `image` containing one local file path or 1–16 paths; the host reads and encodes them. Not multipart. |
 | `openapi_get_image_task` | Inspect an owned task on explicit request or for diagnostics, not routine polling. |
 | `openapi_list_images` | List this conversation's tasks, including pending and failed tasks. |
 | `openapi_search_images` | Search original task prompts using a case-insensitive literal substring. |
 | `openapi_image_generation_info` | Read non-sensitive model, enablement and limit information. |
+
+**Editing inputs are paths only:** pass `image` as an existing local path string, or an array of up to 16 paths. Absolute paths anywhere readable by the extension host, workspace-relative paths, `../` paths, symlinks, `~/` and local `file://` URIs are supported; no extra workspace-boundary authorization dialog is added. Remote sessions read files on the remote extension-host machine. Do not submit HTTP URLs, Base64 or Data URIs, and do not encode the image yourself. Missing files return `IMAGE_SOURCE_NOT_FOUND`; directories and unreadable files are rejected. Single-file limits remain, with a 100 MiB aggregate source limit. Source-format acceptance is still left to the provider. The host reads each source once and freezes a complete `data:<MIME>;base64,<encoded bytes>` URL in memory before accepting the task, rather than sending bare Base64. PNG/JPEG/WebP signatures determine their MIME type even when the filename is misleading; other sources use an extension-based MIME hint or `application/octet-stream` without adding a new format rejection. The MCP tool keeps its path-only `image` string/array input, but the upstream JSON edit request always uses `images: [{ "image_url": "data:<MIME>;base64,..." }]` and `n: 1`, including for a single source. It never sends the legacy top-level `image` field. Text-only generation still sends only `model`, `prompt` and `size`. No encoded source crosses the MCP request or is returned to the model.
+
+**Failure diagnostics:** task details and completion messages show the HTTP status and the first 500 Unicode characters of the response body after credential/image-data redaction. This also covers HTTP-success responses containing API errors, HTML, invalid JSON or missing image data. The bounded excerpt survives task/chat restoration; full responses and request credentials are not saved. Error-body capture is capped at 64 KiB and never triggers a retry. Existing failures without a saved response cannot recover that body retroactively.
 
 After acceptance, continue other work or finish the turn: completion is automatically delivered to the originating conversation. Delivery waits for that conversation to become idle, adds a user bubble and sends a structured result through CLI stdin. Persistent receipts prevent automatic resending after an attempted/uncertain delivery; returning to history supplements the display without regenerating images. A busy dialog is not required, and unrelated conversations do not receive the result.
 
@@ -414,7 +447,7 @@ Output is stored under the conversation's workspace:
 
 The model receives `workspacePath`, each image's relative `path`, `absolutePath` and complete `fileUri`. Completion guidance asks for that URI verbatim when returning an image or open-original link, rather than rewriting it as a relative path. The chat keeps a compact localized summary with a checked open-image action; it does not expose a public download URL, rewrite Markdown resource addresses or guarantee inline file previews.
 
-**Costs and data:** generation/editing are submitted without an extra extension billing popup after the global configuration and request checks pass; CLI-native permission settings still apply. Provider image requests and the completion chat-model turn may be charged. Editing sends the supplied source images to the provider; inline sources can also appear in CLI history. Prompts and results are saved in the workspace. The tool does not read arbitrary local source paths or upload files to a third-party image host. Timeouts and local stops cannot guarantee remote cancellation or refunds. No failed generation is automatically retried, and restart recovery marks unfinished tasks interrupted rather than replaying them.
+**Costs and data:** generation/editing are submitted without an extra extension billing/path-authorization popup after the global configuration and request checks pass; CLI-native permission settings still apply. Provider image requests and the completion chat-model turn may be charged. Editing reads only the explicitly supplied paths, including paths outside the workspace, and sends their bytes directly to the configured provider. Paths may appear in CLI history; internally encoded originals are neither returned through MCP nor stored in task metadata. Prompts and generated results remain in the workspace; no third-party image host is used. Timeouts and local stops cannot guarantee remote cancellation or refunds. No failed generation is automatically retried, and restart recovery marks unfinished tasks interrupted rather than replaying them.
 
 ## Built-in Chat and Claude CLI Transport
 
@@ -489,7 +522,7 @@ Command titles may be localized according to your configured UI language.
 
 ### Option 1: Install from a local VSIX
 
-Install the packaged `claude-code-config-helper-3.2.81.vsix` using VS Code's **Extensions → … → Install from VSIX…** action. Reload the window when ready to activate the installed build; reload interrupts currently running extension CLIs. To build a package yourself, install the repository dependencies, run `npm run compile`, then package with `@vscode/vsce`.
+Install the packaged `claude-code-config-helper-3.2.85.vsix` using VS Code's **Extensions → … → Install from VSIX…** action. Reload the window when ready to activate the installed build; reload interrupts currently running extension CLIs. To build a package yourself, install the repository dependencies, run `npm run compile`, then package with `@vscode/vsce`.
 
 ### CLI installation through setup
 

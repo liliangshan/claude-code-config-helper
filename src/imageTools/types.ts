@@ -32,14 +32,16 @@ export interface ImageGenerationPublicState {
 export interface ImageScope { cwd: string; id: string; title: string }
 /** Published file metadata contains no source URL or inline bytes. */
 export interface ImageFile { id: string; relativePath: string; mimeType: string; bytes: number }
+/** Redacted upstream response prefix, capped at 500 Unicode characters; never a complete response archive. */
+export interface ImageResponsePreview { status: number; body: string; truncated: boolean }
 /** Per-task durable record; source images and request credentials are deliberately absent. */
 export interface ImageTask {
     version: 1; taskId: string; scopeId: string; operation: 'generate' | 'edit'; prompt: string;
     model: string; configRevision: number; size: string;
     status: 'queued' | 'running' | 'succeeded' | 'partially_failed' | 'failed' | 'interrupted';
-    createdAt: number; startedAt?: number; finishedAt?: number; images: ImageFile[]; error?: string;
+    createdAt: number; startedAt?: number; finishedAt?: number; images: ImageFile[]; error?: string; responsePreview?: ImageResponsePreview;
 }
-/** Validated, transient submission data; image exists only until execution finishes. */
+/** Host-prepared transient submission; image contains complete Base64 Data URLs, never model-supplied inline data. */
 export interface ImageSubmission { prompt: string; size: string; operation: 'generate' | 'edit'; image?: string | string[] }
 /** Configuration requests and task actions accepted from the shared chat UI. */
 export type ImageWebviewRequest =
@@ -52,10 +54,14 @@ export type ImageWebviewMessage =
     | { type: 'imageGeneration/state'; state: ImageGenerationPublicState; requestId?: string }
     | { type: 'imageGeneration/saveResult'; requestId: string; ok: boolean; checked?: boolean; error?: string }
     | { type: 'imageGeneration/taskUpdate'; scopeId: string; tasks: ImageTask[]; requestId?: string };
-/** Stable, non-sensitive error used across disk, network and Webview boundaries. */
+/** Stable error code with an optional already-redacted, bounded upstream response excerpt. */
 export class ImageError extends Error {
-    /** Construct an error code without upstream response bodies or credentials. */
-    public constructor(public readonly code: string) { super(code); this.name = 'ImageError'; }
+    /**
+     * Construct an error without putting provider bodies or credentials into its message or stack.
+     * @param code A stable public error code.
+     * @param responsePreview Optional sanitized diagnostic created by the image response reader.
+     */
+    public constructor(public readonly code: string, public readonly responsePreview?: ImageResponsePreview) { super(code); this.name = 'ImageError'; }
 }
 /** Convert unexpected errors to a safe code rather than exposing URLs, keys or file contents. */
 export function imageErrorCode(error: unknown): string {

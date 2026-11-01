@@ -23,6 +23,7 @@ import { EditorConversationStore, assertConversationId, type EditorConversation,
 import { EditorAutoOpener, extractFilePathFromToolInput } from '../editorAutoOpen';
 import { BrowserToolHost } from '../browserTools/browserToolHost';
 import { DiagnosticsHost } from '../vscodeTools/diagnosticsHost';
+import { HttpToolHost } from '../httpTools/httpHost';
 import { WakeupStore } from '../wakeupTools/wakeupStore';
 import { WakeupScheduler } from '../wakeupTools/wakeupScheduler';
 import { WakeupHost } from '../wakeupTools/wakeupHost';
@@ -73,6 +74,7 @@ export class EditorChatRuntime {
     private readonly opener: EditorAutoOpener;
     private readonly browser = new BrowserToolHost();
     private readonly diagnostics = new DiagnosticsHost();
+    private readonly httpTools = new HttpToolHost({ isTrusted: () => vscode.workspace.isTrusted });
     private readonly wakeupStore: WakeupStore;
     private readonly wakeups: WakeupScheduler;
     private readonly imageSubscription: vscode.Disposable;
@@ -81,7 +83,7 @@ export class EditorChatRuntime {
     private readonly wakeupHost: WakeupHost;
     private readonly wakeupQueue: string[] = [];
     private readonly checkpoint = setInterval(() => { if (!this.closed && this.busy) void this.persist().catch(error => this.post({ type: 'toast', level: 'error', text: String(error) })); }, 5000);
-    /** Bind immutable conversation identity to its lifecycle; dedicated compaction errors pause only the owning recovery turn. */
+    /** Bind immutable conversation identity and owned tools; dedicated compaction errors pause only this recovery turn. */
     public constructor(public readonly data: EditorConversation, private readonly store: EditorConversationStore,
         private readonly panel: IndependentChatHost, private readonly manager: ConfigManager,
         private readonly openNew: () => Promise<void>, private readonly history: () => Promise<void>) {
@@ -128,12 +130,13 @@ export class EditorChatRuntime {
             const id = outcome.context?.requestId; const identity = id && this.requestIdentities.get(id); if (!id || !identity) return;
             this.requestIdentities.delete(id); this.recovery.onRelayRequestFinished(identity, id, outcome.status === 'error' ? { status: outcome.upstreamStatus ?? outcome.mappedStatus, code: outcome.code, stage: outcome.stage, retryAfter: outcome.retryAfter } : undefined);
         };
-        this.relay.toolHandler = async (bridge, name, args, requestId) => {
+        this.relay.toolHandler = async (bridge, name, args, requestId, signal) => {
             if (this.closed) throw new Error('Editor closed');
             if (bridge === 'llsccaiBrowser') {
                 // Force new pages so another conversation's current page is not silently adopted.
                 return this.browser.execute(name as any, name === 'browser_open' ? { ...args, forceNew: true } : args);
             }
+            if (bridge === 'llsccaiHttp') return this.httpTools.execute(name, args, signal);
             if (bridge === 'llsccaiVscode') return this.diagnostics.execute(name as any, args);
             if (bridge === 'llsccaiWakeup') return this.wakeupHost.execute(name as any, args);
             if (bridge === 'llsccaiImage') {
@@ -178,7 +181,7 @@ export class EditorChatRuntime {
         this.starting = this.startCli(forCliUpdate);
         try { await this.starting; } finally { this.starting = undefined; }
     }
-    /** Start an isolated CLI while inheriting the user's MCP discovery policy and workspace configuration. */
+    /** Start an isolated CLI with workspace MCP policy and session-private HTTP/tool capabilities. */
     private async startCli(forCliUpdate = false): Promise<void> {
         if (this.closed || this.busy) return;
         const settings = this.currentSettings(); const signature = JSON.stringify(settings);
@@ -221,8 +224,8 @@ export class EditorChatRuntime {
         const url = this.relay.configure(settings);
         this.relay.sessionId = this.data.cliSessionId ?? this.data.conversationId;
         // Legacy builtin bridges target the sidebar. Never inject them into an independent editor.
-        const mcpServers = Object.fromEntries(Object.entries(base.mcpServers ?? {}).filter(([name]) => !['llsccaiBrowser', 'llsccaiVscode', 'llsccaiWakeup', 'llsccaiImage'].includes(name)));
-        for (const name of ['llsccaiBrowser', 'llsccaiVscode', 'llsccaiWakeup', 'llsccaiImage']) if (base.mcpServers?.[name]) {
+        const mcpServers = Object.fromEntries(Object.entries(base.mcpServers ?? {}).filter(([name]) => !['llsccaiBrowser', 'llsccaiVscode', 'llsccaiWakeup', 'llsccaiImage', 'llsccaiHttp'].includes(name)));
+        for (const name of ['llsccaiBrowser', 'llsccaiVscode', 'llsccaiWakeup', 'llsccaiImage', 'llsccaiHttp']) if (base.mcpServers?.[name]) {
             mcpServers[name] = { type: 'stdio', command: process.execPath, args: ['-e', `require(${JSON.stringify(require.resolve('./mcp'))}).startEditorBridge()`],
                 env: { ELECTRON_RUN_AS_NODE: '1', LLS_EDITOR_BRIDGE: name, LLS_EDITOR_TOOL_URL: `${url}/tools` } };
         }
@@ -237,9 +240,9 @@ export class EditorChatRuntime {
         this.post({ type: 'autoCompact/current', enabled: settings.autoCompactEnabled, policy: native.policy });
         this.post({ type: 'cli/status', status: 'running' });
     }
-    /** Stop only the owned generation and its network activity; retain ownership if termination fails. */
+    /** Stop the owned generation and HTTP requests; retain process ownership if termination fails. */
     private async stopProcess(): Promise<void> {
-        this.generation++; this.relay.abort(); this.permissions.clear();
+        this.generation++; this.relay.abort(); this.httpTools.abort(); this.permissions.clear();
         this.adapter?.dispose(); this.adapter = undefined;
         const cli = this.cli;
         await cli?.stop();
@@ -647,10 +650,10 @@ export class EditorChatRuntime {
         if (this.closed) return;
         this.overrideCliPath = cliPath; await this.ensureCli(true); await this.ready();
     }
-    /** Close is idempotent and immediate admission stop; await process shutdown before unlocking history. */
+    /** Close stops owned HTTP/tool admission immediately; await process shutdown before unlocking history. */
     public close(): Promise<void> {
         if (this.closePromise) return this.closePromise;
-        this.closed = true; this.imageSubscription.dispose(); clearInterval(this.checkpoint); this.recovery.dispose(); this.flowPaused = true; this.continuation.disposeAll(); this.wakeups.dispose(); this.wakeupQueue.length = 0;
+        this.closed = true; this.httpTools.dispose(); this.imageSubscription.dispose(); clearInterval(this.checkpoint); this.recovery.dispose(); this.flowPaused = true; this.continuation.disposeAll(); this.wakeups.dispose(); this.wakeupQueue.length = 0;
         for (const requestId of this.permissions.keys()) this.adapter?.respondToToolPermission(requestId, { behavior: 'deny', message: 'Editor conversation closed', interrupt: true });
         if (this.continuationTimer) clearTimeout(this.continuationTimer);
         this.relay.abort();

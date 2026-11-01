@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { ImageFileLock, readJson, safeDirectory, writeJson } from './storage';
 import { imageType } from './imageClient';
 import { ImageError, type ImageTask, type ImageFile } from './types';
+import { parseImageResponsePreview } from './responsePreview';
 
 export const IMAGE_TASK_ID = /^\d{8}T\d{9}Z_[0-9a-f-]{36}$/;
 
@@ -12,7 +13,12 @@ export const IMAGE_TASK_ID = /^\d{8}T\d{9}Z_[0-9a-f-]{36}$/;
 export function assertImageScope(scope: string): void {
     if (!/^[a-f0-9]{64}$/.test(scope)) throw new ImageError('IMAGE_TASK_NOT_FOUND');
 }
-/** Validate every restored field used for paths, state or display. No unknown fields survive. */
+/**
+ * Validate restored fields and keep only bounded, sanitized diagnostic metadata.
+ * @param raw Task data loaded from disk or prepared for persistence.
+ * @param scope Expected host-owned conversation identity.
+ * @returns An allowlisted task record with no credentials or full response payloads.
+ */
 export function parseImageTask(raw: unknown, scope: string): ImageTask {
     const v = raw as ImageTask;
     if (!v || v.version !== 1 || v.scopeId !== scope || !IMAGE_TASK_ID.test(v.taskId)
@@ -26,10 +32,12 @@ export function parseImageTask(raw: unknown, scope: string): ImageTask {
             || !Number.isSafeInteger(item.bytes) || item.bytes < 1) throw new ImageError('IMAGE_STORAGE_FAILED');
         return { id: item.id, relativePath: item.relativePath, mimeType: item.mimeType, bytes: item.bytes };
     });
+    const responsePreview = parseImageResponsePreview(v.responsePreview);
     return { version: 1, taskId: v.taskId, scopeId: scope, operation: v.operation, prompt: v.prompt, model: v.model,
         configRevision: v.configRevision, size: v.size, status: v.status, createdAt: v.createdAt, images,
         ...(Number.isFinite(v.startedAt) ? { startedAt: v.startedAt } : {}), ...(Number.isFinite(v.finishedAt) ? { finishedAt: v.finishedAt } : {}),
-        ...(typeof v.error === 'string' && /^IMAGE_[A-Z0-9_]+$/.test(v.error) ? { error: v.error } : {}) };
+        ...(typeof v.error === 'string' && /^IMAGE_[A-Z0-9_]+$/.test(v.error) ? { error: v.error } : {}),
+        ...(responsePreview ? { responsePreview } : {}) };
 }
 /** One instance per workspace, shared by all conversations; read-only history never creates directories. */
 export class ImageTaskStore {

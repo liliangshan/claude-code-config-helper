@@ -10,6 +10,8 @@
 import * as vscode from 'vscode';
 
 import { handleImageRelay } from '../imageTools/httpBridge';
+import { createHttpToolRelayHandler } from '../httpTools/httpBridge';
+import { HttpToolHost } from '../httpTools/httpHost';
 import { createBrowserToolRelayHandler } from '../browserTools/httpBridge';
 import { BrowserSessionStore } from '../browserTools/sessionStore';
 import { handleUpstreamTimeoutAutoContinue, sendHiddenUserMessageToCli } from '../chatRuntime/chatMessaging';
@@ -141,7 +143,7 @@ function createWakeupPipeline(context: vscode.ExtensionContext): ReturnType<type
 /**
  * 装配本地中转服务的全部请求处理链路。
  *
- * 请求依次尝试浏览器工具、VS Code 工具、定时唤醒工具三个 relay handler，
+ * 请求先尝试带能力认证的 HTTP 工具及其他内置工具 relay handler，
  * 都未命中时才交给 Chat 的 proxy router。
  * 专用压缩失败释放压缩等待并取消自动续推，不转入普通聊天恢复。
  *
@@ -214,12 +216,16 @@ export function setupRelayPipeline(
         }
     });
 
+    const httpHost = new HttpToolHost({ isTrusted: () => vscode.workspace.isTrusted });
+    context.subscriptions.push(httpHost);
+    const httpToolRelayHandler = createHttpToolRelayHandler(httpHost);
     const browserToolRelayHandler = createBrowserToolRelayHandler(undefined, new BrowserSessionStore(context.secrets));
     const vscodeToolRelayHandler = createVscodeToolRelayHandler();
     const wakeupToolRelayHandler = createWakeupPipeline(context);
 
     relayServer.setHandler(async (req, res) => {
         if (req.method === 'GET' && req.url === '/_lls/health') { res.writeHead(204); res.end(); return; }
+        if (await httpToolRelayHandler(req, res)) return;
         if (await handleImageRelay(req, res)) return;
         if (await browserToolRelayHandler(req, res)) return;
         if (await vscodeToolRelayHandler(req, res)) return;

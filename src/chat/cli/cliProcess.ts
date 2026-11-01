@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 
 import { Logger } from '../../logger';
 import { buildCliChildEnv } from '../../nativeCompactionPolicy';
+import { HTTP_MCP_SERVER_NAME } from '../../httpTools/tools';
 import type { ChatCliConfig, CliChunk, CliExitEvent, CliProcessStatus } from './types';
 
 /** CliProcess 输出 chunk 事件名。 */
@@ -392,7 +393,7 @@ export class CliProcess implements vscode.Disposable {
     }
 
     /**
-     * 构造 stream-json stdin/stdout 启动参数。
+     * 构造 stream-json stdin/stdout 启动参数；HTTP 替代工具注入时仅禁用原生 WebFetch。
      *
     * `--print` 是 CLI 文档中启用 stream-json 输入输出格式的前置模式。
     * `--permission-prompt-tool stdio` 则接入官方 Claude Code 扩展同款授权通道：
@@ -455,11 +456,31 @@ export class CliProcess implements vscode.Disposable {
             }
             this.appendPermissionPromptToolArgs(args);
         }
+        const injectHttpTool = !!this.currentConfig?.mcpServers?.[HTTP_MCP_SERVER_NAME] && !this.hasMcpConfigArgument(args);
         this.appendMcpArgs(args);
+        if (injectHttpTool) this.disableNativeWebFetch(args);
         this.appendSkillArgs(args);
         this.appendAppendSystemPromptArgs(args);
         if (resumeSessionId) args.push('--resume', resumeSessionId);
         return args;
+    }
+
+    /** Merge WebFetch into existing deny lists only when the owned HTTP replacement is actually injected. */
+    private disableNativeWebFetch(args: string[]): void {
+        let found = false;
+        for (let index = 0; index < args.length; index++) {
+            const match = /^(--disallowedTools|--disallowed-tools)(?:=(.*))?$/.exec(args[index]);
+            if (!match) continue;
+            found = true;
+            if (match[2] !== undefined) {
+                if (!match[2].split(/[,\s]+/).includes('WebFetch')) args[index] += `${match[2] ? ',' : ''}WebFetch`;
+            } else {
+                let end = index + 1;
+                while (end < args.length && !args[end].startsWith('-')) end++;
+                if (!args.slice(index + 1, end).some(value => value.split(/[,\s]+/).includes('WebFetch'))) args.splice(end, 0, 'WebFetch');
+            }
+        }
+        if (!found) args.push('--disallowedTools', 'WebFetch');
     }
 
     /**

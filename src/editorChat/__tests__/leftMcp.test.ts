@@ -51,9 +51,10 @@ test('left CLI keeps native project MCP discovery and private bridges while resp
         assert.equal(first.config.cwd, cwd);
         assert.equal(first.args.includes('--strict-mcp-config'), false, 'Default discovery must not suppress workspace .mcp.json');
         assert.equal(first.args.includes('--bare'), false);
+        assert.ok(first.args.includes('--disallowedTools')); assert.ok(first.args.includes('WebFetch'));
         assert.ok(first.config.mcpServers?.extensionOnly);
         assert.equal(first.config.mcpServers?.vscodeOnly.command, path.join(cwd, 'local-mcp'));
-        for (const name of ['llsccaiBrowser', 'llsccaiVscode', 'llsccaiWakeup']) {
+        for (const name of ['llsccaiBrowser', 'llsccaiVscode', 'llsccaiWakeup', 'llsccaiHttp']) {
             const bridge: import('../../chat/cli/types').McpServerConfig | undefined = first.config.mcpServers?.[name]; assert.ok(bridge);
             assert.equal(bridge.env?.LLS_EDITOR_BRIDGE, name);
             assert.ok(bridge.env?.LLS_EDITOR_TOOL_URL?.endsWith('/tools'));

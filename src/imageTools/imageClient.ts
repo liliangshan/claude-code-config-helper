@@ -4,6 +4,10 @@ import * as https from 'node:https';
 import * as dns from 'node:dns/promises';
 import { BlockList, isIP } from 'node:net';
 import { ImageError, type ImageGenerationExecutionSnapshot, type ImageSubmission } from './types';
+import { IMAGE_ERROR_CAPTURE_BYTES, imageResponsePreview } from './responsePreview';
+
+/** A successful bounded response retains its HTTP status for malformed-body diagnostics. */
+interface ImageHttpResponse { bytes: Buffer; status: number }
 
 const blocked = new BlockList();
 const blockedV6 = new BlockList();
@@ -15,9 +19,19 @@ export function isPublicImageAddress(address: string): boolean {
     const family = isIP(address);
     return family === 4 ? !blocked.check(address, 'ipv4') : family === 6 ? !blockedV6.check(address, 'ipv6') : false;
 }
-/** Read one HTTP response with an absolute abort signal, hard byte cap, no redirects and no retries. */
+/**
+ * Read one response with bounded error capture, no redirects and no automatic retries.
+ * @param url Provider API or validated public download URL.
+ * @param method Request method; POST is never replayed.
+ * @param headers Host-resolved request headers, used only locally to redact echoed credentials.
+ * @param body Optional JSON request body, never included in diagnostics.
+ * @param limit Maximum successful response byte count.
+ * @param signal Absolute request deadline or explicit cancellation signal.
+ * @param publicOnly Whether public DNS/IP pinning is required for an unauthenticated image download.
+ * @returns Successful response bytes with status, or an ImageError carrying a sanitized failure excerpt.
+ */
 async function requestBytes(url: URL, method: 'GET' | 'POST', headers: Record<string, string>, body: string | undefined,
-    limit: number, signal: AbortSignal, publicOnly: boolean): Promise<Buffer> {
+    limit: number, signal: AbortSignal, publicOnly: boolean): Promise<ImageHttpResponse> {
     signal.throwIfAborted();
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
     let pinned: { address: string; family: number } | undefined;
@@ -46,19 +60,31 @@ async function requestBytes(url: URL, method: 'GET' | 'POST', headers: Record<st
                     res.destroy(); reject(new ImageError('IMAGE_DOWNLOAD_BLOCKED')); return;
                 }
             }
-            if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
-                res.destroy(); reject(new ImageError(`IMAGE_HTTP_${res.statusCode ?? 0}`)); return;
-            }
-            if (Number(res.headers['content-length']) > limit) { res.destroy(); reject(new ImageError('IMAGE_RESPONSE_TOO_LARGE')); return; }
-            const chunks: Buffer[] = []; let size = 0;
+            const status = res.statusCode ?? 0;
+            const failed = status < 200 || status >= 300;
+            const secrets = Object.entries(headers).filter(([name]) => !['content-type', 'accept', 'user-agent', 'content-length'].includes(name.toLowerCase()))
+                .flatMap(([, value]) => [value, value.replace(/^(?:Bearer|Basic)\s+/i, '')]);
+            const captureLimit = Math.min(limit, IMAGE_ERROR_CAPTURE_BYTES);
+            const chunks: Buffer[] = [], previewChunks: Buffer[] = []; let size = 0, previewSize = 0;
+            /** Capture only a bounded prefix and redact secrets before it can leave the request reader. */
+            const failure = (code: string, incomplete = false) => new ImageError(code,
+                imageResponsePreview(Buffer.concat(previewChunks, previewSize).toString('utf8'), status, secrets, incomplete || size > previewSize));
+            if (!failed && Number(res.headers['content-length']) > limit) { res.destroy(); reject(new ImageError('IMAGE_RESPONSE_TOO_LARGE')); return; }
             res.on('data', (chunk: Buffer) => {
+                const prefix = chunk.subarray(0, Math.max(0, captureLimit - previewSize));
+                if (prefix.length) { previewChunks.push(Buffer.from(prefix)); previewSize += prefix.length; }
+                if (failed) {
+                    size += chunk.length;
+                    if (previewSize >= captureLimit) { reject(failure(`IMAGE_HTTP_${status}`, true)); res.destroy(); }
+                    return;
+                }
                 size += chunk.length;
                 if (size > limit) { res.destroy(new ImageError('IMAGE_RESPONSE_TOO_LARGE')); return; }
                 chunks.push(chunk);
             });
-            res.on('error', error => reject(error instanceof ImageError ? error : new ImageError('IMAGE_UPSTREAM_FAILED')));
-            res.on('aborted', () => reject(new ImageError('IMAGE_UPSTREAM_FAILED')));
-            res.on('end', () => resolve(Buffer.concat(chunks, size)));
+            res.on('error', error => reject(error instanceof ImageError ? error : failure(failed ? `IMAGE_HTTP_${status}` : 'IMAGE_UPSTREAM_FAILED', true)));
+            res.on('aborted', () => reject(failure(failed ? `IMAGE_HTTP_${status}` : 'IMAGE_UPSTREAM_FAILED', true)));
+            res.on('end', () => failed ? reject(failure(`IMAGE_HTTP_${status}`)) : resolve({ bytes: Buffer.concat(chunks, size), status }));
         });
         req.on('error', error => reject(error instanceof ImageError ? error : new ImageError(signal.aborted ? 'IMAGE_INTERRUPTED' : 'IMAGE_UPSTREAM_FAILED')));
         req.end(body);
@@ -80,32 +106,41 @@ export function decodeImage(value: string, limit: number): Buffer {
     if (bytes.length > limit || bytes.toString('base64') !== raw) throw new ImageError('IMAGE_FORMAT_UNSUPPORTED');
     imageType(bytes); return bytes;
 }
-/** Validate editing sources without fetching or persisting them; public URL DNS is resolved by the provider. */
-export function validateImageSource(value: unknown, limit: number): string {
-    if (typeof value !== 'string' || !value.trim()) throw new ImageError('IMAGE_ARGUMENT_INVALID');
-    if (/^https?:\/\//i.test(value)) {
-        let url: URL; try { url = new URL(value); } catch { throw new ImageError('IMAGE_ARGUMENT_INVALID'); }
-        const host = url.hostname.replace(/^\[|\]$/g, '');
-        if (url.username || url.password || host === 'localhost' || (isIP(host) && !isPublicImageAddress(host))) throw new ImageError('IMAGE_DOWNLOAD_BLOCKED');
-    } else decodeImage(value, limit);
-    return value;
-}
-/** Send exactly one Images JSON request; provider timeouts never trigger automatic POST replay. */
+/**
+ * Send one Images JSON request; edits use an images array of image_url Data URL objects and n: 1.
+ * Invalid success responses retain a sanitized 500-character excerpt.
+ * @param snapshot Frozen provider configuration and credentials.
+ * @param input Host-prepared prompt, dimensions and optional edit Data URLs.
+ * @param signal Request deadline or explicit cancellation.
+ * @returns Generated-image entries; failures never trigger POST replay.
+ */
 export async function generateImages(snapshot: ImageGenerationExecutionSnapshot, input: ImageSubmission, signal: AbortSignal): Promise<unknown[]> {
     const editing = input.operation === 'edit';
+    const sources = editing ? (Array.isArray(input.image) ? input.image : [input.image]) : [];
+    if (editing && (!sources.length || sources.length > 16 || sources.some(source => typeof source !== 'string' || !source.trim()))) throw new ImageError('IMAGE_ARGUMENT_INVALID');
     const payload = JSON.stringify({ model: editing ? snapshot.config.editModelId || snapshot.config.modelId : snapshot.config.modelId,
-        prompt: input.prompt, size: input.size, ...(editing ? { image: input.image } : {}) });
-    const bytes = await requestBytes(new URL(editing ? snapshot.editUrl : snapshot.generationUrl), 'POST', snapshot.headers, payload, snapshot.config.maxResponseBytes, signal, false);
-    let result: { data?: unknown[] }; try { result = JSON.parse(bytes.toString('utf8')); } catch { throw new ImageError('IMAGE_UPSTREAM_FAILED'); }
-    if (!Array.isArray(result?.data) || !result.data.length) throw new ImageError('IMAGE_UPSTREAM_FAILED');
+        prompt: input.prompt, size: input.size, ...(editing ? { images: sources.map(image_url => ({ image_url })), n: 1 } : {}) });
+    const { bytes, status } = await requestBytes(new URL(editing ? snapshot.editUrl : snapshot.generationUrl), 'POST', snapshot.headers, payload, snapshot.config.maxResponseBytes, signal, false);
+    const secrets = Object.entries(snapshot.headers).filter(([name]) => !['content-type', 'accept', 'user-agent', 'content-length'].includes(name.toLowerCase()))
+        .flatMap(([, value]) => [value, value.replace(/^(?:Bearer|Basic)\s+/i, '')]);
+    /** Build a bounded diagnostic for HTTP-success bodies that are not a valid Images result. */
+    const failure = () => new ImageError('IMAGE_UPSTREAM_FAILED', imageResponsePreview(bytes.subarray(0, IMAGE_ERROR_CAPTURE_BYTES).toString('utf8'), status, secrets, bytes.length > IMAGE_ERROR_CAPTURE_BYTES));
+    let result: { data?: unknown[] }; try { result = JSON.parse(bytes.toString('utf8')); } catch { throw failure(); }
+    if (!Array.isArray(result?.data) || !result.data.length) throw failure();
     return result.data;
 }
-/** Prefer Base64; download URLs with no authentication, cookies, redirects or private-network access. */
+/**
+ * Prefer returned Base64, or download an image without authentication, cookies or redirects.
+ * @param item An image entry from the provider's data array.
+ * @param limit Maximum decoded or downloaded bytes.
+ * @param signal Request deadline or explicit cancellation.
+ * @returns Verified PNG, JPEG or WebP bytes.
+ */
 export async function loadGeneratedImage(item: unknown, limit: number, signal: AbortSignal): Promise<Buffer> {
     const value = item as { b64_json?: unknown; url?: unknown };
     if (typeof value?.b64_json === 'string' && value.b64_json) return decodeImage(value.b64_json, limit);
     if (typeof value?.url !== 'string') throw new ImageError('IMAGE_FORMAT_UNSUPPORTED');
     if (/^(data:|[A-Za-z0-9+/]+=*$)/.test(value.url) && !/^https?:/.test(value.url)) return decodeImage(value.url, limit);
     let url: URL; try { url = new URL(value.url); } catch { throw new ImageError('IMAGE_FORMAT_UNSUPPORTED'); }
-    const bytes = await requestBytes(url, 'GET', {}, undefined, limit, signal, true); imageType(bytes); return bytes;
+    const { bytes } = await requestBytes(url, 'GET', {}, undefined, limit, signal, true); imageType(bytes); return bytes;
 }

@@ -2,7 +2,7 @@
     "name": "claude-code-config-helper",
     "displayName": "%extension.displayName%",
     "description": "%extension.description%",
-    "version": "3.2.83",
+    "version": "3.2.85",
     "publisher": "liliangshan",
     "license": "MIT",
     "repository": {
@@ -707,6 +707,7 @@
         "typescript": "^5.4.0"
     },
     "dependencies": {
+        "htmlparser2": "10.0.0",
         "js-tiktoken": "^1.0.21"
     }
 }

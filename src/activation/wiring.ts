@@ -13,6 +13,7 @@ import { BROWSER_BRIDGE } from '../browserTools/bridge';
 import { VSCODE_BRIDGE } from '../vscodeTools/bridge';
 import { WAKEUP_BRIDGE } from '../wakeupTools/bridge';
 import { IMAGE_BRIDGE } from '../imageTools/bridge';
+import { HTTP_BRIDGE } from '../httpTools/bridge';
 import { appendAssistantSegments, configureChatSession, finishActiveAssistantMessage, getTokenBudgetServiceRef } from '../chatRuntime/chatSession';
 import {
     appendUserMessageAndSend,
@@ -90,7 +91,7 @@ export function configureStatelessModules(): void {
 }
 
 /**
- * 把依赖 configManager / CLI 服务的模块依赖注入完成。
+ * 把依赖 configManager / CLI 服务的模块依赖注入完成，并登记包括 HTTP 桥在内的工具注入日志。
  *
  * 需在 ConfigManager 与 createCliLifecycleServices 之后调用。
  */
@@ -134,7 +135,7 @@ export function configureRuntimeModules(): void {
         notifyPermissionDeniedToUser,
         getCompactionService: getTokenBudgetServiceRef,
         logMcpInjection: (config) => {
-            for (const descriptor of [BROWSER_BRIDGE, VSCODE_BRIDGE, WAKEUP_BRIDGE, IMAGE_BRIDGE]) {
+            for (const descriptor of [BROWSER_BRIDGE, VSCODE_BRIDGE, WAKEUP_BRIDGE, IMAGE_BRIDGE, HTTP_BRIDGE]) {
                 logMcpInjection(config, descriptor);
             }
             logMcpToolsBeforeCliStart();

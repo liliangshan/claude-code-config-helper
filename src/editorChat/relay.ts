@@ -16,6 +16,7 @@ import type { UsageReport } from '../relay/usageReporter';
 import type { LlsTaskService } from '../llsTask/service';
 import type { EditorContinuation } from './continuation';
 import { readImageRequest } from '../imageTools/transport';
+import { readHttpToolRequest } from '../httpTools/transport';
 import type { EditorSettings } from './store';
 
 /** One authenticated network listener belongs to one runtime; closing it never affects the sidebar. */
@@ -31,7 +32,7 @@ export class EditorRelay {
     public onIdle?: () => void;
     public onRequest?: (id: string) => void;
     public onOutcome?: (outcome: RelayRequestOutcome) => void;
-    public toolHandler?: (bridge: string, name: string, args: Record<string, unknown>, requestId?: string) => Promise<unknown>;
+    public toolHandler?: (bridge: string, name: string, args: Record<string, unknown>, requestId?: string, signal?: AbortSignal) => Promise<unknown>;
     public url = '';
     /** Inject provider access, isolated workflow state and a session-specific usage sink. */
     public constructor(private readonly manager: ConfigManager, private readonly service: LlsTaskService,
@@ -51,19 +52,31 @@ export class EditorRelay {
         this.url = this.url.substring(0, this.url.lastIndexOf('/') + 1) + this.token;
         return this.url;
     }
-    /** Resolve the owned model snapshot; dedicated compaction failures terminate without API retries or model fallback. */
+    /** Resolve the owned snapshot and bounded HTTP tool envelopes; disconnects cancel only that tool request. */
     private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
         const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
-        if (req.method !== 'POST' || ![`/${this.token}/v1/messages`, `/${this.token}/tools`, `/${this.token}/tools/image`].includes(pathname) || !this.settings || !this.active) { res.writeHead(403); res.end(); return; }
+        if (req.method !== 'POST' || ![`/${this.token}/v1/messages`, `/${this.token}/tools`, `/${this.token}/tools/image`, `/${this.token}/tools/http`].includes(pathname) || !this.settings || !this.active) { res.writeHead(403); res.end(); return; }
         this.inFlight++;
         try {
             const imageRequest = pathname.endsWith('/tools/image');
-            const rawBody = await (imageRequest ? readImageRequest(req) : readRequestBody(req));
+            const httpRequest = pathname.endsWith('/tools/http');
+            const rawBody = await (imageRequest ? readImageRequest(req) : httpRequest ? readHttpToolRequest(req) : readRequestBody(req));
             const body = JSON.parse(rawBody) as Record<string, unknown>;
-            if (pathname.endsWith('/tools') || imageRequest) {
+            if (pathname.endsWith('/tools') || imageRequest || httpRequest) {
                 if (!this.toolHandler) throw new Error('Editor tools unavailable');
+                if ((body.bridge === 'llsccaiHttp') !== httpRequest) throw new Error('HTTP_RELAY_REJECTED');
                 if ((body.bridge === 'llsccaiImage') !== imageRequest) throw new Error('IMAGE_PERMISSION_DENIED');
                 if (body.bridge === 'llsccaiImage' && (Buffer.byteLength(rawBody) > 4 * 1024 * 1024 || typeof body.requestId !== 'string' || !/^[a-f0-9-]{36}$/.test(body.requestId))) throw new Error('IMAGE_PAYLOAD_TOO_LARGE');
+                if (httpRequest) {
+                    const controller = new AbortController();
+                    const abort = () => { if (!res.writableEnded) controller.abort(); };
+                    res.once('close', abort);
+                    try {
+                        const result = await this.toolHandler(String(body.bridge), String(body.name), (body.arguments ?? {}) as Record<string, unknown>, undefined, controller.signal);
+                        if (!res.destroyed) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(result)); }
+                    } finally { res.off('close', abort); }
+                    return;
+                }
                 const result = await this.toolHandler(String(body.bridge), String(body.name), (body.arguments ?? {}) as Record<string, unknown>, typeof body.requestId === 'string' ? body.requestId : undefined);
                 res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(result)); return;
             }

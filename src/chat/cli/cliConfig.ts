@@ -28,6 +28,7 @@ import { BROWSER_BRIDGE } from '../../browserTools/bridge';
 import { VSCODE_BRIDGE } from '../../vscodeTools/bridge';
 import { WAKEUP_BRIDGE } from '../../wakeupTools/bridge';
 import { IMAGE_BRIDGE } from '../../imageTools/bridge';
+import { HTTP_BRIDGE, HTTP_CAPABILITY, HTTP_CAPABILITY_ENV } from '../../httpTools/bridge';
 import { currentImageCapability } from '../../imageTools/entry';
 import type { McpBridgeDescriptor } from '../../mcpKit/registry';
 import {
@@ -119,7 +120,7 @@ export class ChatCliConfigService {
     public constructor(private readonly configManager?: ConfigManager) {}
 
     /**
-     * 读取当前生效的 CLI 配置，独立会话按其固定工作区解析文件与目录级设置。
+     * 读取当前生效的 CLI 配置，独立会话按其固定工作区解析文件与目录级设置；HTTP 工具仅在可信工作区注入。
      * @param workspaceFolder 独立会话所属工作区；省略时保持主聊天原有解析规则。
      * @returns 已补齐 cwd、transport、MCP 与默认环境变量的配置。
      */
@@ -145,7 +146,8 @@ export class ChatCliConfigService {
             [BROWSER_BRIDGE, browserToolsEnabled],
             [VSCODE_BRIDGE, vscodeToolsGetErrorsEnabled],
             [WAKEUP_BRIDGE, true],
-            [IMAGE_BRIDGE, true]
+            [IMAGE_BRIDGE, true],
+            [HTTP_BRIDGE, vscode.workspace.isTrusted === true]
         ];
         const finalMcpServers = builtinMcpEnabled.reduce<ChatCliConfig['mcpServers']>(
             (servers, [descriptor, enabled]) => injectBuiltinMcpServer(servers, descriptor, enabled, undefined),
@@ -217,7 +219,7 @@ export class ChatCliConfigService {
      * 派生 Chat CLI 路由配置。
      *
      * 任务流模型只切换当前主模型后复用 normal CLI，不再派生独立进程配置，
-     * 因此这里只产出 normal 一路。
+     * 因此这里只产出 normal 一路，并将可信工作区的 HTTP 桥绑定到当前 relay。
      *
      * @param relayPort 本地 HTTP 中转服务实际监听端口。
      * @returns 已派生好的 normal 配置。
@@ -238,7 +240,8 @@ export class ChatCliConfigService {
             [BROWSER_BRIDGE, browserToolsEnabled],
             [VSCODE_BRIDGE, vscodeToolsGetErrorsEnabled],
             [WAKEUP_BRIDGE, wakeupToolsEnabled],
-            [IMAGE_BRIDGE, true]
+            [IMAGE_BRIDGE, true],
+            [HTTP_BRIDGE, vscode.workspace.isTrusted === true]
         ];
         const normal: ChatCliConfig = {
             ...baseConfig,
@@ -604,14 +607,14 @@ export class ChatCliConfigService {
 }
 
 /**
- * 按 descriptor 向 mcpServers 字典注入一个内置 MCP server。
+ * 按 descriptor 注入内置 MCP；HTTP 名称由宿主保留，并附带仅供子进程传输使用的能力凭据。
  *
  * 三套桥（browser / vscode / wakeup）此前各有一份逐字相同的注入函数与入口脚本
  * 构造函数，这里合并为一个，差异全部由 descriptor 承载。
  *
  * @param mcpServers 已规范化并剥除历史 expert server 的 MCP server 字典。
  * @param descriptor 该套桥的静态声明。
- * @param enabled 是否允许注入；为 false 时原样返回。
+ * @param enabled 是否允许注入；为 false 时不注入，保留名称的 HTTP 桥同时从字典中移除。
  * @param relayPort 本地 HTTP 中转服务实际监听端口。
  * @returns 注入后的字典；没有任何 server 时返回 undefined。
  */
@@ -622,11 +625,14 @@ function injectBuiltinMcpServer(
     relayPort: number | undefined
 ): ChatCliConfig['mcpServers'] {
     if (!enabled) {
+        if (descriptor.serverName === HTTP_BRIDGE.serverName && mcpServers?.[descriptor.serverName]) {
+            const next = { ...mcpServers }; delete next[descriptor.serverName]; return next;
+        }
         return mcpServers;
     }
     const { serverName, relayPortEnv } = descriptor;
     const next: NonNullable<ChatCliConfig['mcpServers']> = { ...(mcpServers ?? {}) };
-    if (!next[serverName] || serverName === IMAGE_BRIDGE.serverName) {
+    if (!next[serverName] || serverName === IMAGE_BRIDGE.serverName || serverName === HTTP_BRIDGE.serverName) {
         next[serverName] = {
             type: 'stdio',
             command: process.execPath,
@@ -642,6 +648,7 @@ function injectBuiltinMcpServer(
             }
         };
     }
+    if (serverName === HTTP_BRIDGE.serverName) next[serverName].env = { ...next[serverName].env, [HTTP_CAPABILITY_ENV]: HTTP_CAPABILITY };
     return next;
 }
 

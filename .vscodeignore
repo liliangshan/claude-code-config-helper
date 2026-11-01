@@ -6,6 +6,12 @@ src/**
 node_modules/**
 !node_modules/js-tiktoken/**
 !node_modules/base64-js/**
+!node_modules/htmlparser2/**
+!node_modules/entities/**
+!node_modules/domhandler/**
+!node_modules/domutils/**
+!node_modules/domelementtype/**
+!node_modules/dom-serializer/**
 tsconfig.json
 **/*.map
 **/*.ts

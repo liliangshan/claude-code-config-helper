@@ -2,6 +2,48 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.85] - 2026-11-02
+
+### Fixed
+
+- JSON image-edit requests now send `images` as an array of `{ image_url: DataURL }` objects for both single and multiple source images. The legacy top-level `image` parameter is omitted, addressing the provider's `Unknown parameter: 'image'` response. Source order, MIME-prefixed Base64 data, model, prompt and per-request dimensions are preserved.
+- Editing explicitly sends `n: 1` to match the user-supplied provider request example. Text-only generation remains unchanged, and no editable batch-count setting or extra paid request is introduced.
+
+### Compatibility and Scope
+
+- MCP input remains `openapi_edit_image.image` with local paths; the host performs the HTTP field conversion. This release does not add public image uploads, alter the separate external image MCP package, switch to multipart or automatically retry old failures.
+- HTTP status and capped/redacted response diagnostics remain available. The supplied provider example uses an HTTPS image URL; provider acceptance of Data URLs and the requested image dimensions still requires manual verification. No paid provider call is part of release validation.
+- Reload the installed extension or restart the development host to load the updated image client. Existing `requestUsageBinding` and reused-response-ID association issues remain outside this fix.
+
+### Validation
+
+- VS Code diagnostics, TypeScript type checking/compilation and image-client/UI JavaScript syntax checks passed. Image-module acceptance passed 43/43 against temporary local files and mock HTTP servers, including single/multiple `images[].image_url` entries, `n: 1`, no top-level HTTP `image`, unchanged text-only generation and no automatic replay.
+- Full regression: 726 tests, 708 passed, 17 skipped, and the existing `requestUsageBinding` assertion failed (`true !== false`). This failure is not part of the image payload fix.
+
+## [3.2.84] - 2026-11-02
+
+### Added
+
+- Built-in `llsccaiHttp` / `http_fetch`, using native fetch in the extension host with a complete URL and optional method, headers and string body supplied by the model. No login helper, stored API configuration, cookie jar, provider credentials or business environment variables are required.
+- HTTP response status/headers/body are returned for both success and 4xx/5xx. Responses include explicit text/Base64 encoding and truncation metadata; requests have a 60-second deadline, 1 MiB body limit and 2 MiB returned-response limit. HTTP 301/302 redirects follow up to five validated hops within that deadline; cross-origin headers are stripped and request bodies/destructive methods are not forwarded across origins. Other redirects, HTTPS downgrades and blocked targets remain inspectable 3xx responses with a stop reason; errors and mutations are not automatically retried.
+- Capability-protected main-chat transport and independent-chat private bridge wiring, trusted-workspace checks, bounded envelopes and owned cancellation. Only when the HTTP replacement is injected, startup merges `WebFetch` into the CLI deny list while preserving other rules and leaving `WebSearch` unchanged. User-supplied MCP startup overrides keep their existing behavior.
+- Image task details and completion bubbles now include HTTP status and a redacted response prefix of at most 500 Unicode characters. HTTP failures and malformed HTTP-success bodies retain useful diagnostics through task/native-history restoration; error capture is capped at 64 KiB, and full response bodies, request credentials and source image bytes are not retained. Existing failed tasks without saved diagnostics cannot recover prior responses.
+
+### Changed
+
+- HTTP HTML/XHTML responses now return readable text rather than markup. A non-executing HTML parser removes tags, comments, scripts, styles, templates and explicitly hidden subtrees, decodes entities and retains paragraph/list/table boundaries and code text. Results expose `bodyFormat: "html-text"` plus an optional title; status, original headers, byte count and truncation flags remain intact. JSON/plain text/binary behavior is unchanged, and dynamic pages are not rendered. HTML parser runtime dependencies are included in the VSIX file allowlist.
+- `openapi_edit_image.image` now accepts only an existing local file path or 1–16 local paths. URL, Base64 and Data URI inputs are removed. Absolute paths outside the workspace, relative/parent paths, symlinks, `~/` and local `file://` URIs are supported without an additional path-authorization dialog; the operating system's read permissions still apply.
+- The extension host checks existence/readability and regular-file status, reads bounded source snapshots and wraps the bytes in complete `data:<MIME>;base64,...` URLs for the existing JSON editing API instead of sending bare Base64. PNG/JPEG/WebP MIME types come from signatures; other formats use filename MIME hints without an additional format restriction. Provider compatibility determines acceptance. Missing paths fail before provider submission. Per-file limits and a 100 MiB aggregate source cap remain; the 4 MiB MCP envelope contains paths, not image bytes.
+- Tool guidance now asks the model to submit paths directly, explains remote-host path resolution, and discourages manual Base64 conversion, polling and duplicate paid submissions. Encoded originals are not returned to the model or persisted in task metadata; provider output Base64 decoding remains supported.
+
+### Validation and Scope
+
+- HTTP tool, HTML extraction, redirect handling and left-MCP acceptance passed 30/30, including real CLI 2.1.312 discovery and complete JSON/filtered-HTML/302-following requests through the actual MCP subprocess/host relay to loopback servers. No external API calls or extension installation were used. HTML parser runtime dependency coverage was verified with the VSIX file list.
+- Image path-input, Data URL encoding and response-diagnostic acceptance passed 43/43 using temporary files and a local mock provider, including outside-workspace paths, symlinks, missing sources, source-free task records, capped/redacted failure excerpts, restored diagnostics and duplicate-request protection. Combined with HTTP acceptance, 73/73 targeted tests passed; no paid image API was called.
+- Release checks: VS Code diagnostics, TypeScript compilation/type checking, 304 JavaScript syntax checks and package/lockfile/document version consistency passed.
+- Latest full regression: 726 tests, 708 passed, 17 skipped, and the unchanged `requestUsageBinding` assertion (`true !== false`). Restart the relevant CLI after loading this release to refresh MCP schemas. Separately configured external image MCP packages are unchanged.
+- Known literal link-local/cloud-metadata destinations and URL credentials are rejected; local development APIs remain allowed. This tool is not a DNS-based SSRF firewall, a proxy-policy override or a guarantee of remote cancellation. Explicit request/response secrets can appear in CLI history.
+
 ## [3.2.83] - 2026-11-01
 
 ### Fixed

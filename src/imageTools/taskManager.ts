@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { ImageTaskStore } from './taskStore';
 import { generateImages, loadGeneratedImage } from './imageClient';
 import { IMAGE_TOTAL_LIMIT, ImageError, imageErrorCode, type ImageGenerationExecutionSnapshot, type ImageSubmission, type ImageTask } from './types';
+import { parseImageResponsePreview } from './responsePreview';
 
 /** Transient queue item: secrets and edit sources never reach task JSON. */
 interface Work { task: ImageTask; snapshot: ImageGenerationExecutionSnapshot; input: ImageSubmission }
@@ -57,7 +58,12 @@ export class ImageTaskManager extends EventEmitter {
             this.running.set(work.task.taskId, { promise, controller, scope: work.task.scopeId });
         }
     }
-    /** Execute once, checkpoint each saved image, and preserve partial results on any later failure. */
+    /**
+     * Execute once, preserving saved images and bounded response diagnostics for terminal failures.
+     * @param work Frozen task, provider settings and transient input images.
+     * @param controller Cancellation controller shared with timeout and explicit local stop.
+     * @returns Completion after durable state is written and owning views are notified.
+     */
     private async execute(work: Work, controller: AbortController): Promise<void> {
         const { task, snapshot, input } = work; const timer = setTimeout(() => controller.abort(), snapshot.config.timeoutMs);
         try {
@@ -71,13 +77,18 @@ export class ImageTaskManager extends EventEmitter {
                     controller.signal.throwIfAborted(); total += bytes.length;
                     if (total > IMAGE_TOTAL_LIMIT) throw new ImageError('IMAGE_RESPONSE_TOO_LARGE');
                     task.images.push(await this.store.saveImage(task.scopeId, bytes)); await this.store.save(task);
-                } catch (error) { failure = imageErrorCode(error); if (controller.signal.aborted) break; }
+                } catch (error) {
+                    failure = imageErrorCode(error);
+                    task.responsePreview = error instanceof ImageError ? parseImageResponsePreview(error.responsePreview) : undefined;
+                    if (controller.signal.aborted) break;
+                }
             }
             task.status = failure ? (task.images.length ? 'partially_failed' : 'failed') : 'succeeded'; task.error = failure;
             if (controller.signal.aborted) throw new ImageError('IMAGE_INTERRUPTED');
         } catch (error) {
             task.status = controller.signal.aborted ? 'interrupted' : task.images.length ? 'partially_failed' : 'failed';
             task.error = controller.signal.aborted ? 'IMAGE_INTERRUPTED' : imageErrorCode(error);
+            task.responsePreview = error instanceof ImageError ? parseImageResponsePreview(error.responsePreview) : undefined;
         } finally {
             clearTimeout(timer); task.finishedAt = Date.now();
             try { await this.store.save(task); }

@@ -93,6 +93,42 @@ test('image tools and completion UI never rewrite file URLs, expand resource roo
     }
 });
 
+test('image editing schema teaches path-only input and host-side encoding without extra path consent', () => {
+    const schema = IMAGE_TOOL_SCHEMAS.find(item => item.name === 'openapi_edit_image')!;
+    assert.match(schema.description, /only an existing local file path/);
+    assert.match(schema.description, /outside the workspace/);
+    assert.match(schema.description, /Do NOT read\/encode the image yourself/);
+    assert.match(schema.description, /do NOT submit Base64, Data URIs or HTTP URLs/);
+    assert.match(schema.description, /IMAGE_SOURCE_NOT_FOUND/);
+    assert.equal(schema.description.includes('Obtain permission before sending originals'), false);
+    const image = schema.inputSchema.properties.image as any;
+    assert.equal(image.anyOf[0].type, 'string'); assert.equal(image.anyOf[1].type, 'array');
+    assert.equal(image.anyOf[1].maxItems, 16); assert.match(image.anyOf[0].description, /local file path/);
+});
+
+/** Execute the real task renderer and verify provider markup is shown literally, never interpreted as HTML. */
+test('image task cards show at most 500 response characters using textContent', () => {
+    const source = asset('media/chat/imageGeneration.js');
+    const start = source.indexOf('        function renderTasks()'), end = source.indexOf('\n        /**', start);
+    /** Minimal element whose children and text represent the rendered task card. */
+    class Element {
+        public className = ''; public textContent = ''; public children: Element[] = [];
+        /** Append literal child nodes created by the renderer. */
+        public append(...children: Element[]): void { this.children.push(...children); }
+        /** Clear previous task nodes before rendering the next update. */
+        public replaceChildren(): void { this.children = []; }
+    }
+    const taskList = new Element(); const body = '<script>alert(1)</script>\n' + '错误🙂 '.repeat(200);
+    const render = runInNewContext(source.slice(start, end) + '\nrenderTasks;', {
+        taskList, document: { createElement: () => new Element() }, t: (value: string) => value,
+        tasks: [{ status: 'failed', model: 'fixture', size: '500x400', prompt: 'edit', error: 'IMAGE_HTTP_400', images: [], responsePreview: { status: 400, body, truncated: true } }]
+    });
+    render();
+    const preview = taskList.children[0].children.find(child => child.className === 'image-picker__response');
+    assert.equal(preview?.textContent, 'HTTP 400\n' + Array.from(body).slice(0, 500).join('') + '\n…');
+    assert.equal(preview?.children.length, 0);
+});
+
 test('image stdio process starts without vscode and lists tools without receiving a secret or relay', async () => {
     const child = spawn(process.execPath, ['-e', `require(${JSON.stringify(resolve(root, 'out/imageTools/imageMcpServer'))}).startImageMcpServer()`], {
         env: { ...process.env, LLS_IMAGE_TOOL_RELAY_PORT: '', LLS_IMAGE_TOOL_CAPABILITY: '' }, stdio: ['pipe', 'pipe', 'pipe']

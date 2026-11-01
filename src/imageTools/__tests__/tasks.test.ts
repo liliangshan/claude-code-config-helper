@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import * as http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { generateImages, loadGeneratedImage, isPublicImageAddress, imageType } from '../imageClient';
+import { loadLocalImageSources } from '../localImages';
 import { ImageTaskManager } from '../taskManager';
 import { ImageTaskStore } from '../taskStore';
 import { readImageRequest, forwardImageTool } from '../transport';
@@ -37,23 +38,50 @@ test('image address guards block private IPv4/IPv6 and malformed raster data', a
     assert.deepEqual(await loadGeneratedImage({ b64_json: png.toString('base64'), url: 'http://127.0.0.1/blocked' }, 1024, new AbortController().signal), png);
 });
 
-test('Images client sends one JSON edit request and never follows API redirects or retries failures', async () => {
+/** Enforce the JSON images/image_url wire contract for single and multiple inputs without POST replay. */
+test('Images client sends images arrays for edits and preserves text-only generation requests', async () => {
     const requests: { url: string; headers: http.IncomingHttpHeaders; body: Record<string, unknown> }[] = [];
     const server = http.createServer(async (req, res) => {
         const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
-        requests.push({ url: req.url!, headers: req.headers, body: JSON.parse(Buffer.concat(chunks).toString()) });
-        if (req.url === '/redirect/generations') { res.writeHead(302, { location: '/generations' }); res.end(); }
+        const body = JSON.parse(Buffer.concat(chunks).toString());
+        requests.push({ url: req.url!, headers: req.headers, body });
+        if (req.url === '/edits' && ('image' in body || !Array.isArray(body.images) || !body.images.length || body.images.some((image: { image_url?: unknown }) => typeof image?.image_url !== 'string' || !image.image_url.startsWith('data:')))) {
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({ error: { code: 'invalid_value', message: "Unknown parameter: 'image'. For application/json on /v1/images/edits, use 'images' (array)." } }));
+        } else if (req.url === '/redirect/generations') { res.writeHead(302, { location: '/generations' }); res.end(); }
         else { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] })); }
     });
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'image-client-local-'));
+    const source = path.join(cwd, 'reference.png'); await fs.writeFile(source, png);
+    const jpeg = Buffer.from('ffd8ffe000104a464946', 'hex'); await fs.writeFile(path.join(cwd, 'reference.jpg'), jpeg);
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
         const base = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
-        const result = await generateImages(snapshot(base), { operation: 'edit', prompt: 'combine', size: '1024x1024', image: ['https://example.com/a.png', png.toString('base64')] }, new AbortController().signal);
+        const image = await loadLocalImageSources(['reference.png', 'reference.jpg'], cwd, 1024);
+        const result = await generateImages(snapshot(base), { operation: 'edit', prompt: 'combine', size: '1024x1024', image }, new AbortController().signal);
         assert.equal(result.length, 1); assert.equal(requests[0].url, '/edits'); assert.equal(requests[0].headers.authorization, 'Bearer test-only-key');
-        assert.deepEqual(Object.keys(requests[0].body).sort(), ['image', 'model', 'prompt', 'size']);
+        assert.deepEqual(Object.keys(requests[0].body).sort(), ['images', 'model', 'n', 'prompt', 'size']);
+        assert.equal(requests[0].body.n, 1);
+        assert.equal(requests[0].headers['content-type'], 'application/json');
+        const dataUrl = `data:image/png;base64,${png.toString('base64')}`;
+        assert.deepEqual(requests[0].body.images, [{ image_url: dataUrl }, { image_url: `data:image/jpeg;base64,${jpeg.toString('base64')}` }]);
+        assert.equal(JSON.stringify(requests[0].body).includes(source), false);
+        const single = await loadLocalImageSources(source, cwd, 1024);
+        await generateImages(snapshot(base), { operation: 'edit', prompt: 'edit one', size: '1024x1024', image: single }, new AbortController().signal);
+        assert.equal(requests.length, 2); assert.equal(requests[1].url, '/edits');
+        assert.deepEqual(requests[1].body.images, [{ image_url: dataUrl }]);
+        assert.equal(requests[1].body.n, 1);
+        assert.equal('image' in requests[1].body, false);
+        for (const invalid of [undefined, '', [], Array(17).fill(dataUrl)]) {
+            await assert.rejects(generateImages(snapshot(base), { operation: 'edit', prompt: 'invalid', size: '1x1', image: invalid }, new AbortController().signal), /IMAGE_ARGUMENT_INVALID/);
+        }
+        assert.equal(requests.length, 2, 'Invalid edit sources must fail before any request');
+        await generateImages(snapshot(base), { operation: 'generate', prompt: 'text only', size: '1024x1024' }, new AbortController().signal);
+        assert.equal(requests[2].url, '/generations');
+        assert.deepEqual(requests[2].body, { model: 'test-image', prompt: 'text only', size: '1024x1024' });
         await assert.rejects(generateImages(snapshot(base + '/redirect'), { operation: 'generate', prompt: 'test', size: '1024x1024' }, new AbortController().signal), /IMAGE_HTTP_302/);
-        assert.equal(requests.length, 2);
-    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+        assert.equal(requests.length, 4);
+    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await fs.rm(cwd, { recursive: true, force: true }); }
 });
 
 test('queue freezes accepted settings, separates scopes and never persists sources or authentication', async () => {

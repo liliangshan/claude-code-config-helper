@@ -9,7 +9,7 @@ import { ImageConfigStore } from './configStore';
 import { ImageTaskManager } from './taskManager';
 import { ImageTaskStore } from './taskStore';
 import { safeDirectory } from './storage';
-import { validateImageSource } from './imageClient';
+import { loadLocalImageSources } from './localImages';
 import { IMAGE_TOOL_SCHEMAS, isImageToolName } from './tools';
 import { isImageTaskTerminal } from './results';
 import { IMAGE_BODY_LIMIT, ImageError, imageErrorCode, type ImageScope, type ImageSubmission, type ImageTask, type ImageWebviewMessage, type ImageWebviewRequest } from './types';
@@ -167,7 +167,7 @@ export class ImageToolHost {
         if (this.calls.size > 10000) this.calls.delete(this.calls.keys().next().value!);
         return result;
     }
-    /** Dispatch read-only tools locally and submit enabled generation/edit calls directly after snapshot validation. */
+    /** Dispatch scoped tasks; edit sources are explicit local paths read without workspace-boundary authorization. */
     private async dispatch(scope: ImageScope, name: string, args: Record<string, unknown>, stillCurrent: () => boolean): Promise<unknown> {
         if (this.stopped || !stillCurrent() || !isImageToolName(name)) throw new ImageError('IMAGE_PERMISSION_DENIED');
         this.validate(name, args);
@@ -175,7 +175,7 @@ export class ImageToolHost {
             const state = await this.config.publicState(); const c = state.config;
             return { enabled: c.enabled, configured: !state.error && !!c.modelId, model: c.modelId, sizeRequired: true,
                 storageDirectory: '.LLSOAI/openapi-image-generation',
-                editEnabled: c.editEnabled, timeoutMs: c.timeoutMs, maxConcurrent: c.maxConcurrent, maxQueue: c.maxQueue,
+                editEnabled: c.editEnabled, editInput: 'local-file-paths-only', sourcePathsOutsideWorkspace: true, timeoutMs: c.timeoutMs, maxConcurrent: c.maxConcurrent, maxQueue: c.maxQueue,
                 maxResponseBytes: c.maxResponseBytes, maxFileBytes: c.maxFileBytes, error: state.error };
         }
         const cwd = await this.workspace(scope.cwd, name === 'openapi_generate_image' || name === 'openapi_edit_image'); const store = new ImageTaskStore(cwd);
@@ -200,10 +200,9 @@ export class ImageToolHost {
         const input: ImageSubmission = { prompt, size, operation };
         if (operation === 'edit') {
             if (!config.editEnabled) throw new ImageError('IMAGE_EDIT_DISABLED');
-            const sources = Array.isArray(args.image) ? args.image : [args.image];
-            if (!sources.length || sources.length > 16) throw new ImageError('IMAGE_ARGUMENT_INVALID');
-            const images = sources.map(source => validateImageSource(source, config.maxFileBytes));
-            input.image = Array.isArray(args.image) ? images : images[0];
+            input.image = await loadLocalImageSources(args.image, scope.cwd, config.maxFileBytes, () => {
+                if (this.stopped || !stillCurrent()) throw new ImageError('IMAGE_PERMISSION_DENIED');
+            });
         }
         if (this.stopped || !stillCurrent()) throw new ImageError('IMAGE_PERMISSION_DENIED');
         const latest = await this.config.resolve(await this.config.read());

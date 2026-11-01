@@ -155,7 +155,10 @@
                 input: { expectedRevision: draftRevision, config, keyAction, ...(!checked && keyAction === 'replace' ? { apiKey: fields.apiKey.value } : {}) } });
             if (!checked) fields.apiKey.value = '';
         }
-        /** Render only local task metadata and host-validated open actions, never remote image URLs. */
+        /**
+         * Render local tasks, bounded provider diagnostics and validated image actions as text only.
+         * @returns {void}
+         */
         function renderTasks() {
             taskList.replaceChildren();
             if (!tasks.length) { const empty = document.createElement('p'); empty.className = 'image-picker__hint'; empty.textContent = t('empty'); taskList.append(empty); return; }
@@ -164,6 +167,11 @@
                 const heading = document.createElement('strong'); heading.textContent = t(task.status) + ' · ' + task.model + ' · ' + task.size;
                 const text = document.createElement('p'); text.textContent = task.prompt; card.append(heading, text);
                 if (task.error) { const error = document.createElement('p'); error.textContent = t('error') + ' · ' + task.error; card.append(error); }
+                if (task.responsePreview) {
+                    const preview = document.createElement('pre'); preview.className = 'image-picker__response';
+                    preview.textContent = 'HTTP ' + task.responsePreview.status + '\n' + Array.from(String(task.responsePreview.body || '')).slice(0, 500).join('') + (task.responsePreview.truncated ? '\n…' : '');
+                    card.append(preview);
+                }
                 for (const image of task.images || []) {
                     const open = document.createElement('button'); open.type = 'button'; open.className = 'image-picker__button'; open.textContent = t('open') + ' · ' + image.bytes + ' B';
                     open.addEventListener('click', () => post({ type: 'imageGeneration/imageOpen', requestId: crypto.randomUUID(), taskId: task.taskId, imageId: image.id })); card.append(open);

@@ -30,16 +30,18 @@ function context(root: string): import('vscode').ExtensionContext {
 
 test('host submits generation and editing without billing dialogs while preserving validation and deduplication', async t => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'image-host-')); const host = new ImageToolHost(context(root), manager());
+    const cwd = path.join(root, 'workspace'); await fs.mkdir(cwd);
+    const source = path.join(root, 'outside-reference.png'); await fs.writeFile(source, Buffer.from('89504e470d0a1a0a', 'hex'));
     vscode.workspace.isTrusted = true;
-    Object.defineProperty(vscode.workspace, 'workspaceFolders', { configurable: true, get: () => [{ uri: { fsPath: root, scheme: 'file' } }] });
-    let submissions = 0, confirmations = 0; const tasks: ImageTask[] = [];
+    Object.defineProperty(vscode.workspace, 'workspaceFolders', { configurable: true, get: () => [{ uri: { fsPath: cwd, scheme: 'file' } }] });
+    let submissions = 0, confirmations = 0; const tasks: ImageTask[] = []; const inputs: any[] = [];
     const previousWarning = vscode.window.showWarningMessage;
     vscode.window.showWarningMessage = async () => { confirmations++; throw new Error('Image submission must not show a billing dialog'); };
     (host as any).queue = async () => ({ configure() {}, submit: async (scopeId: string, snapshot: any, input: any, admit?: () => Promise<void>) => {
-        await admit?.();
+        await admit?.(); inputs.push(input);
         submissions++; const task = { taskId: randomUUID(), scopeId, status: 'queued', createdAt: Date.now(), model: snapshot.config.modelId, prompt: input.prompt, size: input.size } as ImageTask; tasks.push(task); return task;
     } });
-    const scope = { cwd: root, id: 'a'.repeat(64), title: 'Left' };
+    const scope = { cwd, id: 'a'.repeat(64), title: 'Left' };
     try {
         await host.initialize(); await host.config.save({ expectedRevision: 0, config: { ...defaultImageConfig(), enabled: true, modelId: 'test-image', baseUrl: 'https://example.com', authMode: 'none' }, keyAction: 'keep' });
         const id = randomUUID(); const result = await host.execute(scope, 'openapi_generate_image', { prompt: 'draw', size: '1536x1024' }, id, () => true);
@@ -49,8 +51,13 @@ test('host submits generation and editing without billing dialogs while preservi
         assert.equal((await host.execute(scope, 'openapi_generate_image', { prompt: 'missing size' }, randomUUID(), () => true)).isError, true);
         assert.equal(submissions, 1, 'A model must provide the image size; no configured fallback is allowed');
         assert.deepEqual(await host.execute(scope, 'openapi_generate_image', { prompt: 'draw', size: '1536x1024' }, id, () => true), result); assert.equal(submissions, 1);
-        const edited = await host.execute(scope, 'openapi_edit_image', { prompt: 'edit', size: '1024x1024', image: 'iVBORw0KGgo=' }, randomUUID(), () => true);
+        const edited = await host.execute(scope, 'openapi_edit_image', { prompt: 'edit', size: '1024x1024', image: source }, randomUUID(), () => true);
         assert.ok(!edited.isError); assert.equal(submissions, 2);
+        assert.equal(inputs[1].image, 'data:image/png;base64,iVBORw0KGgo=');
+        for (const invalid of ['missing.png', 'iVBORw0KGgo=', 'data:image/png;base64,iVBORw0KGgo=', 'https://example.com/a.png']) {
+            const rejected = await host.execute(scope, 'openapi_edit_image', { prompt: 'edit', size: '1024x1024', image: invalid }, randomUUID(), () => true);
+            assert.equal(rejected.isError, true); assert.equal(submissions, 2);
+        }
         assert.equal((await host.execute(scope, 'openapi_generate_image', { prompt: 'draw', cwd: '/other' }, randomUUID(), () => true)).isError, true);
         assert.equal((await host.execute(scope, 'openapi_generate_image', { prompt: 'draw', size: '1536x1024' }, randomUUID(), () => false)).isError, true);
         const config = await host.config.read(); let reads = 0;
@@ -64,6 +71,45 @@ test('host submits generation and editing without billing dialogs while preservi
         assert.ok(JSON.stringify(disabled).includes('IMAGE_CONFIG_REQUIRED')); assert.equal(submissions, 2);
         assert.equal(confirmations, 0, 'The extension no longer requires per-call or per-session billing consent');
     } finally { vscode.window.showWarningMessage = previousWarning; await host.close(); await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('path-only editing reads an external file, submits once and persists neither path nor encoded source', { timeout: 10000 }, async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'image-path-end-to-end-'));
+    const cwd = path.join(root, 'workspace'); await fs.mkdir(cwd);
+    const source = path.join(root, 'outside-reference.png');
+    const bytes = Buffer.from('89504e470d0a1a0a', 'hex'); await fs.writeFile(source, bytes);
+    const host = new ImageToolHost(context(root), manager());
+    vscode.workspace.isTrusted = true;
+    Object.defineProperty(vscode.workspace, 'workspaceFolders', { configurable: true, get: () => [{ uri: { fsPath: cwd, scheme: 'file' } }] });
+    const requests: any[] = [];
+    const server = http.createServer(async (req, res) => {
+        let body = ''; for await (const chunk of req) body += chunk.toString();
+        requests.push(JSON.parse(body)); res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ data: [{ b64_json: bytes.toString('base64') }] }));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
+    const scope = { cwd, id: 'e'.repeat(64), title: 'Paths' };
+    try {
+        await host.initialize();
+        await host.config.save({ expectedRevision: 0, config: { ...defaultImageConfig(), enabled: true, modelId: 'test-image', baseUrl: 'https://example.com', authMode: 'none' }, keyAction: 'keep' });
+        t.mock.method(host.config, 'resolve', async (config: ReturnType<typeof defaultImageConfig>) => ({ config, generationUrl: base + '/generations', editUrl: base + '/edits', providerName: 'local fixture', headers: { 'content-type': 'application/json' } }));
+        const missing = await host.execute(scope, 'openapi_edit_image', { prompt: 'combine', size: '1024x1024', image: [source, 'missing.png'] }, randomUUID(), () => true);
+        assert.equal(missing.isError, true); assert.match(JSON.stringify(missing), /IMAGE_SOURCE_NOT_FOUND/); assert.equal(requests.length, 0);
+        const requestId = randomUUID(), args = { prompt: 'combine', size: '1024x1024', image: [source, '../outside-reference.png'] };
+        const accepted = await host.execute(scope, 'openapi_edit_image', args, requestId, () => true);
+        assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
+        const queue = await (host as any).queue(cwd); await queue.idle();
+        assert.equal(requests.length, 1); assert.deepEqual(requests[0].images, [{ image_url: `data:image/png;base64,${bytes.toString('base64')}` }, { image_url: `data:image/png;base64,${bytes.toString('base64')}` }]);
+        assert.equal('image' in requests[0], false);
+        const taskId = JSON.parse(String(accepted.content[0].text)).taskId;
+        const saved = await fs.readFile(path.join(cwd, '.LLSOAI/openapi-image-generation/tasks', taskId + '.json'), 'utf8');
+        assert.equal(JSON.parse(saved).status, 'succeeded'); assert.equal(saved.includes(source), false); assert.equal(saved.includes(bytes.toString('base64')), false);
+        assert.equal(JSON.stringify(accepted).includes(bytes.toString('base64')), false);
+        await fs.unlink(source);
+        assert.deepEqual(await host.execute(scope, 'openapi_edit_image', args, requestId, () => true), accepted);
+        assert.equal(requests.length, 1, 'Duplicate bridge delivery cannot reread the removed source or charge again');
+    } finally { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); }
 });
 
 test('closing a chat with active image work still offers background execution or a local stop', async () => {
