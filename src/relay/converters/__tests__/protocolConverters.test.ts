@@ -48,7 +48,7 @@ const tests: TestCase[] = [
             assert.deepStrictEqual(result.body.stop, ['END']);
             assert.strictEqual(result.body.user, 'u-1');
             assert.deepStrictEqual(result.body.tool_choice, { type: 'function', function: { name: 'lookup' } });
-            assert.strictEqual(result.body.tools?.[0].function.name, 'lookup');
+            assert.strictEqual(result.body.tools?.[0].function?.name, 'lookup');
         }
     },
     {
@@ -262,12 +262,12 @@ const tests: TestCase[] = [
                 messages: [{ role: 'user', content: 'write file' }]
             };
             const chat = convertAnthropicToOpenAIChat(anthropic);
-            const chatWriteParams = chat.body.tools?.[0].function.parameters as any;
+            const chatWriteParams = chat.body.tools?.[0].function?.parameters as any;
             assert.deepStrictEqual(new Set(chatWriteParams.required), new Set(['file_path', 'content']));
             assert.strictEqual(chatWriteParams.properties.file_path.type, 'string');
             assert.strictEqual(chatWriteParams.properties.content.type, 'string');
             assert.strictEqual(chatWriteParams.additionalProperties, false);
-            const chatEditParams = chat.body.tools?.[1].function.parameters as any;
+            const chatEditParams = chat.body.tools?.[1].function?.parameters as any;
             assert.deepStrictEqual(new Set(chatEditParams.required), new Set(['file_path', 'old_string', 'new_string']));
             assert.strictEqual(chatEditParams.properties.file_path.type, 'string');
             assert.strictEqual(chatEditParams.properties.old_string.type, 'string');

@@ -65,7 +65,7 @@ function buildProvider(): ProviderConfig {
     };
 }
 
-/** 用临时 HTTP server 执行一次 router 请求。 */
+/** 用临时 HTTP server 和合法摘要响应执行一次 router 请求。 */
 async function requestRouter(
     path: string,
     onStart: (info: RelayUpstreamRequestInfo) => void,
@@ -80,13 +80,15 @@ async function requestRouter(
             onHandle?.();
             ctx.res.statusCode = 200;
             ctx.res.setHeader('content-type', 'application/json');
-            ctx.res.end(JSON.stringify({ ok: true, reasoningEffort: ctx.reasoningEffort }));
+            ctx.res.end(JSON.stringify({ ok: true, reasoningEffort: ctx.reasoningEffort, content: [{ type: 'text', text: 'Synthetic summary' }] }));
         }
     };
     const router = createRelayRouter({
         configManager: {
             getChatReasoningEffort: () => selectedEffort,
             getCurrentModel: () => ({ providerId: 'p', modelId: 'same-model' }),
+            getProviderModel: (_provider: string, modelId: string) => ({ modelId }),
+            isModelEnabled: () => true,
             getProviderWithSecret: async () => provider
         } as never,
         adapters: [adapter],

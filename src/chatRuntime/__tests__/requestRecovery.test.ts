@@ -142,3 +142,19 @@ test('compaction and permission blockers compose and cancellation prevents resch
     assert.equal(h.calls(), 0);
     c.dispose();
 });
+
+/** Dedicated summary failures preserve error state but never schedule automatic resends from late CLI retries/results. */
+test('dedicated compaction failure stops automatic recovery even after retryable upstream evidence', () => {
+    const h = harness(), c = h.controller, id = c.getSnapshot()!;
+    c.onRelayRequestStarted(id, 'normal-request'); c.onRelayRequestFinished(id, 'normal-request', { status: 503 });
+    c.onCliTurnFinished(id, true, { status: 503 }); assert.equal(h.delay(), 120000);
+    assert.equal(c.stopAutomaticRetry(id, { stage: 'compaction', code: 'dedicated_compaction_failed', status: 503 }), true);
+    assert.equal(h.delay(), undefined); assert.equal(c.getSnapshot()!.state, 'non_retryable');
+    c.onCliApiRetry(id, { status: 503 }); c.onCliTurnFinished(id, true, { status: 503 });
+    c.setBlocked(id, 'compaction', false);
+    assert.equal(c.onExpectedRequestTimeout(id), false); assert.equal(h.delay(), undefined); assert.equal(h.calls(), 0);
+    c.beginTurn({ ...id, turnId: 'next', originalPrompt: 'next request', route: 'normal', deliveryState: 'accepted' });
+    assert.equal(c.stopAutomaticRetry(id, { stage: 'compaction', status: 503 }), false, 'Late compaction failure must not affect the next turn');
+    c.onCliTurnFinished(c.getSnapshot()!, true, { status: 503 }); assert.equal(h.delay(), 120000, 'Ordinary chat retry policy stays unchanged');
+    c.dispose();
+});

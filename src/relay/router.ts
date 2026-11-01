@@ -24,8 +24,9 @@ import type { AutoContinueScheduler } from '../llsTask/autoContinue';
 import { isLlsCcaiTaskTriggered } from '../llsTask/detector';
 import type { LlsTaskService } from '../llsTask/service';
 import type { RequestUsageRegistry } from '../chatRuntime/requestUsage';
-import { createRequestUsageContext, type RequestUsageContext } from './requestUsage';
+import { createRequestUsageContext, readRequestSessionId, type RequestUsageContext } from './requestUsage';
 import { isClaudeCompactCommandRequest } from './summCommand';
+import { CompactionFailureGuard, forwardDedicatedCompaction, writeCompactionFailure } from './compactionFailure';
 import type {
     ApiType,
     CurrentModelSelection,
@@ -141,6 +142,8 @@ export interface RelayRouterDeps {
     onUpstreamRequestEnd?: (info: RelayUpstreamRequestInfo) => void;
     /** 结构化请求终态；不同于 adapter 返回通知。 */
     onUpstreamRequestOutcome?: (result: RelayRequestOutcome) => void;
+    /** Optional owning-runtime guard, reset only on explicit user input rather than on internal CLI requests. */
+    compactionFailures?: CompactionFailureGuard;
     /** 可选任务流服务，用于处理 @llsccai-task 触发。 */
     llsTaskService?: LlsTaskService;
     /**
@@ -372,8 +375,9 @@ function sanitizeHeaders(headers: http.IncomingHttpHeaders): Record<string, stri
 /**
  * 创建 Relay 路由处理函数。
  *
- * 该函数仅承担"路径校验 + 模型解析 + 适配器分发"的工作，
- * 真正的上游 HTTP 请求由具体的 {@link UpstreamAdapter} 负责发起。
+ * 该函数承担路径校验、模型解析、压缩配置失败收尾与适配器分发，
+ * 真正的上游 HTTP 请求由具体的 {@link UpstreamAdapter} 负责发起；
+ * 专用压缩请求通过缓冲响应事务保证失败时直接返回不可重试错误。
  *
  * @param deps 路由器所需依赖。
  * @returns 与 {@link RelayRequestHandler} 兼容的请求处理函数。
@@ -381,6 +385,7 @@ function sanitizeHeaders(headers: http.IncomingHttpHeaders): Record<string, stri
 export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
     const { configManager, adapters, llsTaskService, onUpstreamTimeout, onUpstreamRequestStart, onUpstreamRequestEnd } = deps;
     const adapterMap = new Map<ApiType, UpstreamAdapter>();
+    const compactionFailures = deps.compactionFailures ?? new CompactionFailureGuard();
     for (const adapter of adapters) {
         adapterMap.set(adapter.apiType, adapter);
     }
@@ -443,6 +448,26 @@ export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
         const explicit = compactCommandTriggered ? null : parseModelField(parsedBody);
         const compactionConfig = compactCommandTriggered ? readCompactionConfigFromVscode() : null;
         const compactionModel = compactionConfig?.enabled ? parseModelField({ model: compactionConfig.model }) : null;
+        const compactionSessionId = readRequestSessionId(parsedBody);
+        /** Report preflight failures through the same frozen request identity so neither recovery nor compaction waits remain armed. */
+        const failCompaction = (reason: string): void => {
+            compactionFailures.fail(compactionSessionId);
+            const usageContext = createRequestUsageContext(parsedBody, route, compactionModel?.providerId ?? '', compactionModel?.modelId ?? '', true);
+            const info = { route, providerId: usageContext.providerId, modelId: usageContext.modelId, usageContext };
+            onUpstreamRequestStart?.(info);
+            const outcome = new RequestOutcomeReporter(usageContext, deps.onUpstreamRequestOutcome);
+            try { writeCompactionFailure(res, reason, outcome); }
+            finally {
+                try { outcome.end(res.statusCode); }
+                finally { onUpstreamRequestEnd?.(info); }
+            }
+        };
+        if (compactCommandTriggered && compactionFailures.hasFailed(compactionSessionId)) {
+            failCompaction('This compaction already failed; automatic upstream retries are disabled.'); return;
+        }
+        if (compactCommandTriggered && compactionConfig?.enabled && !compactionModel) {
+            failCompaction('The configured compaction model is invalid.'); return;
+        }
         if (compactCommandTriggered && !compactionModel) {
             Logger.info(
                 `[compact] 未使用压缩专用模型：enabled=${compactionConfig?.enabled ? 'true' : 'false'} `
@@ -466,7 +491,15 @@ export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
             Logger.info(`[compact] 使用压缩专用模型：${providerId}/${modelId}`);
         }
 
-        const provider = await configManager.getProviderWithSecret(providerId);
+        let provider: ProviderConfig | undefined;
+        try { provider = await configManager.getProviderWithSecret(providerId); }
+        catch (error) {
+            if (compactionModel) { failCompaction('Could not read the configured compaction provider.'); return; }
+            throw error;
+        }
+        if (compactionModel && (!provider || provider.enabled === false)) {
+            failCompaction('The configured compaction provider is missing or disabled.'); return;
+        }
         if (!provider) {
             writeJsonError(res, 404, 'provider_not_found', `提供商不存在：${providerId}`);
             return;
@@ -476,8 +509,12 @@ export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
             return;
         }
 
+        if (compactionModel && !configManager.isModelEnabled(configManager.getProviderModel(providerId, modelId))) {
+            failCompaction('The configured compaction model is missing or disabled.'); return;
+        }
         const adapter = adapterMap.get(provider.apiType);
         if (!adapter) {
+            if (compactionModel) { failCompaction('The configured compaction provider protocol is unsupported.'); return; }
             writeJsonError(
                 res,
                 501,
@@ -515,7 +552,9 @@ export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
         const selectedEffort = configManager.getChatReasoningEffort?.() ?? 'auto';
         const reasoningEffort = selectedEffort === 'auto' ? undefined : selectedEffort;
         try {
-            await adapter.handle({ req, res, provider, modelId, rawBody, parsedBody, reasoningEffort, usageContext, outcome, llsTaskCreateTriggered, compactCommandTriggered, onUpstreamTimeout });
+            const context = { req, res, provider, modelId, rawBody, parsedBody, reasoningEffort, usageContext, outcome, llsTaskCreateTriggered, compactCommandTriggered, onUpstreamTimeout };
+            if (compactionModel) await compactionFailures.forward(compactionSessionId, res, outcome, () => forwardDedicatedCompaction(adapter, context));
+            else await adapter.handle(context);
         } catch (error) {
             outcome.fail('upstream_connect', error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined);
             throw error;

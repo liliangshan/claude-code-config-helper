@@ -25,6 +25,7 @@ import { DebugRecorder } from '../relay/debugRecorder';
 import { OpenAIChatProxyAdapter } from '../relay/openaiChatProxy';
 import { OpenAIResponsesProxyAdapter } from '../relay/openaiResponsesProxy';
 import { createRelayRouter } from '../relay/router';
+import { mainCompactionFailures } from '../relay/compactionFailure';
 import { TokenBudgetService, type CompactionState } from '../relay/tokenBudget/service';
 import { recordChatRequestUsage } from '../chatRuntime/chatSession';
 import type { UsageSink } from '../relay/usageReporter';
@@ -142,6 +143,7 @@ function createWakeupPipeline(context: vscode.ExtensionContext): ReturnType<type
  *
  * 请求依次尝试浏览器工具、VS Code 工具、定时唤醒工具三个 relay handler，
  * 都未命中时才交给 Chat 的 proxy router。
+ * 专用压缩失败释放压缩等待并取消自动续推，不转入普通聊天恢复。
  *
  * @param context 扩展上下文。
  * @param autoContinueScheduler 自动续推调度器，proxy adapter 需要用它感知任务流。
@@ -175,6 +177,7 @@ export function setupRelayPipeline(
     ] as const;
 
     const chatRelayHandler = createRelayRouter({
+        compactionFailures: mainCompactionFailures,
         configManager,
         llsTaskService,
         autoContinueScheduler,
@@ -188,7 +191,14 @@ export function setupRelayPipeline(
                 Logger.error(`上游超时自动 Continue 失败：${err instanceof Error ? err.message : String(err)}`);
             });
         },
-        onUpstreamRequestOutcome: observeRecoveryRequestOutcome,
+        onUpstreamRequestOutcome: outcome => {
+            observeRecoveryRequestOutcome(outcome);
+            if (outcome.retryable === false && outcome.context?.compactCommandTriggered) {
+                tokenBudgetService.finishNativeCompaction(outcome.context.sessionId, false, 'Dedicated compaction model failed; automatic retry is disabled.');
+                autoContinueScheduler.cancel('dedicated_compaction_failed');
+                autoContinueScheduler.notifyRequestStarted();
+            }
+        },
         onUpstreamRequestStart: (info) => {
             observeRecoveryRequestStart(info);
             const { route } = info;

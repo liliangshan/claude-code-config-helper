@@ -154,6 +154,16 @@ export class RequestRecoveryController {
         }
     }
 
+    /** End a failed dedicated compaction turn; return false when a stale identity must not affect the active runtime. */
+    public stopAutomaticRetry(id: RecoveryIdentity, failure: RecoveryFailure): boolean {
+        if (!this.matches(id)) return false;
+        this.clearTimer(); this.execution?.abort(); this.execution = undefined;
+        this.requests.clear();
+        this.terminal = true; this.context!.state = 'non_retryable';
+        this.context!.lastFailure = { ...failure }; this.context!.nextRetryAt = undefined;
+        this.publish();
+        return true;
+    }
     /** 仅明确等待请求且无阻塞时安排停滞恢复；执行器须先终止旧进程。 */
     public onExpectedRequestTimeout(id: RecoveryIdentity): boolean {
         if (!this.matches(id) || this.terminal || this.context!.state !== 'awaiting_request' || this.blockers.size || this.requests.size) return false;

@@ -19,3 +19,5 @@ yarn.lock
 .LLSOAI/**
 .claude/**
 tool.txt
+# Promotional copy is not an extension runtime asset.
+docs/宣传文案/**

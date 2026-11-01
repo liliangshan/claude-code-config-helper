@@ -30,6 +30,7 @@ import type { TokenBudgetService } from './tokenBudget/service';
 import { joinUpstreamUrl } from './upstreamUrl';
 import { bindClientAbortToUpstream } from './upstreamAbort';
 import { UPSTREAM_FIRST_BYTE_TIMEOUT_MS, UPSTREAM_STREAM_IDLE_TIMEOUT_MS } from './upstreamTimeouts';
+import { requiresNativeWebSearch, NativeWebSearchError } from './converters/nativeWebSearch';
 import { getRequestUsageReporter, type UsageSink } from './usageReporter';
 
 /** OpenAI Responses API 路径。 */
@@ -42,7 +43,7 @@ export type OpenAIResponsesProxyTaskDeps = LlsTaskRequestInjectionDeps;
  * OpenAI Responses API 转发适配器。
  *
  * 负责 Anthropic → OpenAI Responses → Anthropic 的协议双向转换，并支持任务流
- * 注入、调试落盘、流式转换和任务流工具本地拦截。
+ * 注入、调试落盘、流式转换和任务流工具本地拦截。原生 WebSearch 子请求不注入任务流。
  */
 export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
     /** 适配器对应的 apiType。 */
@@ -98,7 +99,7 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
     }
 
     /**
-     * 处理一次 Claude Code `/v1/messages` 请求。
+     * 处理一次 Claude Code `/v1/messages` 请求；保留原生搜索语义并隔离其任务流副作用。
      *
      * @param ctx 上游请求上下文。
      */
@@ -122,15 +123,16 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
             return;
         }
 
-        const injectedBodyText = injectLlsTaskRequestBody(
-            this.rewriteAnthropicModel(rawBody, parsedBody, modelId),
+        const rewrittenBody = this.rewriteAnthropicModel(rawBody, parsedBody, modelId);
+        const injectedBodyText = requiresNativeWebSearch(parsedBody) ? rewrittenBody : injectLlsTaskRequestBody(
+            rewrittenBody,
             this.taskDeps,
             { createTriggered: ctx.llsTaskCreateTriggered === true, modelName: modelId }
         ).bodyText;
         // token 预算登记（在 Anthropic 形态下估算，不改写 body）
         try {
             const sessionId = this.extractSessionId(parsedBody);
-            if (sessionId) {
+            if (sessionId && !requiresNativeWebSearch(parsedBody)) {
                 this.tokenBudget?.beforeSend({
                     sessionId,
                     providerId: provider.id,
@@ -146,13 +148,21 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
         const anthropicBody = this.parseJson(injectedBodyText);
         const explicitCache = resolveModelExplicitCache(provider, modelId);
         const reasoningMode = resolveReasoningMode(provider, modelId);
-        const converted = convertAnthropicToOpenAIResponses(anthropicBody, {
-            cacheMode: resolveModelCacheMode(provider, modelId),
-            reasoningMode,
-            reasoningEffort: ctx.reasoningEffort,
-            explicitCache,
-            cacheSessionId: explicitCache ? extractExplicitCacheSessionId(anthropicBody) : undefined
-        });
+        let converted: ReturnType<typeof convertAnthropicToOpenAIResponses>;
+        try {
+            converted = convertAnthropicToOpenAIResponses(anthropicBody, {
+                cacheMode: resolveModelCacheMode(provider, modelId),
+                reasoningMode,
+                reasoningEffort: ctx.reasoningEffort,
+                explicitCache,
+                cacheSessionId: explicitCache ? extractExplicitCacheSessionId(anthropicBody) : undefined
+            });
+        } catch (error) {
+            if (!(error instanceof NativeWebSearchError)) throw error;
+            ctx.outcome?.fail('upstream_inline_error', error.code);
+            this.writeJsonError(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: error.message } });
+            return;
+        }
         const upstreamBodyText = JSON.stringify(converted.body);
         const headers = buildOpenAIForwardHeaders(provider, req.headers);
         headers['content-length'] = String(Buffer.byteLength(upstreamBodyText, 'utf-8'));
@@ -311,7 +321,7 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
      * @param statusCode 上游状态码。
      * @param headers 上游响应头。
      * @param body 上游响应体。
-     * @param reasoningMode 请求开始时的思考内容透传策略。
+     * @param reasoningMode 请求开始时的思考内容透传策略；原生搜索缺失结果时明确报错。
      * @returns 转换后的 Anthropic 响应体文本。
      */
     private handleJsonResponse(
@@ -330,9 +340,9 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
                 this.writeJsonError(ctx.res, inlineError.statusCode, inlineError.body);
                 return errorBody;
             }
-            const converted = convertResponsesJsonToAnthropic(parsed, reasoningMode);
+            const converted = convertResponsesJsonToAnthropic(parsed, reasoningMode, requiresNativeWebSearch(ctx.parsedBody));
             const anthropicBody = JSON.stringify(converted.body);
-            const intercepted = this.taskDeps
+            const intercepted = this.taskDeps && !requiresNativeWebSearch(ctx.parsedBody)
                 ? interceptAnthropicResponse(anthropicBody, 'application/json', this.toInterceptorDeps())
                 : { body: anthropicBody };
             // 在 Anthropic 转换完成后立即抽取 usage 并上报给 Chat UI。
@@ -344,7 +354,7 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
             return intercepted.body;
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            ctx.outcome?.fail('upstream_inline_error', 'invalid_json');
+            ctx.outcome?.fail('upstream_inline_error', err instanceof NativeWebSearchError ? err.code : 'invalid_json');
             getRequestUsageReporter(ctx, this.usageSink).end('error');
             const error = buildAnthropicErrorFromUpstream(502, message);
             this.writeJsonError(ctx.res, 502, error);
@@ -415,7 +425,7 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
      * @param startedAt 本次请求开始时间。
      * @param upstreamBodyText 实际出站请求，仅抽取输出预算和思考配置用于诊断。
      * @param reasoningMode 请求开始时冻结的思考内容透传策略。
-     * @returns 流结束后的异常响应快照写入任务。
+     * @returns 流结束后的异常响应快照写入任务；搜索子请求不触发任务流续推。
      */
     private handleStreamResponse(
         ctx: UpstreamRequestContext,
@@ -433,8 +443,8 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
         const converter = new OpenAIResponsesToAnthropicStreamConverter((message) => {
             diagnostics.push(message);
             Logger.warn(message);
-        }, reasoningMode);
-        const interceptor = this.taskDeps ? new LlsTaskStreamingInterceptor(this.toInterceptorDeps()) : undefined;
+        }, reasoningMode, requiresNativeWebSearch(ctx.parsedBody));
+        const interceptor = this.taskDeps && !requiresNativeWebSearch(ctx.parsedBody) ? new LlsTaskStreamingInterceptor(this.toInterceptorDeps()) : undefined;
         // 每次响应独立的 usage 抽取器，吃下行 Anthropic SSE。
         const usageReporter = getRequestUsageReporter(ctx, this.usageSink);
         const chunks: string[] = [];
@@ -461,6 +471,10 @@ export class OpenAIResponsesProxyAdapter implements UpstreamAdapter {
             const rawSse = raw.toString('utf-8');
             captureBody(chunks.join(''));
             captureUpstreamBody(rawSse);
+            if (converter.getSearchFailure()) {
+                ctx.outcome?.fail('upstream_inline_error', 'unsupported_web_search');
+                usageReporter.end('error');
+            }
             if (converter.getWarnings().some(warning => warning.code === 'tool_arguments_conflict')) {
                 ctx.outcome?.fail('upstream_stream', 'tool_arguments_conflict');
                 usageReporter.end('error');

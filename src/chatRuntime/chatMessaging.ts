@@ -35,6 +35,7 @@ import {
     schedulePersistChatSession
 } from './chatSession';
 import { CLAUDE_COMPACT_COMMAND } from '../relay/tokenBudget/service';
+import { mainCompactionFailures } from '../relay/compactionFailure';
 import { getSessionIdForRoute, noteCliTurn } from './routeState';
 import { cancelRouteProcess, chatCliCancelState, chatRouteState, getStreamAdapterForRoute, hiddenCliResponseTurnsByRoute, isRouteBusy } from './routeState';
 import type { UpstreamTimeoutKind } from '../relay/upstreamTimeouts';
@@ -541,6 +542,7 @@ async function waitForCompactionBeforeSend(text: string, hidden: boolean): Promi
  *
  * taskFlow 路由复用 normal CLI 进程（仅模型不同），因此适配器与隐藏回合计数
  * 统一挂在 normal 一路；`forceRoute: 'taskFlow'` 是任务流唯一入口。
+ * 显式新提交解除本会话的压缩失败锁；CLI 内部重试不会经过此入口。
  *
  * @param text 用户输入文本。
  * @param options 可选路由、恢复身份及自动通知的投递前守卫；守卫失败不创建新回合。
@@ -595,6 +597,10 @@ export async function sendUserMessageToCli(text: string, options: { hidden?: boo
         noteCliTurn(1);
         try {
             if (options.isTargetCurrent && !options.isTargetCurrent()) throw new Error('Automatic notification target changed');
+            if (!options.recovery) {
+                mainCompactionFailures.reset(getSessionIdForRoute(cliRoute));
+                mainCompactionFailures.reset('');
+            }
             await adapter.sendUserMessage(outgoingText);
         } catch (error) {
             noteCliTurn(-1);

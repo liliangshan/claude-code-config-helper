@@ -1,18 +1,21 @@
 /**
- * @file OpenAI Chat Completions 非流式响应到 Anthropic Messages 响应的转换器。
+ * @file OpenAI Chat Completions JSON/SSE 到 Anthropic 的转换，包含原生搜索来源及正文证据区分。
  *
- * 本模块只处理 JSON 非流式响应；SSE 流式转换由后续状态机模块实现。
+ * 本模块处理 JSON 与增量 SSE；只有结构化引用才映射搜索记录，正文链接保持原有证据级别。
  */
 
 import type { ModelReasoningMode } from '../../types';
 import type { ConversionWarning } from './anthropicToOpenAIChat';
 import { anthropicCacheFields, normalizeOpenAIUsage } from './openAIUsage';
+import { ChatWebSearchResult, type ChatSearchBlock } from './chatWebSearch';
+import { formatAnthropicSseError } from './openAIErrorToAnthropic';
 
 /** Anthropic content block。 */
 type AnthropicContentBlock =
     | { type: 'text'; text: string }
     | { type: 'thinking'; thinking: string }
-    | { type: 'tool_use'; id: string; name: string; input: unknown };
+    | { type: 'tool_use'; id: string; name: string; input: unknown }
+    | ChatSearchBlock;
 
 /** Anthropic Messages 非流式响应体。 */
 export interface AnthropicMessageResponse {
@@ -129,11 +132,21 @@ export class OpenAIChatToAnthropicStreamConverter {
         finished: false
     };
 
+    /** Native-search collection is opt-in and never changes ordinary function-tool handling. */
+    private readonly search?: ChatWebSearchResult;
+    private searchFailure?: string;
+
     /**
-     * @param reasoningMode 模型级思考策略；仅 'passthrough' 时才把上游 reasoning
-     *                      合成为 Anthropic thinking block。缺省 'off' 保持既有行为。
+     * Construct an incremental converter with optional gateway-native search evidence collection.
+     * @param reasoningMode Only passthrough exposes the provider's visible reasoning text.
+     * @param searchQuery Explicit CLI search query; undefined keeps ordinary chat byte-compatible.
      */
-    constructor(private readonly reasoningMode: ModelReasoningMode = 'off') {}
+    constructor(private readonly reasoningMode: ModelReasoningMode = 'off', searchQuery?: string) {
+        if (searchQuery !== undefined) this.search = new ChatWebSearchResult(searchQuery);
+    }
+
+    /** Expose search failure evidence to the proxy without exposing request content. */
+    public getSearchFailure(): string | undefined { return this.searchFailure; }
 
     /** 转换 warning。 */
     private readonly warnings: ConversionWarning[] = [];
@@ -174,17 +187,17 @@ export class OpenAIChatToAnthropicStreamConverter {
     }
 
     /**
-     * 从缓冲区取出完整 SSE event 文本。
+     * 从缓冲区取出完整 SSE event 文本，兼容 LF、CRLF 和任意分片。
      *
      * @returns 完整 event 文本列表。
      */
     private drainCompleteEvents(): string[] {
         const events: string[] = [];
         while (true) {
-            const marker = this.buffer.indexOf('\n\n');
-            if (marker < 0) break;
-            events.push(this.buffer.slice(0, marker));
-            this.buffer = this.buffer.slice(marker + 2);
+            const marker = /\r?\n\r?\n/.exec(this.buffer);
+            if (!marker) break;
+            events.push(this.buffer.slice(0, marker.index));
+            this.buffer = this.buffer.slice(marker.index + marker[0].length);
         }
         return events;
     }
@@ -213,7 +226,7 @@ export class OpenAIChatToAnthropicStreamConverter {
     }
 
     /**
-     * 处理 Chat chunk；首片已有 usage 时先拆分读写再发 message_start，末片仍补发真值。
+     * 处理 Chat chunk；收集可选搜索引用，首片/末片 usage 保留原有读写拆分。
      *
      * @param chunk OpenAI Chat chunk。
      * @returns Anthropic SSE 文本。
@@ -221,10 +234,12 @@ export class OpenAIChatToAnthropicStreamConverter {
     private handleChunk(chunk: unknown): string {
         if (!isRecord(chunk)) return '';
         this.readUsage(chunk);
+        this.search?.collect(chunk);
         let out = this.ensureMessageStart(chunk);
         const choice = Array.isArray(chunk.choices) && isRecord(chunk.choices[0]) ? chunk.choices[0] : undefined;
         if (!choice) return out;
         const delta = isRecord(choice.delta) ? choice.delta : {};
+        this.search?.collect(delta);
         // passthrough 时读回上游 reasoning。分支必须在 content 之前：真实报文里
         // reasoning 分片先于正文到达且不与正文交错。length > 0 是硬要求——
         // 上游正文阶段的每个 chunk 也带 "reasoning_content":""，用 !== undefined
@@ -236,7 +251,8 @@ export class OpenAIChatToAnthropicStreamConverter {
             out += this.emitTextDelta(delta.content);
         }
         if (Array.isArray(delta.tool_calls)) {
-            out += this.handleToolCallDeltas(delta.tool_calls);
+            if (this.search) this.search.rejectToolCall();
+            else out += this.handleToolCallDeltas(delta.tool_calls);
         }
         if (typeof choice.finish_reason === 'string' || choice.finish_reason === null) {
             this.state.finishReason = typeof choice.finish_reason === 'string' ? choice.finish_reason : undefined;
@@ -477,7 +493,7 @@ export class OpenAIChatToAnthropicStreamConverter {
     }
 
     /**
-     * 如尚未完成则关闭所有 block，输出带真实缓存读写明细的 message_delta/message_stop。
+     * 如尚未完成则关闭所有 block，补齐搜索来源或正文来源声明及真实 usage/终态。
      *
      * @returns Anthropic SSE 文本。
      */
@@ -486,6 +502,20 @@ export class OpenAIChatToAnthropicStreamConverter {
         let out = this.closeThinkingBlockIfOpen();
         out += this.closeTextBlockIfOpen();
         out += this.closeAllToolBlocks();
+        if (this.search) {
+            try {
+                for (const block of this.search.blocks(this.state.messageId, this.state.finishReason === 'stop')) {
+                    const index = this.state.nextBlockIndex++;
+                    out += formatAnthropicSse('content_block_start', { type: 'content_block_start', index, content_block: block.type === 'text' ? { type: 'text', text: '' } : block });
+                    if (block.type === 'text') out += formatAnthropicSse('content_block_delta', { type: 'content_block_delta', index, delta: { type: 'text_delta', text: block.text } });
+                    out += formatAnthropicSse('content_block_stop', { type: 'content_block_stop', index });
+                }
+            } catch (error) {
+                this.searchFailure = error instanceof Error ? error.message : 'Chat native search failed';
+                this.state.finished = true;
+                return out + formatAnthropicSseError('api_error', this.searchFailure);
+            }
+        }
         const stopReason = mapFinishReason(
             this.state.finishReason,
             Array.from(this.state.toolCalls.values()),
@@ -544,11 +574,13 @@ function readToolArgumentsDelta(value: unknown): string {
  * @param json OpenAI Chat completion JSON。
  * @param reasoningMode 模型级思考策略；'passthrough' 时把 message.reasoning_content
  *                      合成为 thinking block 置于 content 最前。缺省 'off' 保持既有行为。
+ * @param searchQuery Explicit native search query; structured sources and text-only provenance remain distinct.
  * @returns Anthropic 响应体与 warning 列表。
  */
 export function convertOpenAIChatJsonToAnthropic(
     json: unknown,
-    reasoningMode: ModelReasoningMode = 'off'
+    reasoningMode: ModelReasoningMode = 'off',
+    searchQuery?: string
 ): OpenAIChatToAnthropicJsonResult {
     const source = isRecord(json) ? json : {};
     const warnings: ConversionWarning[] = [];
@@ -562,7 +594,13 @@ export function convertOpenAIChatJsonToAnthropic(
     if (typeof message.content === 'string' && message.content.length > 0) {
         content.push({ type: 'text', text: message.content });
     }
-    appendToolCalls(content, message.tool_calls, warnings);
+    if (searchQuery === undefined) appendToolCalls(content, message.tool_calls, warnings);
+    if (searchQuery !== undefined) {
+        const search = new ChatWebSearchResult(searchQuery);
+        search.collect(source); search.collect(message);
+        if (Array.isArray(message.tool_calls) && message.tool_calls.length) search.rejectToolCall();
+        content.push(...search.blocks(typeof source.id === 'string' ? source.id : 'chat_search', choice.finish_reason === 'stop'));
+    }
     const stopReason = mapFinishReason(choice.finish_reason, message.tool_calls, warnings);
     if (choice.finish_reason === 'content_filter' && content.length === 0) {
         content.push({ type: 'text', text: '[content filtered by upstream provider]' });

@@ -9,6 +9,7 @@ import type { ModelCacheMode, ModelReasoningMode } from '../../types';
 import { applyResponsesExplicitPromptCache } from '../explicitPromptCache';
 import { readThinkingEffort } from './reasoningEffort';
 import type { ReasoningEffort } from './reasoningEffort';
+import { isNativeWebSearchTool, toResponsesWebSearch, type ResponsesWebSearchTool } from './nativeWebSearch';
 
 /** Anthropic 消息角色。 */
 type AnthropicRole = 'user' | 'assistant';
@@ -51,7 +52,9 @@ export interface OpenAIResponsesRequestBody {
     /** Responses input 列表。 */
     input: OpenAIResponsesInputItem[];
     /** Responses tools。 */
-    tools?: OpenAIResponsesTool[];
+    tools?: Array<OpenAIResponsesTool | ResponsesWebSearchTool>;
+    /** Request real source URLs for native web-search result blocks. */
+    include?: string[];
     /** Responses tool_choice。 */
     tool_choice?: unknown;
     /** 采样 temperature。 */
@@ -107,7 +110,7 @@ export interface AnthropicConversionOptions {
 }
 
 /**
- * 将 Anthropic Messages 请求体转换为 OpenAI Responses 请求体。
+ * 将 Anthropic Messages 请求体转换为 OpenAI Responses 请求体，保留原生搜索和来源请求，不发送未经提供商确认支持的调用预算。
  *
  * @param anthropicBody 已完成任务流注入的 Anthropic 请求体。
  * @param options 可选行为开关；省略时全部走默认行为。
@@ -158,9 +161,13 @@ export function convertAnthropicToOpenAIResponses(
         body.metadata = metadata;
         if (typeof metadata.user_id === 'string' && metadata.user_id) body.user = metadata.user_id;
     }
+    const nativeSearch = Array.isArray(source.tools) && source.tools.some(isNativeWebSearchTool);
     const tools = convertTools(source.tools, warnings, cacheMode);
     if (tools.length > 0) body.tools = tools;
-    const toolChoice = convertToolChoice(source.tool_choice, warnings);
+    if (nativeSearch) body.include = ['web_search_call.action.sources'];
+    const choice = isRecord(source.tool_choice) ? source.tool_choice : {};
+    const toolChoice = nativeSearch && choice.type === 'tool' && choice.name === 'web_search'
+        ? { type: 'web_search' } : convertToolChoice(source.tool_choice, warnings);
     if (toolChoice !== undefined) body.tool_choice = toolChoice;
     if (options?.explicitCache === true) {
         const result = applyResponsesExplicitPromptCache(body, options.cacheSessionId ?? '');
@@ -510,7 +517,7 @@ function appendUnsupportedBlockText(
 }
 
 /**
- * 转换 Anthropic tools 为 Responses function tools。
+ * 转换 Anthropic tools 为 Responses function 或原生搜索工具。
  *
  * @param tools Anthropic tools 字段。
  * @param warnings warning 收集器。
@@ -521,10 +528,11 @@ function convertTools(
     tools: unknown,
     warnings: ResponsesConversionWarning[],
     cacheMode: ModelCacheMode
-): OpenAIResponsesTool[] {
+): Array<OpenAIResponsesTool | ResponsesWebSearchTool> {
     if (!Array.isArray(tools)) return [];
-    return tools.flatMap((tool, index): OpenAIResponsesTool[] => {
+    return tools.flatMap((tool, index): Array<OpenAIResponsesTool | ResponsesWebSearchTool> => {
         if (!isRecord(tool) || typeof tool.name !== 'string') return [];
+        if (isNativeWebSearchTool(tool)) return [toResponsesWebSearch(tool)];
         const parameters = normalizeToolParameters(
             tool.name,
             isRecord(tool.input_schema) ? tool.input_schema : { type: 'object', properties: {} }

@@ -81,7 +81,7 @@ export class EditorChatRuntime {
     private readonly wakeupHost: WakeupHost;
     private readonly wakeupQueue: string[] = [];
     private readonly checkpoint = setInterval(() => { if (!this.closed && this.busy) void this.persist().catch(error => this.post({ type: 'toast', level: 'error', text: String(error) })); }, 5000);
-    /** Bind immutable conversation identity to its own presentation host and lifecycle. */
+    /** Bind immutable conversation identity to its lifecycle; dedicated compaction errors pause only the owning recovery turn. */
     public constructor(public readonly data: EditorConversation, private readonly store: EditorConversationStore,
         private readonly panel: IndependentChatHost, private readonly manager: ConfigManager,
         private readonly openNew: () => Promise<void>, private readonly history: () => Promise<void>) {
@@ -117,8 +117,17 @@ export class EditorChatRuntime {
                 await this.adapter!.sendUserMessage(context.deliveryState === 'not_sent' ? context.originalPrompt : 'Continue the interrupted request using existing tool results. Do not repeat completed operations.');
             } });
         this.relay.onRequest = id => { if (this.recoveryIdentity) { this.requestIdentities.set(id, this.recoveryIdentity); this.recovery.onRelayRequestStarted(this.recoveryIdentity, id); } };
-        this.relay.onOutcome = outcome => { const id = outcome.context?.requestId; const identity = id && this.requestIdentities.get(id); if (!id || !identity) return;
-            this.requestIdentities.delete(id); this.recovery.onRelayRequestFinished(identity, id, outcome.status === 'error' ? { status: outcome.upstreamStatus ?? outcome.mappedStatus, code: outcome.code, stage: outcome.stage, retryAfter: outcome.retryAfter } : undefined); };
+        this.relay.onOutcome = outcome => {
+            if (outcome.retryable === false && outcome.context?.compactCommandTriggered) {
+                const id = outcome.context.requestId, identity = this.requestIdentities.get(id);
+                this.requestIdentities.delete(id);
+                if (!identity || !this.recovery.stopAutomaticRetry(identity, { stage: 'compaction', code: 'dedicated_compaction_failed', status: outcome.upstreamStatus })) return;
+                this.turnFailed = true; this.flowPaused = true; this.continuation.cancel('compaction_failed');
+                this.post({ type: 'compaction/failed', sessionId: this.data.cliSessionId ?? '', error: 'Dedicated compaction model failed; automatic retry is disabled.' }); return;
+            }
+            const id = outcome.context?.requestId; const identity = id && this.requestIdentities.get(id); if (!id || !identity) return;
+            this.requestIdentities.delete(id); this.recovery.onRelayRequestFinished(identity, id, outcome.status === 'error' ? { status: outcome.upstreamStatus ?? outcome.mappedStatus, code: outcome.code, stage: outcome.stage, retryAfter: outcome.retryAfter } : undefined);
+        };
         this.relay.toolHandler = async (bridge, name, args, requestId) => {
             if (this.closed) throw new Error('Editor closed');
             if (bridge === 'llsccaiBrowser') {
@@ -312,7 +321,7 @@ export class EditorChatRuntime {
         this.post({ type: 'codePreview/current', enabled: s.codePreviewEnabled });
         this.post({ type: 'browser/autoApproveState', supported: false, enabled: false });
     }
-    /** Send one user or continuation turn; image-result turns preserve the draft and claim a receipt before transport. */
+    /** Send one turn, preserving image drafts and clearing only this session's prior compaction failure latch. */
     public async send(text: string, attachments?: import('../chat/protocol').ChatComposerAttachment[], continuation = false, imageResult?: { scope: ImageScope; task: ImageTask }): Promise<void> {
         if ((await import('../setup/gate')).isCliUpdateInProgress()) throw new Error('CLI update in progress; send again after restart');
         if (this.restarting) throw new Error('CLI restart in progress');
@@ -342,6 +351,7 @@ export class EditorChatRuntime {
         this.data.lastRunState = 'running'; await this.persist();
         if (this.closed || requestGeneration !== this.generation || (imageResult && requestSessionId !== this.data.cliSessionId)) return;
         this.post({ type: 'chat/running', running: true });
+        this.relay.compactionFailures.reset(this.data.cliSessionId ?? '');
         try { await this.adapter!.sendUserMessage(prompt); } catch (error) { await this.cancel(); throw error; }
     }
     /** Merge CLI public events into this panel, rejecting stale process generations at the subscription. */

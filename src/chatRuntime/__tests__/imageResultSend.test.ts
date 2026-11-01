@@ -9,6 +9,7 @@ const lifecycle = require('../cliLifecycle') as typeof import('../cliLifecycle')
 const session = require('../chatSession') as typeof import('../chatSession');
 const { routes, resetAllRouteBusy } = require('../routeState') as typeof import('../routeState');
 const { requestRecoveryController, clearHttpExpectation } = require('../selfHealing') as typeof import('../selfHealing');
+const { mainCompactionFailures } = require('../../relay/compactionFailure') as typeof import('../../relay/compactionFailure');
 
 test('main image completion creates one normal user-input turn and failed guards never send to another history', async t => {
     const oldMessages = session.chatSessionState.messages, oldActive = session.chatSessionState.activeAssistantMessageId;
@@ -20,7 +21,9 @@ test('main image completion creates one normal user-input turn and failed guards
     session.configureChatSession({ getModelLabelForRoute: () => 'model' });
     messaging.configureChatMessaging({ openBuiltInChat: async () => {}, switchChatRoute: async () => {}, armHttpExpectation() {}, clearHttpExpectation() {}, cancelPendingResend() {}, showChatToast: async () => {}, formatLogPreview: text => text });
     try {
+        mainCompactionFailures.fail('test-history');
         await messaging.sendUserMessageToCli('[image-generation-result]\n{}', { beforeSend: async () => { order.push('guard'); }, isTargetCurrent: () => true });
+        assert.equal(mainCompactionFailures.hasFailed('test-history'), false, 'Explicit submissions unlock the preceding failed compaction');
         assert.equal(sent.length, 1); assert.equal(session.chatSessionState.messages.length, 1); assert.equal(routes.normal.pendingTurns, 1);
         assert.ok(order.indexOf('guard') < order.indexOf('send')); resetAllRouteBusy();
         const count = session.chatSessionState.messages.length;

@@ -9,6 +9,7 @@ import type { ModelCacheMode, ModelReasoningMode } from '../../types';
 import { applyChatExplicitPromptCache } from '../explicitPromptCache';
 import { readThinkingEffort } from './reasoningEffort';
 import type { ReasoningEffort } from './reasoningEffort';
+import { isNativeWebSearchTool, toResponsesWebSearch, type ResponsesWebSearchTool } from './nativeWebSearch';
 
 /** Anthropic 消息角色。 */
 type AnthropicRole = 'user' | 'assistant';
@@ -74,7 +75,7 @@ export interface OpenAIChatRequestBody {
     /** OpenAI Chat 消息列表。 */
     messages: OpenAIChatMessage[];
     /** OpenAI Chat tools。 */
-    tools?: OpenAIChatTool[];
+    tools?: Array<OpenAIChatTool | ResponsesWebSearchTool>;
     /** OpenAI Chat tool_choice。 */
     tool_choice?: unknown;
     /** 采样 temperature。 */
@@ -141,7 +142,7 @@ export interface AnthropicConversionOptions {
 }
 
 /**
- * 将 Anthropic Messages 请求体转换为 OpenAI Chat Completions 请求体。
+ * 将 Anthropic Messages 请求体转换为 OpenAI Chat Completions 请求体，保留网关原生搜索，不发送未经提供商确认支持的调用预算。
  *
  * @param anthropicBody 已完成任务流注入的 Anthropic 请求体。
  * @param options 可选行为开关；省略时全部走默认行为。
@@ -189,9 +190,11 @@ export function convertAnthropicToOpenAIChat(
     if (source.stop_sequences !== undefined) body.stop = source.stop_sequences;
     const userId = readMetadataUserId(source.metadata);
     if (userId) body.user = userId;
+    const nativeSearch = Array.isArray(source.tools) && source.tools.some(isNativeWebSearchTool);
     const tools = convertTools(source.tools, warnings, cacheMode);
     if (tools.length > 0) body.tools = tools;
-    const toolChoice = convertToolChoice(source.tool_choice, warnings);
+    const choice = isRecord(source.tool_choice) ? source.tool_choice : {};
+    const toolChoice = nativeSearch && choice.type === 'tool' && choice.name === 'web_search' ? 'required' : convertToolChoice(source.tool_choice, warnings);
     if (toolChoice !== undefined) body.tool_choice = toolChoice;
     if (options?.explicitCache === true) {
         const result = applyChatExplicitPromptCache(body, options.cacheSessionId ?? '');
@@ -525,7 +528,7 @@ function appendUnsupportedBlockText(
 }
 
 /**
- * 转换 Anthropic tools 为 OpenAI Chat tools。
+ * 转换普通 function 及网关原生搜索工具，保留域名限制而非静默降级。
  *
  * @param tools Anthropic tools 字段。
  * @param warnings warning 收集器。
@@ -536,10 +539,11 @@ function convertTools(
     tools: unknown,
     warnings: ConversionWarning[],
     cacheMode: ModelCacheMode
-): OpenAIChatTool[] {
+): Array<OpenAIChatTool | ResponsesWebSearchTool> {
     if (!Array.isArray(tools)) return [];
-    return tools.flatMap((tool, index): OpenAIChatTool[] => {
+    return tools.flatMap((tool, index): Array<OpenAIChatTool | ResponsesWebSearchTool> => {
         if (!isRecord(tool) || typeof tool.name !== 'string') return [];
+        if (isNativeWebSearchTool(tool)) return [toResponsesWebSearch(tool)];
         const parameters = normalizeToolParameters(
             tool.name,
             isRecord(tool.input_schema) ? tool.input_schema : { type: 'object', properties: {} }

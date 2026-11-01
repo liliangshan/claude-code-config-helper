@@ -5,12 +5,14 @@ import type { ModelReasoningMode } from '../../types';
 import type { ResponsesConversionWarning } from './anthropicToOpenAIResponses';
 import { formatAnthropicSseError } from './openAIErrorToAnthropic';
 import { anthropicCacheFields, normalizeOpenAIUsage } from './openAIUsage';
+import { NativeWebSearchError, responseSearchCitations, searchResultBlocks, type NativeSearchBlock } from './nativeWebSearch';
 
 /** Anthropic content block。 */
 type AnthropicContentBlock =
     | { type: 'text'; text: string }
     | { type: 'thinking'; thinking: string }
-    | { type: 'tool_use'; id: string; name: string; input: unknown };
+    | { type: 'tool_use'; id: string; name: string; input: unknown }
+    | NativeSearchBlock;
 
 /** Anthropic Messages 非流式响应体。 */
 export interface AnthropicResponsesMessageResponse {
@@ -205,13 +207,22 @@ export class OpenAIResponsesToAnthropicStreamConverter {
     private readonly closedReasoningItems = new Set<number>();
     /** 任意可见内容已打开后，不在末尾补发先前遗漏的思考摘要。 */
     private hasVisibleNonReasoning = false;
+    /** Native search state stays separate from locally executable function/tool-use state. */
+    private readonly searchItems = new Map<string, Record<string, unknown>>();
+    private readonly emittedSearches = new Set<string>();
+    private readonly searchCitations: unknown[] = [];
+    private searchFailure?: string;
+
+    /** Return protocol-level search failure evidence so the proxy does not report HTTP 200 as successful search. */
+    public getSearchFailure(): string | undefined { return this.searchFailure; }
 
     /**
-     * 创建转换器；思考透传关闭时维持原有输出，不影响工具诊断回调。
+     * 创建转换器；原生搜索单独转换为 CLI 服务端结果块，不影响普通工具诊断。
      * @param onInvalidToolArguments 工具 JSON 异常诊断。
      * @param reasoningMode 仅 passthrough 显示上游提供的可见摘要。
+     * @param requireWebSearch 搜索专用请求必须有真正的服务端搜索结果，不能伪装为空成功。
      */
-    public constructor(private readonly onInvalidToolArguments?: (message: string) => void, private readonly reasoningMode: ModelReasoningMode = 'off') {}
+    public constructor(private readonly onInvalidToolArguments?: (message: string) => void, private readonly reasoningMode: ModelReasoningMode = 'off', private readonly requireWebSearch = false) {}
 
     private readonly warnings: ResponsesConversionWarning[] = [];
 
@@ -269,17 +280,17 @@ export class OpenAIResponsesToAnthropicStreamConverter {
     }
 
     /**
-     * 从缓冲区取出完整 SSE event 文本。
+     * 从缓冲区取出完整 SSE event 文本，兼容 LF、CRLF 与任意分片。
      *
      * @returns 完整 event 文本列表。
      */
     private drainCompleteEvents(): string[] {
         const events: string[] = [];
         while (true) {
-            const marker = this.buffer.indexOf('\n\n');
-            if (marker < 0) break;
-            events.push(this.buffer.slice(0, marker));
-            this.buffer = this.buffer.slice(marker + 2);
+            const marker = /\r?\n\r?\n/.exec(this.buffer);
+            if (!marker) break;
+            events.push(this.buffer.slice(0, marker.index));
+            this.buffer = this.buffer.slice(marker.index + marker[0].length);
         }
         return events;
     }
@@ -348,6 +359,14 @@ export class OpenAIResponsesToAnthropicStreamConverter {
                 return this.handleFunctionArgumentsDelta(payload);
             case 'response.function_call_arguments.done':
                 return this.handleFunctionArgumentsDone(payload);
+            case 'response.output_text.annotation.added':
+                if (isRecord(payload.annotation) && payload.annotation.type === 'url_citation') this.searchCitations.push(payload.annotation);
+                return '';
+            case 'response.web_search_call.in_progress':
+            case 'response.web_search_call.searching':
+            case 'response.web_search_call.completed':
+            case 'response.metadata':
+                return '';
             case 'response.completed':
                 return this.handleResponseTerminal(payload, 'completed');
             case 'response.incomplete':
@@ -506,6 +525,31 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         return out;
     }
 
+    /** Retain native search snapshots until terminal output supplies source titles/citations; never interrupt active text deltas. */
+    private captureWebSearch(item: Record<string, unknown>): string {
+        if (typeof item.id !== 'string' || !item.id) return '';
+        const previous = this.searchItems.get(item.id);
+        this.searchItems.set(item.id, { ...previous, ...item });
+        return '';
+    }
+
+    /** Close active content before emitting paired, deduplicated server-tool blocks with real URLs. */
+    private emitWebSearch(item: Record<string, unknown>): string {
+        const id = String(item.id);
+        if (this.emittedSearches.has(id)) return '';
+        const blocks = searchResultBlocks(item, this.searchCitations, this.searchItems.size === 1);
+        if (!blocks.length) return '';
+        this.emittedSearches.add(id);
+        let out = this.ensureMessageStart() + this.closeReasoningParts();
+        for (const part of this.state.textParts.values()) out += this.closeTextPart(part.outputIndex, part.contentIndex);
+        for (const block of blocks) {
+            const index = this.state.nextBlockIndex++;
+            out += formatAnthropicSse('content_block_start', { type: 'content_block_start', index, content_block: block });
+            out += formatAnthropicSse('content_block_stop', { type: 'content_block_stop', index });
+        }
+        return out;
+    }
+
     /**
      * 处理 response.created 事件。
      *
@@ -565,7 +609,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
     }
 
     /**
-     * 处理 response.output_item.added 事件。
+     * 处理 response.output_item.added 事件；原生搜索只保留快照，不生成本地工具调用。
      *
      * @param payload Responses 事件 payload。
      * @returns 可能产生的 Anthropic SSE 文本。
@@ -574,6 +618,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         const outputIndex = readOutputIndex(payload, this.warnings, 'response.output_item.added');
         if (outputIndex === undefined) return '';
         const item = isRecord(payload.item) ? payload.item : {};
+        if (item.type === 'web_search_call') return this.captureWebSearch(item);
         if (this.reasoningMode === 'passthrough' && item.type === 'reasoning') return this.reconcileReasoningItem(outputIndex, item, false);
         const state = this.getOutputItemState(outputIndex);
         if (typeof item.type === 'string') state.type = item.type;
@@ -588,7 +633,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
     }
 
     /**
-     * 处理 response.output_item.done 事件。
+     * 处理 response.output_item.done 事件，原生搜索结果延后到完整来源可用时输出。
      *
      * 对 function_call 来说，该事件表示整个工具调用输出项完成；如果 arguments
      * 尚有未输出的片段，先补发 input_json_delta，然后关闭对应 content block。
@@ -601,6 +646,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         const outputIndex = readOutputIndex(payload, this.warnings, 'response.output_item.done');
         if (outputIndex === undefined) return '';
         const item = isRecord(payload.item) ? payload.item : {};
+        if (item.type === 'web_search_call') return this.captureWebSearch(item);
         if (this.reasoningMode === 'passthrough' && item.type === 'reasoning') return this.reconcileReasoningItem(outputIndex, item, true);
         const state = this.getOutputItemState(outputIndex);
         if (typeof item.type === 'string') state.type = item.type;
@@ -732,7 +778,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
     }
 
     /**
-     * 处理 response.completed/response.incomplete 终止事件。
+     * 处理 response.completed/response.incomplete 终止事件，并补齐去重后的真实搜索来源。
      *
      * @param payload Responses 事件 payload。
      * @param status Responses 终态。
@@ -744,6 +790,11 @@ export class OpenAIResponsesToAnthropicStreamConverter {
         this.state.status = status;
         if (response.incomplete_details !== undefined) this.state.incompleteDetails = response.incomplete_details;
         let out = '';
+        this.searchCitations.push(...responseSearchCitations(response.output));
+        if (Array.isArray(response.output)) {
+            for (const item of response.output) if (isRecord(item) && item.type === 'web_search_call') out += this.captureWebSearch(item);
+        }
+        for (const item of this.searchItems.values()) out += this.emitWebSearch(item);
         if (this.reasoningMode === 'passthrough' && Array.isArray(response.output)) {
             response.output.forEach((item, outputIndex) => {
                 if (isRecord(item) && item.type === 'reasoning') out += this.reconcileReasoningItem(outputIndex, item, true);
@@ -947,7 +998,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
     }
 
     /**
-     * 如尚未完成则关闭所有 block，输出带真实缓存读写明细的 message_delta/message_stop。
+     * 如尚未完成则关闭所有 block；搜索请求缺失真实结果时报错，否则输出真实 usage 和终态。
      *
      * @param source 触发收尾的来源。
      * @returns Anthropic SSE 文本。
@@ -955,6 +1006,11 @@ export class OpenAIResponsesToAnthropicStreamConverter {
     private finishIfNeeded(source: string): string {
         if (this.state.finished) return '';
         let out = this.ensureMessageStart();
+        if (this.requireWebSearch && (!this.emittedSearches.size || source === 'end')) {
+            this.state.finished = true;
+            this.searchFailure = 'Native web search did not return a complete search result. The provider may not support Responses web_search.';
+            return out + this.closeAllOpenBlocks() + formatAnthropicSseError('api_error', this.searchFailure);
+        }
         out += this.closeAllOpenBlocks();
         // usage 通常随 response.completed 才到达，message_start 那份可能为 0，这里补发真值。
         out += formatAnthropicSse('message_delta', {
@@ -1016,12 +1072,14 @@ export class OpenAIResponsesToAnthropicStreamConverter {
  *
  * @param json OpenAI Responses JSON。
  * @param reasoningMode 可见摘要透传开关，关闭时保持原有输出。
+ * @param requireWebSearch 声明原生搜索时要求真实搜索结果，避免返回空成功。
  * @returns Anthropic 响应体与 warning 列表。
  */
-export function convertResponsesJsonToAnthropic(json: unknown, reasoningMode: ModelReasoningMode = 'off'): OpenAIResponsesToAnthropicJsonResult {
+export function convertResponsesJsonToAnthropic(json: unknown, reasoningMode: ModelReasoningMode = 'off', requireWebSearch = false): OpenAIResponsesToAnthropicJsonResult {
     const source = isRecord(json) ? json : {};
     const warnings: ResponsesConversionWarning[] = [];
     const content = convertOutputToContent(source.output, warnings, reasoningMode);
+    if (requireWebSearch && !content.some(block => block.type === 'web_search_tool_result')) throw new NativeWebSearchError('The provider returned no native web-search result. Use a model/provider supporting Responses web_search.');
     const stopReason = mapResponseStopReason(source, content);
     ensureFilteredPlaceholder(source, content);
     return {
@@ -1040,7 +1098,7 @@ export function convertResponsesJsonToAnthropic(json: unknown, reasoningMode: Mo
 }
 
 /**
- * 按 Responses output 顺序转换为 Anthropic content blocks。
+ * 按 Responses output 顺序转换文本、普通函数及带真实来源的原生搜索结果。
  *
  * @param output Responses output 字段。
  * @param warnings warning 收集器。
@@ -1050,12 +1108,20 @@ export function convertResponsesJsonToAnthropic(json: unknown, reasoningMode: Mo
 function convertOutputToContent(output: unknown, warnings: ResponsesConversionWarning[], reasoningMode: ModelReasoningMode): AnthropicContentBlock[] {
     if (!Array.isArray(output)) return [];
     const content: AnthropicContentBlock[] = [];
+    const searchIds = new Set<string>();
+    const citations = responseSearchCitations(output);
     output.forEach((item, index) => {
         if (!isRecord(item)) return;
         const path = `output[${index}]`;
         switch (item.type) {
             case 'message':
                 appendMessageOutputContent(content, item.content, `${path}.content`, warnings);
+                break;
+            case 'web_search_call':
+                if (typeof item.id === 'string' && !searchIds.has(item.id)) {
+                    searchIds.add(item.id);
+                    content.push(...searchResultBlocks(item, citations, output.filter(value => isRecord(value) && value.type === 'web_search_call').length === 1));
+                }
                 break;
             case 'function_call':
                 appendFunctionCall(content, item, path, warnings);

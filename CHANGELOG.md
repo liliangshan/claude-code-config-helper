@@ -2,6 +2,37 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.83] - 2026-11-01
+
+### Fixed
+
+- Responses-backed CLI `WebSearch` subrequests now map Anthropic's typed server search schema to native Responses `web_search`, not an unimplemented function. The adapter requests structured sources, maps an explicit search tool choice, preserves allowed domains and approximate location, and leaves normal function tools unchanged.
+- Streamed and JSON search output now return paired CLI-compatible `server_tool_use` / `web_search_tool_result` blocks with real upstream URLs and available citation titles. Repeated terminal snapshots are deduplicated; multiple searches retain their own sources. Missing native results and interrupted search streams report errors rather than a successful-looking empty template. Search subrequests do not inject or continue task flows.
+- Compatible Chat Completions gateways now receive the native `web_search` tool declaration and `tool_choice: "required"` instead of being rejected unconditionally. Supported allowlists and approximate location are preserved; unsupported domain exclusions still fail explicitly. Chat and Responses both omit `max_tool_calls` to prevent HTTP 400 rejections from compatible gateways; no equivalent provider-side cap for Anthropic `max_uses` is claimed. Search subrequests stay isolated from task-flow injection and continuation.
+- Chat search replies prefer structured URL citations/source metadata. Text-only provider replies retain their original Markdown links and an explicit warning that search execution is not independently verified; they do not fabricate server-call evidence, source records or encrypted snippets. Empty/unfinished replies, inline failures and client-side function substitutions report errors.
+
+### Validation
+
+- Native-search unit/integration acceptance passed 32/32, including real CLI 2.1.312 round trips through loopback Responses, Chat structured-source and Chat text-only fixtures. Both protocol fixtures reject `max_tool_calls` with HTTP 400 and verify successful search without that parameter. Structured cases assert `searchCount=1`; text-only cases retain `searchCount=0` and the provenance warning while preserving answer links. This implementation check made no paid provider calls.
+- Latest full regression: 687 tests, 672 passed, 14 skipped, and the existing `requestUsageBinding` failure (`true !== false`). An earlier run also hit the previously observed intermittent `leftUsage` association assertion; its isolated rerun and subsequent full reruns passed. VS Code diagnostics, TypeScript compilation/type checking, 288 JavaScript syntax checks and package/lockfile/document version consistency passed. Release validation uses local fixtures and does not establish support on every provider.
+- Linux working-directory resolution, symlink authorization and CLI permission policies are unchanged. This release does not bypass the CLI's "Path is outside allowed working directories" checks.
+
+## [3.2.82] - 2026-11-01
+
+### Fixed
+
+- Excluded repository-only promotional copy under `docs/宣传文案/` from the VSIX. This avoids duplicate archive keys when upload services decode distinct Chinese filenames as identical question-mark paths; the source documents remain in the repository.
+- Dedicated compaction failures now return HTTP 400 with an Anthropic `invalid_request_error`, code `dedicated_compaction_failed` and `x-should-retry: false`. HTTP failures, network disconnects, first-byte/stream-idle timeouts, inline errors, empty summaries and streams without a complete summary terminate without switching to the normal model or automatically resending `/compact`.
+- Buffered dedicated compaction responses prevent a successful SSE prefix from reaching the CLI before a later error or truncation. Valid JSON and streamed summaries continue to pass through all three protocol adapters: Anthropic Messages, OpenAI Chat Completions and OpenAI Responses.
+- A session-scoped failure latch prevents internal CLI compaction fallback attempts from opening additional upstream requests after the first failure, even when the CLI ignores the no-retry header or changes its summary request. New explicit submissions or manual `/compact` clear the corresponding latch. Independent conversations own separate guards; ordinary chat retry behavior is unchanged.
+- Main-chat and independent-editor failure outcomes stop automatic recovery and task-flow continuation, release compaction waits and preserve original upstream status/code evidence. Late outcomes cannot disable recovery in a newer turn. Invalid, missing or disabled dedicated models/providers and unsupported protocols use the same terminal-error cleanup rather than falling back or leaving recovery armed.
+
+### Known Issues and Validation Scope
+
+- The pre-existing `requestUsageBinding` regression (`true !== false`) and the separate reused-response-ID usage-association limitation remain unresolved.
+- Dedicated compaction, route, recovery, explicit-send and independent-runtime checks passed 59 tests; one opt-in real editor-authentication test was skipped. Real CLI 2.1.312 against isolated synthetic local upstreams passed all 10 acceptance cases without setting `CLAUDE_CODE_MAX_RETRIES=0`; each of six failure scenarios made exactly one upstream summary request. No paid provider API was called.
+- The latest full regression ran 655 tests: 643 passed, 11 skipped, and the previously documented `requestUsageBinding` assertion failed (`true !== false`). VS Code diagnostics, TypeScript compilation and compiled JavaScript syntax checks passed. Provider-specific behavior and installed-window interactions still require manual acceptance.
+
 ## [3.2.81] - 2026-10-30
 
 ### Added

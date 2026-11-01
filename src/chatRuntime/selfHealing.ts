@@ -17,6 +17,8 @@ export interface RecoveryRuntimeActions {
 let actions: RecoveryRuntimeActions | undefined;
 let expectation: ReturnType<typeof setTimeout> | undefined;
 const requestIdentities = new Map<string, RecoveryIdentity>();
+/** Summary requests are tied to the turn that initiated them, but never counted as ordinary recoverable requests. */
+const compactionIdentities = new Map<string, RecoveryIdentity>();
 /** 每次提交绑定到具体适配器，事件到达时立即捕获身份。 */
 const adapterIdentities = new WeakMap<object, RecoveryIdentity>();
 
@@ -70,10 +72,10 @@ export async function postRecoveryState(): Promise<void> {
 /** 装配动作，不在模块导入时启动进程或模型请求。 */
 export function configureRecoveryRuntime(value: RecoveryRuntimeActions): void { actions = value; }
 
-/** 提交入口统一登记，内部恢复不得重新登记回合。 */
+/** 登记新提交并清理普通请求和压缩请求身份，内部恢复不得重新登记回合。 */
 export function beginRecoveryTurn(input: Pick<RecoveryContext, 'sessionId' | 'cliInstanceId' | 'route' | 'originalPrompt' | 'deliveryState'>): RecoveryIdentity {
     clearHttpExpectation('new_turn');
-    requestIdentities.clear();
+    requestIdentities.clear(); compactionIdentities.clear();
     const identity = requestRecoveryController.beginTurn({ ...input, turnId: randomUUID() });
     return identity;
 }
@@ -87,10 +89,10 @@ export function clearHttpExpectation(_reason: string): void {
     expectation = undefined;
 }
 
-/** 取消计时和所有迟到恢复，保留聊天历史。 */
+/** 取消计时及所有普通/压缩请求的迟到恢复，保留聊天历史。 */
 export function cancelPendingResend(reason: string): void {
     clearHttpExpectation(reason);
-    requestIdentities.clear();
+    requestIdentities.clear(); compactionIdentities.clear();
     requestRecoveryController.cancelRecovery(reason);
 }
 
@@ -120,19 +122,38 @@ export async function onHttpExpectationTimeout(identity?: RecoveryIdentity): Pro
     requestRecoveryController.onExpectedRequestTimeout(identity);
 }
 
-/** 只有同一会话的请求才解除等待；未知身份拒绝猜配。 */
+/** 同一会话请求解除等待；压缩请求只阻塞恢复，不登记为可重试的普通请求。 */
 export function observeRecoveryRequestStart(info: RelayUpstreamRequestInfo): void {
     const c = requestRecoveryController.getSnapshot();
     const usage = info.usageContext;
-    if (!c || !usage?.sessionId || c.sessionId !== usage.sessionId || usage.compactCommandTriggered) return;
+    if (!c || !usage?.sessionId || c.sessionId !== usage.sessionId) return;
+    if (usage.compactCommandTriggered) {
+        compactionIdentities.set(usage.requestId, c);
+        clearHttpExpectation('compaction_started');
+        requestRecoveryController.setBlocked(c, `compaction:${usage.requestId}`, true);
+        return;
+    }
     clearHttpExpectation('matched_relay_request');
     requestIdentities.set(usage.requestId, c);
     requestRecoveryController.onRelayRequestStarted(c, usage.requestId);
 }
 
-/** 按请求入口保存的身份上报结果，而非结束时活动会话。 */
+/** 按入口身份上报结果；专用压缩失败终止自动恢复，迟到结果不作用于新回合。 */
 export function observeRecoveryRequestOutcome(result: RelayRequestOutcome): void {
-    const requestId = result.context?.requestId;
+    const usage = result.context;
+    const compactIdentity = usage && compactionIdentities.get(usage.requestId);
+    if (usage?.compactCommandTriggered) {
+        compactionIdentities.delete(usage.requestId);
+        if (compactIdentity) {
+            if (result.retryable === false) {
+                clearHttpExpectation('compaction_failed');
+                requestRecoveryController.stopAutomaticRetry(compactIdentity, { stage: 'compaction', code: 'dedicated_compaction_failed', status: result.upstreamStatus });
+            }
+            requestRecoveryController.setBlocked(compactIdentity, `compaction:${usage.requestId}`, false);
+        }
+        return;
+    }
+    const requestId = usage?.requestId;
     const identity = requestId && requestIdentities.get(requestId);
     if (!requestId || !identity) return;
     requestIdentities.delete(requestId);

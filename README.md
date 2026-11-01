@@ -1,6 +1,6 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.81
+**Version:** 3.2.83
 
 **Website: [www.zhineng.dev](https://www.zhineng.dev/)**
 
@@ -37,6 +37,25 @@ When the Responses stream converter detects malformed tool arguments, it automat
 Files share the existing 20-snapshot error retention limit across date directories. Detection compares the upstream final arguments with the actual emitted argument fragments, including `__unparsedToolInput` wrappers and late fragments. The recorder also retains up to eight recent tool responses in memory (64 MiB total) to correlate a subsequent CLI `InputValidationError` by call ID. If the original response has expired or the extension was reloaded, the fallback file explicitly marks `originalResponseUnavailable`; it never substitutes an unrelated response.
 
 Request bodies, URLs and authentication headers are not included in these diagnostics, but **raw model responses and tool arguments can contain sensitive content**; review them before sharing. Token limits remain unchanged, and arguments are never repaired by guessing missing JSON characters.
+
+## What's New in 3.2.83
+
+- **Native WebSearch compatibility.** The CLI's dedicated search requests now use native `web_search` with compatible Responses models and Chat Completions gateways, instead of an unimplemented function declaration. Streamed/JSON replies preserve real source URLs and available citation titles in CLI-compatible search blocks; ordinary function tools keep their existing behavior.
+- **Chat answers retain their evidence level.** Structured search metadata becomes source results. Gateways returning only answer text and Markdown links keep that content with a clear notice that live search execution is not independently verified; the adapter does not invent source records, encrypted snippets or observed search counts.
+- **No unsupported call-budget parameter.** Neither Chat nor Responses sends `max_tool_calls`, avoiding HTTP 400 failures on gateways that reject it. Streaming, supported domain allowlists and approximate location remain; blocked-domain exclusions report an explicit compatibility error rather than being silently ignored.
+- **Isolated search execution.** Search subrequests no longer inject task-flow context or trigger automatic task-flow continuation. Duplicate snapshots are deduplicated, while empty, failed and unfinished searches report errors instead of returning a successful-looking empty template.
+- **Verification.** Search acceptance passed 32/32 against local fixtures, including real CLI 2.1.312 round trips for Responses, Chat structured sources and Chat text-only answers. No paid API requests were made for these implementation checks.
+
+**Known issues and scope:** the existing `requestUsageBinding` failure (`true !== false`) and reused-response-ID usage-association limitation remain unresolved; intermittent `leftUsage` assertions are also documented in the changelog. Linux working-directory permissions, symlink authorization and CLI permission policies are unchanged in this release. Provider-specific support still requires manual acceptance. See [Native Web Search](#native-web-search) and [CHANGELOG.md](./CHANGELOG.md).
+
+## What's New in 3.2.82
+
+- **Dedicated compaction failures return an error.** Failed summary-model requests are converted to an Anthropic `invalid_request_error` with HTTP 400, code `dedicated_compaction_failed` and `x-should-retry: false`. HTTP errors, network failures, timeouts, interrupted streams, inline errors and empty/incomplete summaries do not fall back to the normal model or start automatic chat recovery.
+- **No repeated upstream summary charges.** The CLI's compaction flow can attempt another summary even after HTTP 400. A session-scoped failure latch answers those follow-up attempts locally without calling the provider again. A new explicit submission or manual `/compact` clears the corresponding latch; other conversations and ordinary chat retain their existing behavior.
+- **Consistent failure cleanup.** Main and independent conversations stop automatic recovery/task-flow continuation and release compaction waits. Invalid, missing or disabled dedicated models/providers also report terminal errors. Successful summaries still pass through; failed streaming summaries are buffered instead of publishing a misleading successful prefix.
+- **Local verification.** Real CLI 2.1.312 with synthetic local upstreams passed 10 acceptance cases without disabling CLI API retries; all six failure scenarios made exactly one upstream summary request. These checks do not call paid APIs or replace acceptance with your provider.
+
+**Known issues:** the pre-existing `requestUsageBinding` assertion (`true !== false`) and reused-response-ID usage-association limitation remain unresolved. See [CHANGELOG.md](./CHANGELOG.md) for release checks.
 
 ## What's New in 3.2.81
 
@@ -349,6 +368,22 @@ The model picker exposes three conversational roles, accessible from the Normal 
 | Compaction | `claudeCodeConfigHelper.chat.compactionMode.*` | The `/compact` summary request. |
 
 This replaces the older on-demand expert / plan / review routing. The `chat.expertMode`, `chat.planMode`, `chat.reviewMode` and `chat.expert*` keys are no longer registered; if they linger in your `settings.json` they simply show up as unknown settings and can be deleted.
+
+### Dedicated Compaction Failure Policy
+
+When a dedicated compaction model is selected, a failed summary request returns HTTP 400 with `invalid_request_error`, code `dedicated_compaction_failed` and `x-should-retry: false`. The extension preserves the original upstream status for diagnostics, releases the compaction wait and stops automatic recovery/task-flow continuation; it does not switch to the normal model or automatically resend `/compact`.
+
+HTTP 400 alone does not prevent every internal CLI compaction attempt. After a failure, the relay therefore rejects subsequent summary attempts in the same session locally, without another provider request. Submit a new message or run `/compact` manually to allow a fresh attempt. Main and independent conversations keep separate ownership. Successful dedicated summaries and ordinary chat remain unchanged; without a dedicated model, the existing CLI compaction behavior is retained.
+
+## Native Web Search
+
+The CLI's built-in `WebSearch` uses a separate model request with a server-side search tool. For **Responses** models and compatible **Chat Completions** gateways that support native `web_search`, the extension sends the actual native tool declaration rather than an unimplemented function. Streaming stays enabled when requested, and ordinary function tools remain unchanged. This does not make every OpenAI-compatible model or provider search-capable.
+
+Responses requests include `web_search_call.action.sources`; Chat requests use `tools: [{"type":"web_search"}]` and `tool_choice: "required"` for the CLI's explicitly selected search tool, not `web_search_options`. Neither protocol sends `max_tool_calls`: compatible gateways may reject it, and the adapter does not claim an equivalent provider-side cap for Anthropic `max_uses`. Allowed domains and approximate location are preserved. `blocked_domains` remains unsupported and returns an explicit error instead of silently dropping the restriction. Search subrequests do not inject or continue task flows.
+
+Structured source URLs and citation titles are returned as CLI-compatible server-tool results. Some Chat gateways return only answer text containing Markdown links: that text is retained with an explicit warning that the provider returned no structured search records and live search execution is not independently verified. Those links are not parsed into verified source blocks or counted as observed server searches. Empty, failed and unfinished replies report errors instead of a successful-looking empty template.
+
+Search depends on provider/model capabilities and can incur provider charges. Source titles fall back to their URLs when absent; no Anthropic encrypted snippets or source URLs are fabricated. Local fixture tests cover conversion, stream completion, failures and real CLI 2.1.312 round trips for Responses, Chat structured sources and Chat text-only replies without paid API calls.
 
 ## Built-in Image Generation
 

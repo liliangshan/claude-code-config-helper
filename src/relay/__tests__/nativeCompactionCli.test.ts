@@ -33,9 +33,12 @@ async function close(server: http.Server): Promise<void> {
     await new Promise<void>(resolve => server.close(() => resolve()));
 }
 
-/** Exercise real stream-json tool turns, the production Relay, model routing and snapshot storage. */
+/** Exercise real stream-json tool turns and a single non-retryable compaction failure without disabling CLI API retries. */
 async function exercise(window: number, failure?: number | 'disconnect' | 'timeout' | 'stream-interrupt', enabled = true): Promise<void> {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ccai-native-relay-'));
+    const timeouts = require('../upstreamTimeouts');
+    const originalFirstByteTimeout = timeouts.UPSTREAM_FIRST_BYTE_TIMEOUT_MS;
+    if (failure === 'timeout') timeouts.UPSTREAM_FIRST_BYTE_TIMEOUT_MS = 200;
     const configDir = path.join(root, 'config');
     await fs.mkdir(configDir);
     await fs.writeFile(path.join(root, 'probe.txt'), 'isolated probe');
@@ -94,8 +97,8 @@ async function exercise(window: number, failure?: number | 'disconnect' | 'timeo
     });
     const port = await listen(upstream);
     const provider = { id: 'p', name: 'synthetic', baseUrl: `http://127.0.0.1:${port}`, apiType: 'anthropic', apiKey: 'synthetic', authMode: 'api_key', customHeaders: [], enabled: true, models: [{ modelId: 'main', contextLength: window }, { modelId: 'summary', contextLength: 128000 }] };
-    const manager = { getCurrentModel: () => ({ providerId: 'p', modelId: 'main' }), getProviderModel: (_provider: string, id: string) => provider.models.find(model => model.modelId === id), getProviderWithSecret: async () => provider };
-    stub.values.claudeCodeConfigHelper = { 'chat.cliPath': CLI, 'chat.cliCwd': root, 'chat.autoCompact.enabled': enabled, 'chat.cliEnv': { CLAUDE_CONFIG_DIR: configDir, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', CLAUDE_CODE_MAX_RETRIES: '0', API_TIMEOUT_MS: '500' }, 'chat.compactionMode.project.enabled': true, 'chat.compactionMode.project.model': 'p/summary' };
+    const manager = { getCurrentModel: () => ({ providerId: 'p', modelId: 'main' }), getProviderModel: (_provider: string, id: string) => provider.models.find(model => model.modelId === id), isModelEnabled: (model: unknown) => !!model, getProviderWithSecret: async () => provider };
+    stub.values.claudeCodeConfigHelper = { 'chat.cliPath': CLI, 'chat.cliCwd': root, 'chat.autoCompact.enabled': enabled, 'chat.cliEnv': { CLAUDE_CONFIG_DIR: configDir, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' }, 'chat.compactionMode.project.enabled': true, 'chat.compactionMode.project.model': 'p/summary' };
     stub.inspect = { claudeCodeConfigHelper: { 'chat.compactionMode.project.enabled': { workspaceValue: true }, 'chat.compactionMode.project.model': { workspaceValue: 'p/summary' } } };
     const router = createRelayRouter({ configManager: manager as never, adapters: [new AnthropicProxyAdapter()] });
     const relay = http.createServer((req, res) => { void Promise.resolve(router(req, res)).catch(error => { res.statusCode = 500; res.end(String(error)); }); });
@@ -127,7 +130,7 @@ async function exercise(window: number, failure?: number | 'disconnect' | 'timeo
             assert.equal(summaryRequests, 0);
             assert.equal(events.some(event => event.status === 'compacting'), false);
         } else if (failure) {
-            assert.ok(summaryRequests > 0 && summaryRequests <= 4, 'native retries must be bounded');
+            assert.equal(summaryRequests, 1, 'dedicated compaction failures must not trigger native API retries');
             assert.equal(events.some(event => event.compact_result === 'success'), false);
             assert.ok(events.some(event => event.compact_result === 'failed'));
         } else {
@@ -141,6 +144,7 @@ async function exercise(window: number, failure?: number | 'disconnect' | 'timeo
             assert.ok(snapshots.length, 'production Relay must preserve dated raw compact snapshots');
         }
     } finally {
+        timeouts.UPSTREAM_FIRST_BYTE_TIMEOUT_MS = originalFirstByteTimeout;
         clearTimeout(timer); child.kill('SIGKILL');
         await close(relay); await close(upstream);
     }
@@ -150,6 +154,6 @@ for (const window of [200000, 500000, 1000000]) {
     test(`real CLI ${window}: native compact before result, routed summary, continued task`, { skip: !CLI, timeout: 90000 }, () => exercise(window));
 }
 for (const failure of [402, 429, 400, 'disconnect', 'timeout', 'stream-interrupt'] as const) {
-    test(`real CLI summary ${failure}: failure is not success, bounded retries`, { skip: !CLI, timeout: 90000 }, () => exercise(200000, failure));
+    test(`real CLI summary ${failure}: failure is not success and is never retried`, { skip: !CLI, timeout: 90000 }, () => exercise(200000, failure));
 }
 test('real CLI disabled: no automatic compaction during tool loop', { skip: !CLI, timeout: 90000 }, () => exercise(200000, undefined, false));

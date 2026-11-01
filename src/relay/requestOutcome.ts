@@ -10,6 +10,8 @@ export interface RelayRequestOutcome {
     mappedStatus?: number;
     code?: string;
     retryAfter?: string;
+    /** Dedicated summary failures must not trigger ordinary chat recovery, even when upstream returned 429/5xx. */
+    retryable?: false;
 }
 
 /** 请求内共享证据；适配器结束后只发布一次。 */
@@ -17,6 +19,7 @@ export class RequestOutcomeReporter {
     private value: RelayRequestOutcome;
     private reported = false;
     private buffer = '';
+    private streamTerminal = false;
     /** 冻结请求身份，不接触用户正文。 */
     public constructor(context?: RequestUsageContext, private readonly sink?: (result: RelayRequestOutcome) => void) {
         this.value = { context, status: 'unknown' };
@@ -35,10 +38,11 @@ export class RequestOutcomeReporter {
         if (code && !this.value.code) this.value.code = code;
         this.value.status = aborted && this.value.status !== 'error' ? 'aborted' : 'error';
     }
-    /** 提取真实错误对象，error:null 不算错误。 */
+    /** 提取真实错误对象并识别原生流终态，error:null 不算错误。 */
     public json(payload: unknown): void {
         if (this.reported || !payload || typeof payload !== 'object') return;
         const p = payload as Record<string, unknown>;
+        if (p.type === 'message_stop' || p.type === 'response.completed' || p.type === 'response.incomplete') this.streamTerminal = true;
         const response = p.response && typeof p.response === 'object' ? p.response as Record<string, unknown> : p;
         const error = response.error;
         if ((error !== undefined && error !== null) || p.type === 'error' || response.status === 'failed') {
@@ -46,7 +50,7 @@ export class RequestOutcomeReporter {
             this.fail('upstream_inline_error', typeof e.code === 'string' ? e.code : typeof e.type === 'string' ? e.type : undefined);
         }
     }
-    /** 分片 SSE 只解析完整事件；避免无限缓存异常行。 */
+    /** 分片 SSE 只解析完整事件并保留 [DONE] 终态；避免无限缓存异常行。 */
     public feed(chunk: string): void {
         if (this.reported) return;
         this.buffer += chunk;
@@ -55,10 +59,17 @@ export class RequestOutcomeReporter {
             const event = this.buffer.slice(0, marker.index);
             this.buffer = this.buffer.slice(marker.index + marker[0].length);
             const data = event.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trim()).join('\n');
-            try { this.json(JSON.parse(data)); } catch { /* 非 JSON 心跳不构成故障。 */ }
+            if (data === '[DONE]') this.streamTerminal = true;
+            else try { this.json(JSON.parse(data)); } catch { /* 非 JSON 心跳不构成故障。 */ }
         }
         if (this.buffer.length > 1024 * 1024) this.buffer = '';
     }
+    /** Whether the raw upstream protocol provided its own terminal event, not one synthesized by a converter. */
+    public hasStreamTerminal(): boolean { return this.streamTerminal; }
+    /** Mark this request's terminal failure non-retryable without losing its original upstream status/code. */
+    public disableRetry(): void { if (!this.reported) this.value.retryable = false; }
+    /** Publish a bounded snapshot for response policy decisions without ending or exposing request content. */
+    public snapshot(): Readonly<RelayRequestOutcome> { return { ...this.value }; }
     /** 发布一次终态；设置标记后才调用外部 sink。 */
     public end(mappedStatus?: number): void {
         if (this.reported) return;

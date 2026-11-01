@@ -192,3 +192,35 @@ test('actual CLI authenticates through editor runtime without OAuth login', { sk
         assert.ok(requests > 0); assert.ok(value.messages.some(m => m.segments.some(s => s.text?.includes('EDITOR_AUTH_OK'))), JSON.stringify(value.messages));
     } finally { await runtime.close(); upstream.closeAllConnections(); await new Promise<void>(resolve => upstream.close(() => resolve())); await fs.rm(cwd, { recursive: true, force: true }); }
 });
+
+/** Exercise the installed runtime callbacks without starting a model request or another CLI process. */
+test('editor compaction failure pauses only its owning turn and stale outcomes cannot fail a newer turn', { timeout: 10000 }, async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'editor-compact-failure-'));
+    const value: EditorConversation = { version: 1, conversationId: randomUUID(), cwd, title: 'Test', revision: 0, createdAt: Date.now(), updatedAt: Date.now(), messages: [], lastRunState: 'idle',
+        settings: { normalModel: 'p/main', taskFlowModel: '', compactionModel: 'p/summary', reasoningEffort: 'auto', permissionMode: 'acceptEdits', subagentsEnabled: false, autoCompactEnabled: false, codePreviewEnabled: false, cacheTtl: 'default' } };
+    const store = new EditorConversationStore(cwd, value.conversationId); await store.acquire();
+    const received: any[] = [], manager = { getResolvedUiLanguage: () => 'en' } as any;
+    const panel = { webview: { postMessage: async (message: unknown) => { received.push(message); return true; } } } as any;
+    const runtime = new EditorChatRuntime(value, store, panel, manager, async () => {}, async () => {});
+    const owned = runtime as any;
+    const { createRequestUsageContext } = await import('../../relay/requestUsage');
+    const input = { turnId: 'first', sessionId: 's', cliInstanceId: 'cli', route: 'normal', originalPrompt: 'test', deliveryState: 'accepted' as const };
+    try {
+        owned.recoveryIdentity = owned.recovery.beginTurn(input);
+        const usage = createRequestUsageContext({ metadata: { session_id: 's' } }, 'normal', 'p', 'summary', true);
+        owned.relay.onRequest(usage.requestId);
+        owned.relay.onOutcome({ context: usage, status: 'error', retryable: false, mappedStatus: 400, upstreamStatus: 503 });
+        assert.equal(owned.recovery.getSnapshot().state, 'non_retryable');
+        assert.equal(owned.turnFailed, true); assert.equal(owned.flowPaused, true);
+        assert.equal(received.filter(event => event.message.type === 'compaction/failed').length, 1);
+        owned.recoveryIdentity = owned.recovery.beginTurn({ ...input, turnId: 'second' });
+        const stale = createRequestUsageContext({ metadata: { session_id: 's' } }, 'normal', 'p', 'summary', true);
+        owned.relay.onRequest(stale.requestId);
+        owned.recoveryIdentity = owned.recovery.beginTurn({ ...input, turnId: 'third' });
+        owned.turnFailed = false; owned.flowPaused = false;
+        owned.relay.onOutcome({ context: stale, status: 'error', retryable: false, mappedStatus: 400 });
+        assert.equal(owned.recovery.getSnapshot().state, 'awaiting_request');
+        assert.equal(owned.turnFailed, false); assert.equal(owned.flowPaused, false);
+        assert.equal(received.filter(event => event.message.type === 'compaction/failed').length, 1);
+    } finally { await runtime.close(); await fs.rm(cwd, { recursive: true, force: true }); }
+});

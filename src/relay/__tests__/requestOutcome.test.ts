@@ -53,3 +53,21 @@ test('timeout and cancellation are distinct', () => {
     const a = new RequestOutcomeReporter(undefined, value => { result = value; });
     a.fail(undefined, 'client_aborted', true); a.end(200); assert.equal(result?.status, 'aborted');
 });
+
+/** Native protocol terminals, not HTTP 200 or summary deltas, distinguish success from truncated streams. */
+test('stream completion and non-retryable policy preserve original failure evidence', () => {
+    for (const event of ['data: {"type":"message_stop"}\n\n', 'data: [DONE]\n\n', 'data: {"type":"response.completed"}\n\n']) {
+        const reporter = new RequestOutcomeReporter();
+        reporter.feed('data: {"type":"content_block_delta"}\n\n');
+        assert.equal(reporter.hasStreamTerminal(), false);
+        for (const char of event) reporter.feed(char);
+        assert.equal(reporter.hasStreamTerminal(), true);
+    }
+    let result: RelayRequestOutcome | undefined;
+    const reporter = new RequestOutcomeReporter(undefined, value => { result = value; });
+    reporter.headers(429, '300'); reporter.json({ error: { code: 'quota_exceeded' } }); reporter.disableRetry();
+    const snapshot = reporter.snapshot();
+    assert.equal(snapshot.retryable, false); assert.equal(snapshot.upstreamStatus, 429); assert.equal(snapshot.code, 'quota_exceeded');
+    reporter.end(400);
+    assert.equal(result?.retryable, false); assert.equal(result?.retryAfter, '300'); assert.equal(result?.mappedStatus, 400);
+});
