@@ -90,6 +90,7 @@ export class ImageTaskManager extends EventEmitter {
     }
     /**
      * Execute once, preserving saved images and bounded response diagnostics for terminal failures.
+     * Emit completion only after a terminal checkpoint succeeds, never during history reads.
      * @param work Frozen task, provider settings and transient input images.
      * @param controller Cancellation controller shared with timeout and explicit local stop.
      * @returns Completion after durable state is written and owning views are notified.
@@ -125,9 +126,13 @@ export class ImageTaskManager extends EventEmitter {
             task.responsePreview = error instanceof ImageError ? parseImageResponsePreview(error.responsePreview) : undefined;
         } finally {
             clearTimeout(timer); task.finishedAt = Date.now();
-            try { await this.store.save(task); this.unsaved.delete(task.taskId); }
-            catch (error) { this.storageFailure(task, error, 'terminal'); }
+            let completed: ImageTask | undefined;
+            try {
+                await this.store.save(task); this.unsaved.delete(task.taskId);
+                completed = JSON.parse(JSON.stringify(task)) as ImageTask;
+            } catch (error) { this.storageFailure(task, error, 'terminal'); }
             this.emit('change', task.scopeId);
+            if (completed) this.emit('completed', completed);
         }
     }
     /** Test or shutdown helper waits for both accepted and active operations. */

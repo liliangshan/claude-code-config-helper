@@ -2,6 +2,28 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.87] - 2026-11-02
+
+### Added
+
+- Newly completed image-generation and editing tasks automatically open saved images in the VS Code editor with `preview: false` and `preserveFocus: true`. Multiple saved outputs retain separate tabs; successful images from partially failed tasks are also opened. Opening is independent of chat readiness and does not require a model continuation or task polling.
+- A completion event is emitted only after the task's terminal checkpoint is persisted. Editor actions validate task ownership, saved image metadata and file signatures, deduplicate per workspace/scope/task/image, and recheck trust and the existing `editor.autoOpenReadWriteFiles` master setting before opening. The code-preview switch does not suppress generated-image display.
+
+### Fixed
+
+- Manual and automatic image opening share remote-resource resolution. Remote workspace authority and URI-relative paths, including spaces and non-ASCII names, are retained instead of being treated as local file addresses.
+
+### Compatibility and Scope
+
+- Queries, history restoration, extension reinitialization and repeated completion events do not reopen old images. Failed tasks without saved output open nothing. Editor failures only produce safe warnings; they do not change successful task results or retry paid requests.
+- Manual opening remains available when auto-open is disabled. No inline chat image conversion, dynamic Webview resource access, public file server, model configuration change or extension installation is introduced by this feature.
+- Reload VS Code or restart the development host when ready. Real VS Code window focus and remote-host image presentation still require manual acceptance. Existing `requestUsageBinding` and reused-response-ID association issues remain outside this change.
+
+### Validation
+
+- VS Code diagnostics, TypeScript type checking/compilation, 307 JavaScript syntax checks and release-version consistency passed. Image-module acceptance passed 57/57, covering generated/edited output, multiple and partially failed outputs, deduplication, settings, remote URI construction, file validation, disabled trust and editor failures.
+- Full regression: 742 tests, 724 passed, 17 skipped, and the existing `requestUsageBinding` assertion failed (`true !== false`). Validation uses temporary files and mocked image/editor APIs; no paid provider requests were made.
+
 ## [3.2.86] - 2026-11-02
 
 ### Added

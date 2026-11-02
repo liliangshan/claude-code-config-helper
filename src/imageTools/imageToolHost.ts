@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { ConfigManager } from '../configManager';
 import { Logger } from '../logger';
+import { CONFIG_NAMESPACE } from '../constants';
 import type { McpToolResult } from '../mcpKit/types';
 import { ImageConfigStore } from './configStore';
 import { ImageTaskManager } from './taskManager';
@@ -41,6 +42,7 @@ export class ImageToolHost {
     private readonly delivering = new WeakMap<ImageViewBinding, Set<string>>();
     private readonly retryTimers = new Map<ImageViewBinding, NodeJS.Timeout>();
     private readonly calls = new Map<string, { fingerprint: string; result: Promise<McpToolResult> }>();
+    private readonly openedImages = new Set<string>();
     private readonly providerSubscription: vscode.Disposable;
     private stopped = false;
     private updateTimer?: NodeJS.Timeout;
@@ -98,7 +100,7 @@ export class ImageToolHost {
         await fs.access(root, writable ? fs.constants.W_OK : fs.constants.R_OK); return root;
     }
     /**
-     * Reuse this host's workspace scheduler and report only safe task-local storage diagnostic fields.
+     * Reuse this host's workspace scheduler, auto-open newly completed images and report safe diagnostics.
      * @param cwd Conversation workspace resolved independently of the focused editor.
      * @returns A local scheduler that does not lock other hosts out of the workspace.
      */
@@ -107,11 +109,56 @@ export class ImageToolHost {
         if (!queue) {
             queue = new ImageTaskManager(new ImageTaskStore(root)); this.queues.set(root, queue);
             queue.on('change', (scopeId: string) => { void this.notifyTasks(root, scopeId); });
+            queue.on('completed', (task: ImageTask) => {
+                void this.autoOpenImages(root, task).catch(error => Logger.warn(`[image-task] auto-open task=${task.taskId} code=${imageErrorCode(error)}`));
+            });
             queue.on('storageFailure', (diagnostic: { taskId: string; stage: string; code: string; errno?: string }) => {
                 Logger.error(`[image-task] task=${diagnostic.taskId} stage=${diagnostic.stage} code=${diagnostic.code}${diagnostic.errno ? ` errno=${diagnostic.errno}` : ''}`);
             });
         }
         return queue;
+    }
+    /**
+     * Preserve the owning remote workspace authority and URI path when revealing a verified image file.
+     * @param file Canonical, validated local path on the extension host.
+     * @returns The corresponding local or remote VS Code resource URI.
+     */
+    private async imageUri(file: string): Promise<vscode.Uri> {
+        const folders = (vscode.workspace.workspaceFolders ?? []).filter(folder => folder.uri.scheme === 'vscode-remote');
+        for (const folder of [...folders].sort((a, b) => b.uri.fsPath.length - a.uri.fsPath.length)) {
+            const root = await fs.realpath(folder.uri.fsPath);
+            const relative = path.relative(root, file);
+            if (relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) {
+                return vscode.Uri.joinPath(folder.uri, ...relative.split(path.sep));
+            }
+        }
+        return vscode.Uri.file(file);
+    }
+    /**
+     * Open newly completed output images as pinned editor tabs without stealing chat focus.
+     * @param cwd The workspace bound to the local queue, not the currently focused conversation.
+     * @param task Newly persisted terminal task; history reads never invoke this method.
+     * @returns Completion of best-effort editor actions, independent of model-result delivery.
+     */
+    private async autoOpenImages(cwd: string, task: ImageTask): Promise<void> {
+        if (this.stopped || !['succeeded', 'partially_failed'].includes(task.status) || !task.images.length) return;
+        const root = await this.workspace(cwd, false);
+        const store = new ImageTaskStore(root);
+        for (const image of task.images) {
+            const key = `${root}:${task.scopeId}:${task.taskId}:${image.id}`;
+            if (this.stopped || this.openedImages.has(key)) continue;
+            // Reserve before awaiting file validation so duplicate completion events cannot open twice.
+            this.openedImages.add(key);
+            try {
+                const file = await store.imagePath(task.scopeId, task.taskId, image.id);
+                const uri = await this.imageUri(file);
+                if (this.stopped || !vscode.workspace.isTrusted
+                    || !vscode.workspace.getConfiguration(CONFIG_NAMESPACE, uri).get<boolean>('editor.autoOpenReadWriteFiles', true)) continue;
+                await vscode.commands.executeCommand('vscode.open', uri, { preview: false, preserveFocus: true });
+            } catch (error) {
+                Logger.warn(`[image-task] auto-open task=${task.taskId} image=${image.id} code=${imageErrorCode(error)}`);
+            }
+        }
     }
     /** Retry local receipt delivery only while the original scope remains current; this never polls or calls the provider. */
     private scheduleResultDelivery(view: ImageViewBinding, scope: ImageScope): void {
@@ -245,7 +292,12 @@ export class ImageToolHost {
         });
         return { taskId: task.taskId, status: task.status, createdAt: task.createdAt, completionNotification: 'automatic', pollingRequired: false };
     }
-    /** Handle image-only Webview requests without changing ordinary/flow models or restarting CLI. */
+    /**
+     * Handle configuration and explicit image actions with the same local/remote URI resolution as auto-open.
+     * @param request The bound view's image-only message.
+     * @param view The originating conversation binding used to validate task ownership.
+     * @returns Completion without changing chat model selection or restarting the CLI.
+     */
     public async receive(request: ImageWebviewRequest, view: ImageViewBinding): Promise<void> {
         if (!request || typeof request.requestId !== 'string' || request.requestId.length > 100 || this.stopped) return;
         try {
@@ -267,9 +319,8 @@ export class ImageToolHost {
             if (request.type === 'imageGeneration/imageOpen') {
                 if (request.scopeId !== undefined && request.scopeId !== scope.id) throw new ImageError('IMAGE_TASK_NOT_FOUND');
                 const file = await store.imagePath(scope.id, request.taskId, request.imageId);
-                const folder = vscode.workspace.workspaceFolders?.find(item => item.uri.scheme === 'vscode-remote'
-                    && (scope.cwd === item.uri.fsPath || scope.cwd.startsWith(item.uri.fsPath + path.sep)));
-                const uri = folder ? folder.uri.with({ path: file.replace(/\\/g, '/') }) : vscode.Uri.file(file);
+                const uri = await this.imageUri(file);
+                if (this.stopped) return;
                 await vscode.commands.executeCommand('vscode.open', uri);
             }
         } catch (error) { view.post({ type: 'imageGeneration/saveResult', requestId: request.requestId, ok: false, error: imageErrorCode(error) }); }
