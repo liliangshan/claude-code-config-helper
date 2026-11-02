@@ -9,7 +9,8 @@ h1 { font-size: 27px; font-weight: 650; letter-spacing: -.5px; margin: 13px 0 10
 h2 { font-size: 19px; font-weight: 600; margin: 0 0 12px; }
 #environment { font-family: var(--vscode-editor-font-family); font-size: 12px; color: var(--vscode-descriptionForeground); margin: 0; }
 .steps { list-style: none; display: flex; padding: 0; margin: 30px 0; gap: 16px; }
-.steps li { display: flex; align-items: center; gap: 9px; flex: 1; color: var(--vscode-descriptionForeground); font-size: 12px; }
+.steps li { display: flex; align-items: center; gap: 9px; flex: 1; min-width: 0; color: var(--vscode-descriptionForeground); font-size: 12px; }
+.steps li > span:last-child { min-width: 0; overflow-wrap: anywhere; }
 .steps li:not(:last-child)::after { content: ''; height: 1px; flex: 1; background: var(--vscode-widget-border, var(--vscode-panel-border)); margin-left: 5px; }
 .step-number { display: inline-flex; justify-content: center; align-items: center; flex-shrink: 0; width: 27px; height: 27px; border-radius: 50%; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); font-size: 12px; }
 .steps .active { color: var(--vscode-foreground); font-weight: 600; }
@@ -40,6 +41,9 @@ summary { cursor: pointer; font-size: 12px; color: var(--vscode-descriptionForeg
 .model-field { margin: 22px 0 16px; }
 .mirror-note, .notice { font-size: 12px; color: var(--vscode-descriptionForeground); line-height: 1.7; margin: -8px 0 20px; }
 .notice { border-left: 2px solid var(--vscode-focusBorder); padding: 10px 14px; margin: 22px 0; white-space: pre-line; }
+.extension-enablement-notice { white-space: normal; overflow-wrap: anywhere; }
+.extension-enablement-notice strong { display: block; color: var(--vscode-foreground); font-weight: 600; }
+.extension-enablement-notice p { margin: 6px 0 0; }
 .install-progress { border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); background: var(--vscode-editor-background); border-radius: 7px; padding: 15px 17px; margin-top: 22px; }
 .progress-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 28px; }
 .progress-header strong { font-size: 12px; font-weight: 500; }

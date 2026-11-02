@@ -1,65 +1,30 @@
-/** @file Bounded Images JSON client and credential-free, DNS-pinned public image downloads. */
+/** @file Bounded Images JSON client and credential-free downloads using the host's normal DNS routing. */
 import * as http from 'node:http';
 import * as https from 'node:https';
-import * as dns from 'node:dns/promises';
-import { BlockList, isIP } from 'node:net';
 import { ImageError, type ImageGenerationExecutionSnapshot, type ImageSubmission } from './types';
 import { IMAGE_ERROR_CAPTURE_BYTES, imageResponsePreview } from './responsePreview';
 
 /** A successful bounded response retains its HTTP status for malformed-body diagnostics. */
 interface ImageHttpResponse { bytes: Buffer; status: number }
 
-const blocked = new BlockList();
-const blockedV6 = new BlockList();
-for (const [network, prefix] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 3]] as const) blocked.addSubnet(network, prefix, 'ipv4');
-for (const [network, prefix] of [['::', 96], ['::ffff:0:0', 96], ['64:ff9b::', 96], ['64:ff9b:1::', 48], ['100::', 64], ['2001::', 23], ['2001:db8::', 32], ['2002::', 16], ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8]] as const) blockedV6.addSubnet(network, prefix, 'ipv6');
-
-/** Permit only globally routable IPs; mapped IPv4 and transition ranges are denied conservatively. */
-export function isPublicImageAddress(address: string): boolean {
-    const family = isIP(address);
-    return family === 4 ? !blocked.check(address, 'ipv4') : family === 6 ? !blockedV6.check(address, 'ipv6') : false;
-}
 /**
  * Read one response with bounded error capture, no redirects and no automatic retries.
- * @param url Provider API or validated public download URL.
+ * @param url Provider API or HTTP(S) image download URL; no destination IP filtering is applied.
  * @param method Request method; POST is never replayed.
  * @param headers Host-resolved request headers, used only locally to redact echoed credentials.
  * @param body Optional JSON request body, never included in diagnostics.
  * @param limit Maximum successful response byte count.
  * @param signal Absolute request deadline or explicit cancellation signal.
- * @param publicOnly Whether public DNS/IP pinning is required for an unauthenticated image download.
+ * @param download Whether URL scheme and embedded-credential checks apply to a returned image URL.
  * @returns Successful response bytes with status, or an ImageError carrying a sanitized failure excerpt.
  */
 async function requestBytes(url: URL, method: 'GET' | 'POST', headers: Record<string, string>, body: string | undefined,
-    limit: number, signal: AbortSignal, publicOnly: boolean): Promise<ImageHttpResponse> {
+    limit: number, signal: AbortSignal, download: boolean): Promise<ImageHttpResponse> {
     signal.throwIfAborted();
-    const hostname = url.hostname.replace(/^\[|\]$/g, '');
-    let pinned: { address: string; family: number } | undefined;
-    if (publicOnly) {
-        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new ImageError('IMAGE_DOWNLOAD_BLOCKED');
-        const addresses = isIP(hostname) ? [{ address: hostname, family: isIP(hostname) }] : await new Promise<Array<{ address: string; family: number }>>((resolve, reject) => {
-            const aborted = () => reject(new ImageError('IMAGE_INTERRUPTED'));
-            signal.addEventListener('abort', aborted, { once: true });
-            dns.lookup(hostname, { all: true }).then(resolve, () => reject(new ImageError('IMAGE_UPSTREAM_FAILED'))).finally(() => signal.removeEventListener('abort', aborted));
-        });
-        if (!addresses.length || addresses.some(item => !isPublicImageAddress(item.address))) throw new ImageError('IMAGE_DOWNLOAD_BLOCKED');
-        pinned = addresses[0];
-    }
-    signal.throwIfAborted();
+    if (download && (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)) throw new ImageError('IMAGE_DOWNLOAD_BLOCKED');
     return new Promise((resolve, reject) => {
         const options: https.RequestOptions = { method, headers, signal, agent: false };
-        if (pinned) {
-            options.family = pinned.family;
-            Object.assign(options, { autoSelectFamily: false });
-            options.lookup = (_host, _options, callback) => callback(null, pinned!.address, pinned!.family);
-        }
         const req = (url.protocol === 'https:' ? https : http).request(url, options, res => {
-            if (publicOnly) {
-                const remote = res.socket.remoteAddress?.replace(/^::ffff:(?=\d+\.)/, '');
-                if (!remote || !isPublicImageAddress(remote) || remote !== pinned?.address) {
-                    res.destroy(); reject(new ImageError('IMAGE_DOWNLOAD_BLOCKED')); return;
-                }
-            }
             const status = res.statusCode ?? 0;
             const failed = status < 200 || status >= 300;
             const secrets = Object.entries(headers).filter(([name]) => !['content-type', 'accept', 'user-agent', 'content-length'].includes(name.toLowerCase()))

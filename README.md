@@ -1,6 +1,6 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.85
+**Version:** 3.2.86
 
 **Website: [www.zhineng.dev](https://www.zhineng.dev/)**
 
@@ -37,6 +37,15 @@ When the Responses stream converter detects malformed tool arguments, it automat
 Files share the existing 20-snapshot error retention limit across date directories. Detection compares the upstream final arguments with the actual emitted argument fragments, including `__unparsedToolInput` wrappers and late fragments. The recorder also retains up to eight recent tool responses in memory (64 MiB total) to correlate a subsequent CLI `InputValidationError` by call ID. If the original response has expired or the extension was reloaded, the fallback file explicitly marks `originalResponseUnavailable`; it never substitutes an unrelated response.
 
 Request bodies, URLs and authentication headers are not included in these diagnostics, but **raw model responses and tool arguments can contain sensitive content**; review them before sharing. Token limits remain unchanged, and arguments are never repaired by guessing missing JSON characters.
+
+## What's New in 3.2.86
+
+- **Seven-language enablement guidance.** Every setup step explains how to find **Claude Code Config Helper** in VS Code's Extensions view and choose **Enable (Workspace)** or use the gear menu to **Enable / Enable Globally** when the extension is missing in another workspace. The reminder follows the selected language, works in narrow sidebars and does not change extension enablement or intercept Next.
+- **Independent image task files.** Image task writers no longer use a workspace-wide `runtime.lock`. Each host updates only the UUID tasks it created; writes for one task remain ordered while other tasks and hosts can proceed independently. Legacy runtime locks are ignored, not removed. The separate global configuration lock remains.
+- **Windows checkpoint resilience.** Brief `EPERM`, `EACCES` and `EBUSY` rename failures receive bounded local retries without deleting or truncating the old JSON. A persistent write failure exposes its storage error and does not disable unrelated tasks; an unsaved terminal state stays visible in the owning host until it exits. This never replays a paid request.
+- **Image downloads without IP filtering.** Returned HTTP/HTTPS image URLs use normal host DNS/network routing without destination-IP filtering, DNS pinning or peer-IP matching, including private and Fake-IP addresses. URL credentials, unsupported protocols and redirects remain rejected; timeout, byte limits, image validation and credential-free downloads remain in place. The separate HTTP tool is unchanged.
+
+**Upgrade and safety notes:** use trusted image providers, since returned URLs can now access host-reachable local/internal services. This is not new HTTP/SOCKS proxy support. Normal shutdown updates only its own tasks; after a crash, unfinished records are not automatically taken over or rewritten, since another host may still own them. Windows sharing behavior and proxy compatibility still require real-machine acceptance. Reload only when ready: active CLI tasks may be interrupted. Known `requestUsageBinding` and reused-response-ID limitations remain documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## What's New in 3.2.85
 
@@ -447,7 +456,11 @@ Output is stored under the conversation's workspace:
 
 The model receives `workspacePath`, each image's relative `path`, `absolutePath` and complete `fileUri`. Completion guidance asks for that URI verbatim when returning an image or open-original link, rather than rewriting it as a relative path. The chat keeps a compact localized summary with a checked open-image action; it does not expose a public download URL, rewrite Markdown resource addresses or guarantee inline file previews.
 
-**Costs and data:** generation/editing are submitted without an extra extension billing/path-authorization popup after the global configuration and request checks pass; CLI-native permission settings still apply. Provider image requests and the completion chat-model turn may be charged. Editing reads only the explicitly supplied paths, including paths outside the workspace, and sends their bytes directly to the configured provider. Paths may appear in CLI history; internally encoded originals are neither returned through MCP nor stored in task metadata. Prompts and generated results remain in the workspace; no third-party image host is used. Timeouts and local stops cannot guarantee remote cancellation or refunds. No failed generation is automatically retried, and restart recovery marks unfinished tasks interrupted rather than replaying them.
+**Costs and data:** generation/editing are submitted without an extra extension billing/path-authorization popup after the global configuration and request checks pass; CLI-native permission settings still apply. Provider image requests and the completion chat-model turn may be charged. Editing reads only the explicitly supplied paths, including paths outside the workspace, and sends their bytes directly to the configured provider. Paths may appear in CLI history; internally encoded originals are neither returned through MCP nor stored in task metadata. Prompts and generated results remain in the workspace; no third-party image host is used. Timeouts and local stops cannot guarantee remote cancellation or refunds. No failed generation is automatically retried. Each host writes only its own UUID task files without a workspace-wide `runtime.lock`; old lock files are ignored, not removed. Another host's unfinished records are never automatically marked interrupted. Normal shutdown marks only this host's tasks interrupted; after a crash, old queued/running records remain for manual diagnosis rather than being taken over.
+
+**Image downloads:** returned HTTP/HTTPS image URLs use the extension host's normal DNS/network routing, without destination IP filtering, DNS pinning or peer-IP comparison. This permits loopback/private addresses and proxy Fake-IP ranges. It also allows a configured provider to direct requests to host-reachable local/internal services, so use trusted providers and networks; this path is no longer an internal-network/metadata-address security boundary. Downloads still reject URL credentials and non-HTTP protocols, send no provider credentials or cookies, refuse redirects, enforce timeout/byte limits and validate image signatures. This change does not add HTTP/SOCKS proxy support or relax the separate HTTP tool's policy.
+
+**Windows task storage:** closed temporary JSON files are atomically renamed over the prior checkpoint. Transient Windows `EPERM`/`EACCES`/`EBUSY` replacement failures receive bounded local retries; these never repeat an image API request or delete/truncate the old JSON. Persistent failures report `IMAGE_STORAGE_RENAME_<errno>`, remain visible in the running host's task view and do not disable unrelated tasks. Pending diagnostics that cannot be persisted survive only until that host exits. Global configuration still uses its separate revision/write lock because all windows edit the same configuration file.
 
 ## Built-in Chat and Claude CLI Transport
 
@@ -522,7 +535,7 @@ Command titles may be localized according to your configured UI language.
 
 ### Option 1: Install from a local VSIX
 
-Install the packaged `claude-code-config-helper-3.2.85.vsix` using VS Code's **Extensions → … → Install from VSIX…** action. Reload the window when ready to activate the installed build; reload interrupts currently running extension CLIs. To build a package yourself, install the repository dependencies, run `npm run compile`, then package with `@vscode/vsce`.
+Install the packaged `claude-code-config-helper-3.2.86.vsix` using VS Code's **Extensions → … → Install from VSIX…** action. Reload the window when ready to activate the installed build; reload interrupts currently running extension CLIs. To build a package yourself, install the repository dependencies, run `npm run compile`, then package with `@vscode/vsce`.
 
 ### CLI installation through setup
 

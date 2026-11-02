@@ -19,13 +19,14 @@ export class ImageTaskManager extends EventEmitter {
     private admission: Promise<unknown> = Promise.resolve();
     private initializing?: Promise<void>;
     private stopped = false;
+    private readonly unsaved = new Map<string, ImageTask>();
     private maxConcurrent = 1;
     private maxQueue = 100;
-    /** Bind one single-writer store and optionally a simulated transport. */
+    /** Bind one task-owning writer and optionally a simulated transport; no workspace lock is acquired. */
     public constructor(public readonly store: ImageTaskStore, private readonly client: ImageTaskClient = { generate: generateImages, load: loadGeneratedImage }) { super(); }
     /** Update shared scheduling limits without changing already accepted request snapshots. */
     public configure(maxConcurrent: number, maxQueue: number): void { this.maxConcurrent = maxConcurrent; this.maxQueue = maxQueue; this.pump(); }
-    /** Restore existing tasks without admitting or replaying any generation request. */
+    /** Prepare this host's task writer without recovering, modifying or replaying other hosts' tasks. */
     public async restore(): Promise<void> {
         if (this.stopped) throw new ImageError('IMAGE_INTERRUPTED');
         this.initializing ??= this.store.acquire().catch(error => { this.initializing = undefined; throw error; });
@@ -50,11 +51,40 @@ export class ImageTaskManager extends EventEmitter {
         });
         this.admission = operation.catch(() => {}); return operation;
     }
-    /** Fill slots without holding an MCP request open for generation. */
+    /**
+     * Retain a task-local storage failure in memory and notify diagnostics without stopping unrelated work.
+     * @param task Task whose checkpoint failed; its original images and safe metadata are preserved.
+     * @param error Filesystem or stable storage error, never a provider request/response object.
+     * @param stage Checkpoint phase for the diagnostic log.
+     * @returns Nothing; listeners receive only allowlisted codes and identifiers.
+     */
+    private storageFailure(task: ImageTask, error: unknown, stage: string): void {
+        const code = imageErrorCode(error);
+        task.error = code;
+        if (task.status !== 'interrupted') task.status = task.images.length ? 'partially_failed' : 'failed';
+        task.finishedAt = Date.now();
+        this.unsaved.set(task.taskId, JSON.parse(JSON.stringify(task)) as ImageTask);
+        const errno = error instanceof ImageError ? /^IMAGE_STORAGE_RENAME_([A-Z0-9_]+)$/.exec(error.code)?.[1] : (error as NodeJS.ErrnoException)?.code;
+        this.emit('storageFailure', { taskId: task.taskId, stage, code, ...(typeof errno === 'string' && /^[A-Z0-9_]{1,64}$/.test(errno) ? { errno } : {}) });
+    }
+    /**
+     * Overlay unpersisted terminal states only for this queue's owned tasks and requested scope.
+     * @param scope Conversation identity whose records may be returned.
+     * @param records Durable records read from the shared task directory.
+     * @returns Scope-filtered snapshots with local storage errors replacing stale queued/running entries.
+     */
+    public visibleTasks(scope: string, records: ImageTask[]): ImageTask[] {
+        const tasks = new Map(records.filter(task => task.scopeId === scope).map(task => [task.taskId, task]));
+        for (const task of this.unsaved.values()) if (task.scopeId === scope) tasks.set(task.taskId, JSON.parse(JSON.stringify(task)) as ImageTask);
+        return [...tasks.values()].sort((a, b) => b.createdAt - a.createdAt || b.taskId.localeCompare(a.taskId));
+    }
+    /** Fill slots without holding an MCP request open; task-local failures never disable the whole queue. */
     private pump(): void {
         while (!this.stopped && this.running.size < this.maxConcurrent && this.pending.length) {
             const work = this.pending.shift()!; const controller = new AbortController();
-            const promise = this.execute(work, controller).catch(() => { this.stopped = true; }).finally(() => { this.running.delete(work.task.taskId); this.pump(); });
+            const promise = this.execute(work, controller).catch(error => {
+                this.storageFailure(work.task, error, 'execute'); this.emit('change', work.task.scopeId);
+            }).finally(() => { this.running.delete(work.task.taskId); this.pump(); });
             this.running.set(work.task.taskId, { promise, controller, scope: work.task.scopeId });
         }
     }
@@ -67,7 +97,11 @@ export class ImageTaskManager extends EventEmitter {
     private async execute(work: Work, controller: AbortController): Promise<void> {
         const { task, snapshot, input } = work; const timer = setTimeout(() => controller.abort(), snapshot.config.timeoutMs);
         try {
-            task.status = 'running'; task.startedAt = Date.now(); await this.store.save(task); this.emit('change', task.scopeId);
+            task.status = 'running'; task.startedAt = Date.now();
+            try { await this.store.save(task); }
+            catch (error) { this.storageFailure(task, error, 'running'); throw error; }
+            this.emit('change', task.scopeId);
+            controller.signal.throwIfAborted();
             const items = await this.client.generate(snapshot, input, controller.signal);
             let total = 0; let failure = items.length > 16 ? 'IMAGE_RESPONSE_TOO_LARGE' : undefined;
             for (const item of items.slice(0, 16)) {
@@ -91,8 +125,8 @@ export class ImageTaskManager extends EventEmitter {
             task.responsePreview = error instanceof ImageError ? parseImageResponsePreview(error.responsePreview) : undefined;
         } finally {
             clearTimeout(timer); task.finishedAt = Date.now();
-            try { await this.store.save(task); }
-            catch { task.error = 'IMAGE_STORAGE_FAILED'; this.stopped = true; }
+            try { await this.store.save(task); this.unsaved.delete(task.taskId); }
+            catch (error) { this.storageFailure(task, error, 'terminal'); }
             this.emit('change', task.scopeId);
         }
     }
@@ -103,16 +137,24 @@ export class ImageTaskManager extends EventEmitter {
     }
     /** Check whether closing a conversation needs a background-task decision. */
     public hasPending(scope: string): boolean { return this.pending.some(work => work.task.scopeId === scope) || [...this.running.values()].some(work => work.scope === scope); }
-    /** Abort local work for one scope only; this never claims to cancel provider billing. */
+    /**
+     * Stop only the requested scope; a failed cancellation checkpoint cannot block other cancellations.
+     * @param scope Host-owned conversation identity.
+     * @returns Completion after its running tasks settle, without replaying provider requests.
+     */
     public async interruptScope(scope: string): Promise<void> {
         await this.admission;
         const removed = this.pending.filter(work => work.task.scopeId === scope); this.pending = this.pending.filter(work => work.task.scopeId !== scope);
-        for (const work of removed) { work.task.status = 'interrupted'; work.task.error = 'IMAGE_INTERRUPTED'; work.task.finishedAt = Date.now(); await this.store.save(work.task); }
+        for (const work of removed) {
+            work.task.status = 'interrupted'; work.task.error = 'IMAGE_INTERRUPTED'; work.task.finishedAt = Date.now();
+            try { await this.store.save(work.task); }
+            catch (error) { this.storageFailure(work.task, error, 'cancel'); }
+        }
         const active = [...this.running.values()].filter(work => work.scope === scope);
         for (const work of active) work.controller.abort();
         await Promise.all(active.map(work => work.promise)); this.emit('change', scope);
     }
-    /** Stop admissions, interrupt all local work, checkpoint, and release the workspace writer. */
+    /** Stop admissions and drain only this host's tasks/writes without claiming shared workspace ownership. */
     public async close(): Promise<void> {
         this.stopped = true; await this.admission;
         const scopes = new Set([...this.pending.map(work => work.task.scopeId), ...[...this.running.values()].map(work => work.scope)]);

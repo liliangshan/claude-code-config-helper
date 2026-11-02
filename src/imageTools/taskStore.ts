@@ -2,7 +2,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { ImageFileLock, readJson, safeDirectory, writeJson } from './storage';
+import { readJson, safeDirectory, writeJson } from './storage';
 import { imageType } from './imageClient';
 import { ImageError, type ImageTask, type ImageFile } from './types';
 import { parseImageResponsePreview } from './responsePreview';
@@ -39,9 +39,11 @@ export function parseImageTask(raw: unknown, scope: string): ImageTask {
         ...(typeof v.error === 'string' && /^IMAGE_[A-Z0-9_]+$/.test(v.error) ? { error: v.error } : {}),
         ...(responsePreview ? { responsePreview } : {}) };
 }
-/** One instance per workspace, shared by all conversations; read-only history never creates directories. */
+/** Independent task writer: UUID files are owned in memory, never by a workspace-wide runtime.lock. */
 export class ImageTaskStore {
-    private lock?: ImageFileLock;
+    private writable = false;
+    private readonly ownedTasks = new Map<string, string>();
+    private readonly writes = new Map<string, Promise<void>>();
     /** Bind the actual workspace rather than the focused editor or extension installation path. */
     public constructor(public readonly cwd: string) {}
     /** Validate the optional owner but resolve one shared tasks/images root, matching the reference MCP. */
@@ -49,16 +51,13 @@ export class ImageTaskStore {
         if (scope) assertImageScope(scope);
         return safeDirectory(this.cwd, ['.LLSOAI', 'openapi-image-generation'], create);
     }
-    /** Acquire a workspace writer, then mark unfinished records interrupted without replaying them. */
+    /**
+     * Enable this writer without acquiring runtime.lock or changing tasks belonging to other hosts.
+     * Existing unfinished records remain read-only: another window or remote host may still own them.
+     * @returns Completion after the shared output directory is validated.
+     */
     public async acquire(): Promise<void> {
-        if (this.lock) return;
-        const root = await this.directory(undefined, true);
-        const lock = new ImageFileLock(path.join(root, 'runtime.lock')); await lock.acquire(); this.lock = lock;
-        try {
-            for (const task of await this.records()) if (task.status === 'queued' || task.status === 'running') {
-                task.status = 'interrupted'; task.error = 'IMAGE_INTERRUPTED'; task.finishedAt = Date.now(); await this.save(task);
-            }
-        } catch (error) { this.lock = undefined; await lock.release(); throw error; }
+        await this.directory(undefined, true); this.writable = true;
     }
     /** Read extension-owned records from the MCP-compatible flat tasks directory without changing external tasks. */
     private async records(): Promise<ImageTask[]> {
@@ -94,16 +93,33 @@ export class ImageTaskStore {
             if (task.taskId !== taskId) throw new ImageError('IMAGE_STORAGE_FAILED'); return task;
         } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new ImageError('IMAGE_TASK_NOT_FOUND'); throw error; }
     }
-    /** Commit only sanitized task metadata while retaining the exclusive workspace owner. */
+    /**
+     * Serialize updates of each owned UUID independently; other task files and hosts do not share a lock.
+     * @param task Metadata snapshot whose scope must match the original accepted task.
+     * @param exclusive Whether this is the initial, non-overwriting creation of this task.
+     * @returns Completion after this particular task checkpoint has been published.
+     */
     public async save(task: ImageTask, exclusive = false): Promise<void> {
-        if (!this.lock) throw new ImageError('IMAGE_STORAGE_LOCKED'); await this.lock.check();
         const clean = parseImageTask(task, task.scopeId);
-        const directory = await safeDirectory(await this.directory(task.scopeId, true), ['tasks'], true);
-        await writeJson(path.join(directory, `${task.taskId}.json`), clean, exclusive);
+        if (!this.writable) throw new ImageError('IMAGE_STORAGE_CLOSED');
+        const operation = (this.writes.get(clean.taskId) ?? Promise.resolve()).catch(() => {}).then(async () => {
+            if (!exclusive && this.ownedTasks.get(clean.taskId) !== clean.scopeId) throw new ImageError('IMAGE_TASK_NOT_OWNED');
+            const directory = await safeDirectory(await this.directory(clean.scopeId, true), ['tasks'], true);
+            await writeJson(path.join(directory, `${clean.taskId}.json`), clean, exclusive);
+            if (exclusive) this.ownedTasks.set(clean.taskId, clean.scopeId);
+        });
+        this.writes.set(clean.taskId, operation);
+        try { await operation; }
+        finally { if (this.writes.get(clean.taskId) === operation) this.writes.delete(clean.taskId); }
     }
-    /** Publish a raster without overwriting anything and return only its local relative reference. */
+    /**
+     * Publish a random image file without a shared runtime lock or overwriting an existing image.
+     * @param scope Host-owned conversation identity.
+     * @param bytes Verified output image bytes to persist.
+     * @returns The published image's local metadata.
+     */
     public async saveImage(scope: string, bytes: Buffer): Promise<ImageFile> {
-        if (!this.lock) throw new ImageError('IMAGE_STORAGE_LOCKED'); await this.lock.check();
+        if (!this.writable) throw new ImageError('IMAGE_STORAGE_CLOSED');
         const { mimeType, extension } = imageType(bytes); const id = randomUUID();
         const directory = await safeDirectory(await this.directory(scope, true), ['images'], true);
         const temporary = path.join(directory, `${id}.tmp`); const destination = path.join(directory, `${id}.${extension}`);
@@ -130,6 +146,12 @@ export class ImageTaskStore {
         } finally { await handle.close(); }
         return file;
     }
-    /** Release the workspace only after all task writes have drained. */
-    public async release(): Promise<void> { await this.lock?.release(); this.lock = undefined; }
+    /**
+     * Drain this writer's pending checkpoints without touching other writers or legacy runtime.lock files.
+     * @returns Completion after pending task writes settle and local write ownership is released.
+     */
+    public async release(): Promise<void> {
+        this.writable = false;
+        await Promise.allSettled([...this.writes.values()]); this.ownedTasks.clear();
+    }
 }

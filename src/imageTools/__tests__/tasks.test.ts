@@ -6,12 +6,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as http from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { generateImages, loadGeneratedImage, isPublicImageAddress, imageType } from '../imageClient';
+import { generateImages, loadGeneratedImage, imageType } from '../imageClient';
 import { loadLocalImageSources } from '../localImages';
 import { ImageTaskManager } from '../taskManager';
 import { ImageTaskStore } from '../taskStore';
 import { readImageRequest, forwardImageTool } from '../transport';
 import { Readable } from 'node:stream';
+import { EventEmitter } from 'node:events';
 import { defaultImageConfig, IMAGE_BODY_LIMIT, type ImageGenerationExecutionSnapshot, type ImageTask } from '../types';
 
 const png = Buffer.from('89504e470d0a1a0a', 'hex');
@@ -30,12 +31,66 @@ test('image transport enforces the same 4 MiB cap before network dispatch and wh
     assert.equal(await readImageRequest(small), '{"name":"test"}');
 });
 
-test('image address guards block private IPv4/IPv6 and malformed raster data', async () => {
-    for (const address of ['127.0.0.1', '10.2.3.4', '169.254.169.254', '192.168.0.2', '::1', '::ffff:127.0.0.1', 'fc00::1', 'fe80::1', '2002:7f00:1::']) assert.equal(isPublicImageAddress(address), false, address);
-    for (const address of ['8.8.8.8', '1.1.1.1', '2606:4700:4700::1111']) assert.equal(isPublicImageAddress(address), true, address);
+/** Removing IP filters must not enable non-HTTP protocols, URL credentials or malformed image bytes. */
+test('image downloads retain protocol, credential and raster checks without IP filtering', async () => {
     assert.throws(() => imageType(Buffer.from('<svg/>')), /IMAGE_FORMAT_UNSUPPORTED/);
-    await assert.rejects(loadGeneratedImage({ url: 'http://127.0.0.1/image.png' }, 1024, new AbortController().signal), /IMAGE_DOWNLOAD_BLOCKED/);
-    assert.deepEqual(await loadGeneratedImage({ b64_json: png.toString('base64'), url: 'http://127.0.0.1/blocked' }, 1024, new AbortController().signal), png);
+    for (const url of ['file:///tmp/image.png', 'ftp://example.com/image.png', 'http://user:password@localhost/image.png', 'https://user@example.com/image.png']) {
+        await assert.rejects(loadGeneratedImage({ url }, 1024, new AbortController().signal), /IMAGE_DOWNLOAD_BLOCKED/);
+    }
+    assert.deepEqual(await loadGeneratedImage({ b64_json: png.toString('base64'), url: 'http://127.0.0.1/not-requested' }, 1024, new AbortController().signal), png);
+});
+
+/** A local server exercises the actual image download path without a provider request or private user data. */
+test('returned loopback image URLs download without provider credentials, redirects or unlimited bodies', async () => {
+    const requests: { url: string; headers: http.IncomingHttpHeaders }[] = [];
+    const server = http.createServer((req, res) => {
+        requests.push({ url: req.url!, headers: req.headers });
+        if (req.url === '/redirect') { res.writeHead(302, { location: '/image' }); res.end(); }
+        else if (req.url === '/invalid') res.end('<html>not an image</html>');
+        else if (req.url === '/large') res.end(Buffer.alloc(2048));
+        else { res.setHeader('content-type', 'image/png'); res.end(png); }
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
+    try {
+        const bytes = await loadGeneratedImage({ url: `${base}/image?signature=test-only` }, 1024, new AbortController().signal);
+        assert.deepEqual(bytes, png); assert.equal(requests.length, 1);
+        assert.equal(requests[0].url, '/image?signature=test-only');
+        for (const name of ['authorization', 'cookie', 'x-api-key']) assert.equal(requests[0].headers[name], undefined);
+        await assert.rejects(loadGeneratedImage({ url: base + '/redirect' }, 1024, new AbortController().signal), /IMAGE_HTTP_302/);
+        assert.equal(requests.length, 2, 'Do not follow download redirects');
+        await assert.rejects(loadGeneratedImage({ url: base + '/invalid' }, 1024, new AbortController().signal), /IMAGE_FORMAT_UNSUPPORTED/);
+        await assert.rejects(loadGeneratedImage({ url: base + '/large' }, 1024, new AbortController().signal), /IMAGE_RESPONSE_TOO_LARGE/);
+        const abort = new AbortController(); abort.abort();
+        await assert.rejects(loadGeneratedImage({ url: base + '/image' }, 1024, abort.signal));
+        assert.equal(requests.length, 4, 'Aborted downloads must not open another request');
+    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+/** Mock only the transport to verify private/Fake-IP destinations are no longer filtered, with zero external requests. */
+test('image downloads use normal resolution for private, IPv6 and Fake-IP destinations', async t => {
+    const transport = require('node:http') as typeof http;
+    const destinations: string[] = [];
+    t.mock.method(transport, 'request', (url: URL, options: http.RequestOptions, respond: (response: http.IncomingMessage) => void) => {
+        destinations.push(url.hostname);
+        assert.equal(options.lookup, undefined); assert.equal(options.family, undefined);
+        assert.deepEqual(options.headers, {});
+        const request = new EventEmitter() as http.ClientRequest;
+        request.end = (() => {
+            queueMicrotask(() => {
+                const response = Readable.from([png]) as unknown as http.IncomingMessage;
+                response.statusCode = 200; response.headers = {};
+                Object.defineProperty(response, 'socket', { value: { remoteAddress: '198.18.0.2' } });
+                respond(response);
+            });
+            return request;
+        }) as http.ClientRequest['end'];
+        return request;
+    });
+    for (const host of ['10.0.0.2', '192.168.1.2', '198.18.0.2', '[::1]', '[fd00::2]', 'fake-ip.example.test']) {
+        assert.deepEqual(await loadGeneratedImage({ url: `http://${host}/image.png` }, 1024, new AbortController().signal), png);
+    }
+    assert.equal(destinations.length, 6);
 });
 
 /** Enforce the JSON images/image_url wire contract for single and multiple inputs without POST replay. */
@@ -104,7 +159,7 @@ test('queue freezes accepted settings, separates scopes and never persists sourc
         assert.equal(imagePath, path.join(await fs.realpath(cwd), '.LLSOAI/openapi-image-generation', done.images[0].relativePath));
         await assert.rejects(fs.stat(path.join(cwd, '.LLSOAI/openapi-image-generation/scopes')), { code: 'ENOENT' });
         await assert.rejects(store.imagePath(scopeA, first.taskId, '../other'), /IMAGE_TASK_NOT_FOUND/);
-        const other = new ImageTaskStore(cwd); await assert.rejects(other.acquire(), /IMAGE_STORAGE_LOCKED/);
+        const other = new ImageTaskStore(cwd); await other.acquire(); await other.release();
     } finally { release(); await queue.close(); await fs.rm(cwd, { recursive: true, force: true }); }
 });
 
@@ -124,7 +179,7 @@ test('queue rejects overflow, preserves partial images and interrupts without re
     } finally { release(); await queue.close(); await fs.rm(cwd, { recursive: true, force: true }); }
 });
 
-test('flat image storage preserves reference MCP tasks and recovers only extension-owned metadata', async () => {
+test('flat image storage preserves reference MCP and unfinished records owned by other writers', async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'image-flat-store-')); const store = new ImageTaskStore(cwd);
     try {
         const directory = path.join(cwd, '.LLSOAI/openapi-image-generation/tasks'); await fs.mkdir(directory, { recursive: true });
@@ -136,20 +191,21 @@ test('flat image storage preserves reference MCP tasks and recovers only extensi
         assert.equal(await fs.readFile(path.join(directory, externalId + '.json'), 'utf8'), externalText);
         const task: ImageTask = { version: 1, taskId: `20261002T081530124Z_${randomUUID()}`, scopeId: scopeA, operation: 'generate', prompt: 'owned', model: 'test', configRevision: 1, size: '1536x1024', status: 'queued', createdAt: Date.now(), images: [] };
         await store.save(task, true); await store.release(); await store.acquire();
-        assert.equal((await store.get(scopeA, task.taskId)).status, 'interrupted');
+        assert.equal((await store.get(scopeA, task.taskId)).status, 'queued');
+        await assert.rejects(store.save({ ...task, status: 'interrupted' }), /IMAGE_TASK_NOT_OWNED/);
         assert.equal(await fs.readFile(path.join(directory, externalId + '.json'), 'utf8'), externalText);
         await assert.rejects(store.get(scopeB, task.taskId), /IMAGE_TASK_NOT_FOUND/);
     } finally { await store.release(); await fs.rm(cwd, { recursive: true, force: true }); }
 });
 
-test('read-only task lists create no directories; recovery marks unfinished metadata and rejects symlinks', async () => {
+test('read-only task lists create no directories; startup preserves unfinished tasks and rejects symlinks', async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'image-recovery-')); const store = new ImageTaskStore(cwd);
     try {
         assert.deepEqual(await store.list(scopeA), []); assert.deepEqual(await fs.readdir(cwd), []);
         await store.acquire();
         const task: ImageTask = { version: 1, taskId: `20261002T081530123Z_${randomUUID()}`, scopeId: scopeA, operation: 'edit', prompt: 'restore', model: 'test-image', configRevision: 1, size: '1x1', status: 'running', createdAt: Date.now(), images: [] };
         await store.save(task, true); await store.release(); await store.acquire();
-        assert.equal((await store.get(scopeA, task.taskId)).status, 'interrupted');
+        assert.equal((await store.get(scopeA, task.taskId)).status, 'running');
         await store.release();
         const images = path.join(cwd, '.LLSOAI/openapi-image-generation/images'); await fs.mkdir(images);
         await fs.rmdir(images); await fs.symlink(cwd, images);

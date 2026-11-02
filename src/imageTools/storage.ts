@@ -2,6 +2,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { ImageError } from './types';
 
 /** Resolve a trusted root and reject every symlink component beneath it; read-only calls never mkdir. */
@@ -33,7 +34,33 @@ export async function readJson(file: string, max = 1024 * 1024): Promise<unknown
         return JSON.parse(bytes.subarray(0, bytesRead).toString('utf8'));
     } finally { await handle.close(); }
 }
-/** Atomically publish a JSON checkpoint; new records use exclusive linking and never overwrite. */
+/**
+ * Replace a checkpoint atomically, tolerating brief Windows sharing violations without deleting the old file.
+ * @param temporary Fully written and closed temporary file in the destination directory.
+ * @param file Existing checkpoint destination, or a not-yet-created configuration file.
+ * @param platform Runtime platform; injectable for deterministic Windows error tests on other hosts.
+ * @returns Completion after replacement or a safe operation/errno error after bounded retries.
+ */
+export async function replaceImageJson(temporary: string, file: string, platform: NodeJS.Platform = process.platform): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+        try { await fs.rename(temporary, file); return; }
+        catch (error) {
+            const code = (error as NodeJS.ErrnoException).code || 'UNKNOWN';
+            if (platform === 'win32' && ['EPERM', 'EACCES', 'EBUSY'].includes(code) && attempt < 5) {
+                await delay(25 * 2 ** attempt); continue;
+            }
+            throw new ImageError(`IMAGE_STORAGE_RENAME_${/^[A-Z0-9_]{1,32}$/.test(code) ? code : 'UNKNOWN'}`);
+        }
+    }
+}
+
+/**
+ * Publish a closed JSON snapshot without a workspace lock; initial records remain exclusive.
+ * @param file Target JSON file under a validated directory.
+ * @param value Allowlisted metadata to serialize.
+ * @param exclusive Whether an existing destination must cause failure rather than replacement.
+ * @returns Completion after atomic publication; source handles are closed before link/rename.
+ */
 export async function writeJson(file: string, value: unknown, exclusive = false): Promise<void> {
     try { if ((await fs.lstat(file)).isSymbolicLink()) throw new ImageError('IMAGE_STORAGE_FAILED'); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
@@ -42,7 +69,7 @@ export async function writeJson(file: string, value: unknown, exclusive = false)
     try {
         try { await handle.writeFile(JSON.stringify(value)); await handle.sync(); }
         finally { await handle.close(); }
-        if (exclusive) await fs.link(temporary, file); else await fs.rename(temporary, file);
+        if (exclusive) await fs.link(temporary, file); else await replaceImageJson(temporary, file);
     } finally { await fs.unlink(temporary).catch(() => {}); }
 }
 /** Exclusive ownership. Stale locks are not stolen because PID reuse cannot prove ownership. */

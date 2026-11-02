@@ -39,6 +39,15 @@
         fr: ['Modèle général', 'Modèle du flux de tâches', 'Modèle de compression', 'Niveau de raisonnement', 'Non configuré (modèle général)', 'Désactivé (défaut du CLI)', 'Auto', 'Faible', 'Moyen', 'Élevé', 'Très élevé', 'Enregistré dans cet espace de travail. Auto ne force aucun niveau ; la prise en charge dépend du modèle.'],
         de: ['Allgemeines Aufgabenmodell', 'Aufgabenflussmodell', 'Komprimierungsmodell', 'Denktiefe', 'Nicht konfiguriert (allgemeines Modell)', 'Aus (CLI-Standard)', 'Automatisch', 'Niedrig', 'Mittel', 'Hoch', 'Sehr hoch', 'Im aktuellen Arbeitsbereich gespeichert. Automatisch überschreibt keine Denktiefe; Unterstützung ist modellabhängig.']
     };
+    const extensionEnablementLabels = {
+        en: ['Missing the extension in another workspace?', 'Open Extensions (Marketplace) in the left VS Code sidebar and find Claude Code Config Helper. Click “Enable (Workspace)” on the right to enable it for that workspace, or click the gear icon next to its name and choose “Enable” / “Enable Globally” to make it available in other workspaces too.'],
+        'zh-cn': ['其他工作区左侧看不到扩展？', '请打开 VS Code 左侧的“扩展”（商店），找到 Claude Code Config Helper。点击右侧“启用（工作区）”即可在当前工作区使用；或点击扩展名称旁的齿轮图标，选择“启用”／“全局启用”，让其他工作区也可使用。'],
+        'zh-tw': ['其他工作區左側看不到擴充功能？', '請開啟 VS Code 左側的「擴充功能」（市集），找到 Claude Code Config Helper。點擊右側「啟用（工作區）」即可在目前工作區使用；或點擊擴充功能名稱旁的齒輪圖示，選擇「啟用」／「全域啟用」，讓其他工作區也可使用。'],
+        ja: ['別のワークスペースで拡張機能が見つかりませんか？', 'VS Code 左側の「拡張機能」（Marketplace）で Claude Code Config Helper を探してください。右側の「有効にする（ワークスペース）」で現在のワークスペースのみ有効にできます。他のワークスペースでも使うには、名前の横の歯車アイコンから「有効にする」／「グローバルに有効にする」を選択してください。'],
+        ko: ['다른 작업 영역의 왼쪽에 확장이 보이지 않나요?', 'VS Code 왼쪽의 확장(Marketplace)을 열고 Claude Code Config Helper를 찾으세요. 오른쪽의 “사용(작업 영역)”을 클릭하면 현재 작업 영역에서 사용할 수 있습니다. 다른 작업 영역에서도 사용하려면 이름 옆 톱니바퀴에서 “사용” / “전역으로 사용”을 선택하세요.'],
+        fr: ['L’extension manque dans un autre espace de travail ?', 'Ouvrez Extensions (Marketplace) dans la barre latérale gauche de VS Code et recherchez Claude Code Config Helper. Cliquez sur « Activer (espace de travail) » à droite pour cet espace uniquement, ou sur l’engrenage à côté du nom, puis « Activer » / « Activer globalement » pour les autres espaces aussi.'],
+        de: ['Die Erweiterung fehlt in einem anderen Arbeitsbereich?', 'Öffnen Sie links in VS Code die Erweiterungen (Marketplace) und suchen Sie Claude Code Config Helper. Mit „Aktivieren (Arbeitsbereich)“ rechts aktivieren Sie sie nur hier. Für andere Arbeitsbereiche wählen Sie über das Zahnradsymbol neben dem Namen „Aktivieren“ / „Global aktivieren“.']
+    };
     /** Resolve the shared model roles and reasoning labels in the selected setup language. */
     const workspaceText = index => (workspaceLabels[state?.language] || workspaceLabels.en)[index];
     /** Resolve provider-management and workspace-selection labels independently from legacy setup text. */
@@ -50,6 +59,19 @@
         const element = document.createElement(tag); element.className = className || '';
         if (value !== undefined) element.textContent = value;
         return element;
+    }
+    /**
+     * Build a localized, text-only reminder about VS Code workspace and global extension enablement.
+     * This is guidance only: it does not inspect or change extension enablement or intercept Next.
+     * @returns {HTMLElement} A passive note in the selected setup language, falling back to English.
+     */
+    function extensionEnablementNotice() {
+        const [title, description] = extensionEnablementLabels[state?.language] || extensionEnablementLabels.en;
+        const notice = node('aside', 'notice extension-enablement-notice'); notice.setAttribute('role', 'note');
+        const heading = node('strong', '', title); heading.id = 'extension-enablement-title';
+        notice.setAttribute('aria-labelledby', heading.id);
+        notice.append(heading, node('p', '', description));
+        return notice;
     }
     /** Build an action control; busy operations block navigation but allow download cancellation. */
     function action(caption, type, className = 'secondary') {
@@ -100,7 +122,10 @@
             ? `${percent === undefined ? '' : `${Math.floor(percent)}% · `}${size(progress.bytes || 0)}${progress.total ? ` / ${size(progress.total)}` : ''}` : progress.error || '';
         document.getElementById('cancel-download').hidden = !state.busy || !['checking', 'confirming', 'downloading', 'verifying'].includes(progress.phase);
     }
-    /** Render the responsive wizard, keeping frequent actions separate from advanced path controls. */
+    /**
+     * Render the responsive wizard with a passive enablement reminder beneath each step's controls.
+     * @returns {void} Updates the current page without changing VS Code extension enablement.
+     */
     function render() {
         document.documentElement.lang = state.language;
         document.getElementById('title').textContent = text('Claude Code 安装与配置', 'Claude Code setup');
@@ -184,7 +209,7 @@
         const cancel = button('取消下载', 'Cancel download', 'cancelDownload', 'link-button'); cancel.id = 'cancel-download';
         progressHeader.append(title, cancel); const bar = node('progress'); bar.id = 'progress-bar'; bar.max = 100; bar.setAttribute('aria-label', label(13));
         const detail = node('div', 'progress-detail'); detail.id = 'progress-detail'; progress.append(progressHeader, bar, detail);
-        section.append(progress, footer); page.append(section); renderProgress();
+        section.append(progress, footer); page.append(section, extensionEnablementNotice()); renderProgress();
         if (step === 2) window.dispatchEvent(new Event('setup/providersMount'));
     }
     window.addEventListener('message', event => {

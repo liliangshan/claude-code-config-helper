@@ -2,6 +2,36 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.86] - 2026-11-02
+
+### Added
+
+- Passive extension-enablement guidance below all three setup steps in English, Simplified Chinese, Traditional Chinese, Japanese, Korean, French and German. It names **Claude Code Config Helper** and explains workspace enablement versus the gear menu's global enablement. It neither changes VS Code enablement nor adds a required onboarding action.
+
+### Fixed
+
+- Long localized setup step names can wrap in narrow sidebars instead of forcing horizontal overflow.
+- Image task storage no longer acquires or checks a workspace-wide `runtime.lock`. Each writer owns only its newly created UUID tasks, serializes updates per task and allows independent writers in the same workspace. It cannot overwrite another writer's tasks, and startup no longer marks all unfinished records interrupted.
+- Windows checkpoint replacement retries transient `EPERM`, `EACCES` and `EBUSY` rename failures up to five times with bounded backoff. The old JSON is never deleted or truncated as a fallback, and no image API request is retried.
+- Persistent task checkpoint failures no longer stop the entire image queue or turn later submissions into misleading `IMAGE_INTERRUPTED` errors. The owning host overlays unsaved terminal failures in task queries/cards/completion messages and logs task ID, checkpoint stage and safe filesystem codes such as `IMAGE_STORAGE_RENAME_EPERM`.
+
+### Changed
+
+- Returned image downloads no longer filter destination IP ranges, pin DNS results or compare socket peer addresses. Local/private/IPv6/Fake-IP destinations use normal host resolution. HTTP/HTTPS-only URLs, rejection of embedded credentials, no provider headers/cookies, no redirects, timeouts, byte limits and raster validation remain. This does not modify the separate HTTP tool or add HTTP/SOCKS proxy support.
+
+### Compatibility and Scope
+
+- Removing image-download IP filtering allows configured providers to direct requests to host-reachable internal services; only trusted providers and networks should be used.
+- Legacy `runtime.lock` files are ignored and retained. The global `config.lock` is still required for the shared configuration file. Host-local concurrency limits are unchanged and are not a cross-host quota.
+- Normal shutdown updates only its own tasks. Following an abnormal exit, old queued/running records may remain for manual diagnosis; the extension does not automatically take over or replay work. Failure snapshots that could not be written to disk last only for that host lifetime.
+- Windows filesystem and proxy behavior still need real-machine acceptance. Existing `requestUsageBinding` and reused-response-ID association issues remain outside this release.
+
+### Validation
+
+- VS Code diagnostics, TypeScript type checking/compilation, 306 JavaScript syntax checks and package/lockfile/README version consistency passed.
+- Image and setup acceptance passed 82/82, including simulated Windows sharing errors, independent task writers, failure isolation, local image downloads, mocked private/Fake-IP routing and passive seven-language setup guidance. Browser verification covered 42 combinations of seven languages, three steps and two viewport widths with no horizontal overflow.
+- Full regression: 736 tests, 718 passed, 17 skipped, and the existing `requestUsageBinding` assertion failed (`true !== false`). No paid provider requests were made; Windows and Linux behavior was not validated on physical remote machines.
+
 ## [3.2.85] - 2026-11-02
 
 ### Fixed

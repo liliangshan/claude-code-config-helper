@@ -9,7 +9,7 @@ import * as http from 'node:http';
 import { forwardImageTool } from '../transport';
 import { installVscodeStub } from '../../chat/__tests__/testUtils/vscodeStub';
 import type { ConfigManager } from '../../configManager';
-import { defaultImageConfig, type ImageTask } from '../types';
+import { ImageError, defaultImageConfig, type ImageTask } from '../types';
 import { ImageTaskStore } from '../taskStore';
 import { imageResultMessage } from '../results';
 
@@ -110,6 +110,41 @@ test('path-only editing reads an external file, submits once and persists neithe
         assert.deepEqual(await host.execute(scope, 'openapi_edit_image', args, requestId, () => true), accepted);
         assert.equal(requests.length, 1, 'Duplicate bridge delivery cannot reread the removed source or charge again');
     } finally { await host.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); }
+});
+
+/** A checkpoint failure stays visible through real host queries and completion, without blocking the next task. */
+test('host reports unsaved task failures instead of stale queued records', async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'image-host-checkpoint-'));
+    const host = new ImageToolHost(context(root), manager());
+    const scope = { cwd: root, id: 'f'.repeat(64), title: 'Storage failure' };
+    vscode.workspace.isTrusted = true;
+    Object.defineProperty(vscode.workspace, 'workspaceFolders', { configurable: true, get: () => [{ uri: { fsPath: root, scheme: 'file' } }] });
+    try {
+        await host.initialize();
+        await host.config.save({ expectedRevision: 0, config: { ...defaultImageConfig(), enabled: true, modelId: 'fixture', baseUrl: 'https://example.com', authMode: 'none' }, keyAction: 'keep' });
+        const queue = await (host as any).queue(root); let calls = 0, broken: string | undefined;
+        queue.client.generate = async () => { calls++; return [{}]; };
+        queue.client.load = async () => Buffer.from('89504e470d0a1a0a', 'hex');
+        const save = queue.store.save.bind(queue.store);
+        t.mock.method(queue.store, 'save', async (task: ImageTask, exclusive = false) => {
+            if (exclusive && !broken) broken = task.taskId;
+            if (!exclusive && task.taskId === broken) throw new ImageError('IMAGE_STORAGE_RENAME_EPERM');
+            return save(task, exclusive);
+        });
+        const accepted = await host.execute(scope, 'openapi_generate_image', { prompt: 'first', size: '1x1' }, randomUUID(), () => true);
+        const taskId = JSON.parse(String(accepted.content[0].text)).taskId; await queue.idle();
+        assert.equal(calls, 0);
+        const query = await host.execute(scope, 'openapi_get_image_task', { taskId }, randomUUID(), () => true);
+        const failed = JSON.parse(String(query.content[0].text));
+        assert.equal(failed.status, 'failed'); assert.equal(failed.error, 'IMAGE_STORAGE_RENAME_EPERM');
+        const list = await host.execute(scope, 'openapi_list_images', {}, randomUUID(), () => true);
+        assert.equal(JSON.parse(String(list.content[0].text)).items[0].error, 'IMAGE_STORAGE_RENAME_EPERM');
+        const updates: any[] = [], completions: ImageTask[] = [];
+        await host.receive({ type: 'imageGeneration/tasksList', requestId: 'refresh' }, { scope: async () => scope, post: value => updates.push(value), complete: async (_scope, task) => { completions.push(task); return true; } });
+        assert.equal(updates[0].tasks[0].status, 'failed'); assert.equal(completions[0].error, 'IMAGE_STORAGE_RENAME_EPERM');
+        const second = await host.execute(scope, 'openapi_generate_image', { prompt: 'second', size: '1x1' }, randomUUID(), () => true);
+        assert.equal(second.isError, undefined); await queue.idle(); assert.equal(calls, 1);
+    } finally { await host.close(); await fs.rm(root, { recursive: true, force: true }); }
 });
 
 test('closing a chat with active image work still offers background execution or a local stop', async () => {

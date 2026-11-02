@@ -4,6 +4,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { ConfigManager } from '../configManager';
+import { Logger } from '../logger';
 import type { McpToolResult } from '../mcpKit/types';
 import { ImageConfigStore } from './configStore';
 import { ImageTaskManager } from './taskManager';
@@ -52,7 +53,10 @@ export class ImageToolHost {
         });
         this.providerSubscription = manager.onDidChange(() => this.config.refresh());
     }
-    /** Initialize settings and recover only existing workspace task stores; never replay paid requests. */
+    /**
+     * Prepare global settings and existing output directories without claiming or recovering another host's tasks.
+     * @returns Completion after local initialization; no image requests are replayed.
+     */
     public async initialize(): Promise<void> {
         await this.config.initialize();
         for (const folder of vscode.workspace.workspaceFolders ?? []) {
@@ -93,12 +97,19 @@ export class ImageToolHost {
         if (!roots.some(folder => root === folder || (!path.relative(folder, root).startsWith('..') && !path.isAbsolute(path.relative(folder, root))))) throw new ImageError('IMAGE_WORKSPACE_REQUIRED');
         await fs.access(root, writable ? fs.constants.W_OK : fs.constants.R_OK); return root;
     }
-    /** Reuse one scheduler per canonical workspace and send updates only to its owning conversations. */
+    /**
+     * Reuse this host's workspace scheduler and report only safe task-local storage diagnostic fields.
+     * @param cwd Conversation workspace resolved independently of the focused editor.
+     * @returns A local scheduler that does not lock other hosts out of the workspace.
+     */
     private async queue(cwd: string): Promise<ImageTaskManager> {
         const root = await this.workspace(cwd); let queue = this.queues.get(root);
         if (!queue) {
             queue = new ImageTaskManager(new ImageTaskStore(root)); this.queues.set(root, queue);
             queue.on('change', (scopeId: string) => { void this.notifyTasks(root, scopeId); });
+            queue.on('storageFailure', (diagnostic: { taskId: string; stage: string; code: string; errno?: string }) => {
+                Logger.error(`[image-task] task=${diagnostic.taskId} stage=${diagnostic.stage} code=${diagnostic.code}${diagnostic.errno ? ` errno=${diagnostic.errno}` : ''}`);
+            });
         }
         return queue;
     }
@@ -111,9 +122,17 @@ export class ImageToolHost {
         }, 750);
         timer.unref?.(); this.retryTimers.set(view, timer);
     }
-    /** Deliver each terminal task once per bound history, rechecking ownership after every asynchronous read. */
+    /**
+     * Deliver durable or locally failed task snapshots once, rechecking conversation ownership before display.
+     * @param view Target view binding.
+     * @param scope Expected conversation identity and workspace.
+     * @param requestId Optional explicit refresh request identifier.
+     * @param replay Whether existing terminal messages may be restored to the current history.
+     * @returns Completion after safe task updates and eligible result messages are published.
+     */
     private async publishTasks(view: ImageViewBinding, scope: ImageScope, requestId?: string, replay = false): Promise<void> {
-        const cwd = await fs.realpath(scope.cwd); const tasks = await new ImageTaskStore(cwd).list(scope.id);
+        const cwd = await fs.realpath(scope.cwd); const records = await new ImageTaskStore(cwd).list(scope.id);
+        const tasks = this.queues.get(cwd)?.visibleTasks(scope.id, records) ?? records;
         const current = await view.scope();
         if (current.id !== scope.id || current.cwd !== scope.cwd || this.stopped) return;
         view.post({ type: 'imageGeneration/taskUpdate', scopeId: scope.id, tasks: tasks.slice(0, 100), requestId });
@@ -167,7 +186,14 @@ export class ImageToolHost {
         if (this.calls.size > 10000) this.calls.delete(this.calls.keys().next().value!);
         return result;
     }
-    /** Dispatch scoped tasks; edit sources are explicit local paths read without workspace-boundary authorization. */
+    /**
+     * Dispatch scoped tasks and merge task-local storage failures into read-only queries.
+     * @param scope Trusted conversation identity and workspace.
+     * @param name Allowlisted image tool name.
+     * @param args Validated tool arguments; editing sources are explicit local paths.
+     * @param stillCurrent Guard against submitting work for a detached conversation.
+     * @returns The scoped query result or one asynchronous task acknowledgement.
+     */
     private async dispatch(scope: ImageScope, name: string, args: Record<string, unknown>, stillCurrent: () => boolean): Promise<unknown> {
         if (this.stopped || !stillCurrent() || !isImageToolName(name)) throw new ImageError('IMAGE_PERMISSION_DENIED');
         this.validate(name, args);
@@ -179,11 +205,15 @@ export class ImageToolHost {
                 maxResponseBytes: c.maxResponseBytes, maxFileBytes: c.maxFileBytes, error: state.error };
         }
         const cwd = await this.workspace(scope.cwd, name === 'openapi_generate_image' || name === 'openapi_edit_image'); const store = new ImageTaskStore(cwd);
-        if (name === 'openapi_get_image_task') return store.get(scope.id, String(args.taskId ?? ''));
+        if (name === 'openapi_get_image_task') {
+            const local = this.queues.get(cwd)?.visibleTasks(scope.id, []).find(task => task.taskId === args.taskId);
+            return local ?? store.get(scope.id, String(args.taskId ?? ''));
+        }
         if (name === 'openapi_list_images' || name === 'openapi_search_images') {
             const offset = args.offset ?? 0, limit = args.limit ?? 20;
             if (!Number.isSafeInteger(offset) || (offset as number) < 0 || !Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > 100) throw new ImageError('IMAGE_ARGUMENT_INVALID');
-            let tasks = await store.list(scope.id);
+            const records = await store.list(scope.id);
+            let tasks = this.queues.get(cwd)?.visibleTasks(scope.id, records) ?? records;
             if (name === 'openapi_search_images') {
                 if (typeof args.query !== 'string' || !args.query.trim() || args.query.trim().length > 1000) throw new ImageError('IMAGE_ARGUMENT_INVALID');
                 const query = args.query.trim().toLowerCase(); tasks = tasks.filter(task => task.prompt.toLowerCase().includes(query));
