@@ -164,6 +164,15 @@ test('global configuration does not merge history scopes; capabilities revoke on
     const entry = require('../entry') as typeof import('../entry');
     try {
         await entry.configureImages(context(root), manager());
+        assert.deepEqual(await entry.imageToolEnvironment(), { LLS_IMAGE_SUPPORTS_GIF: '0', LLS_IMAGE_CONFIG_REVISION: '0' });
+        await entry.getImageService()!.config.save({ expectedRevision: 0, keyAction: 'keep', config: { ...defaultImageConfig(), supportsGif: true } });
+        assert.deepEqual(await entry.imageToolEnvironment(), { LLS_IMAGE_SUPPORTS_GIF: '1', LLS_IMAGE_CONFIG_REVISION: '1' });
+        const { ChatCliConfigService } = await import('../../chat/cli/cliConfig');
+        const service = new ChatCliConfigService();
+        service.getConfigWithRelayEnv = async () => ({ enabled: true, cliPath: '/fixture', cliArgs: [], cliEnv: {}, cwd: root, transport: 'streamJsonStdio' });
+        const launch = await service.getRoutedConfigsWithRelayEnv(12345);
+        assert.equal(launch.normal.mcpServers?.llsccaiImage.env?.LLS_IMAGE_SUPPORTS_GIF, '1');
+        assert.equal(launch.normal.mcpServers?.llsccaiImage.env?.LLS_IMAGE_CONFIG_REVISION, '1');
         const fresh = await entry.imageScope(root, 'main', undefined, 'Chat');
         const bound = await entry.imageScope(root, 'main', 'native-session-a', 'Chat'); assert.equal(fresh.id, bound.id);
         const another = await entry.imageScope(root, 'left-conversation', 'native-session-b', 'Chat'); assert.notEqual(another.id, bound.id);

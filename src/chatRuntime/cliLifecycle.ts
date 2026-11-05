@@ -153,7 +153,23 @@ export async function applyPendingNativeCompactionPolicy(): Promise<void> {
 }
 
 
-/** 注入上层依赖；必须在任何其它导出函数之前调用。 */
+/**
+ * Refresh image-tool schemas only for an already-running idle CLI, preserving the original session.
+ * @returns True once refreshed or when no CLI is running; false when work/update admission must settle first.
+ */
+export async function refreshImageToolsCli(): Promise<boolean> {
+    const run = cliStartQueue.then(async () => {
+        if (!chatCliConfigService || !routes.normal.process?.isRunning()) return true;
+        if (!canApplyNativePolicy()) return false;
+        let deferred = false;
+        await performStartChatCliPair({ forceRestart: false, onDeferred: () => { deferred = true; } });
+        return !deferred;
+    });
+    cliStartQueue = run.then(() => undefined, () => undefined);
+    return run;
+}
+
+/** 注入上层依赖；activate 期间必须先调用。 */
 export function configureCliLifecycle(value: CliLifecycleDeps): void {
     deps = value;
 }
@@ -435,8 +451,9 @@ export async function restartSidebarAfterCliUpdate(): Promise<void> {
  * 对方刚创建的子进程。
  *
  * @param options.forceRestart 为 true 时即使配置未变也强制重启。
+ * @param options.onDeferred 安全检查发现新任务到达时通知图片配置刷新继续等待。
  */
-async function performStartChatCliPair(options: { forceRestart?: boolean }): Promise<void> {
+async function performStartChatCliPair(options: { forceRestart?: boolean; onDeferred?: () => void }): Promise<void> {
     if (!chatCliConfigService || !routes.normal.process) {
         throw new Error('Chat CLI 组件尚未初始化');
     }
@@ -446,6 +463,7 @@ async function performStartChatCliPair(options: { forceRestart?: boolean }): Pro
 
     // ── normal CLI ─────────────────────────────────────────────────────
     if (!options.forceRestart && routes.normal.process.isRunning() && !canApplyNativePolicy()) {
+        options.onDeferred?.();
         pendingNativePolicy = JSON.stringify(normal.nativeCompaction) !== JSON.stringify(appliedNativePolicy)
             || (normal.model || '') !== appliedNativeModel || normal.cliPath !== appliedCliPath;
         await postNativeCompactionState();
@@ -476,6 +494,7 @@ async function performStartChatCliPair(options: { forceRestart?: boolean }): Pro
         requireDeps().logMcpInjection(normalLaunchConfig);
         // await 读取配置/会话期间可能有新任务到达，spawn 前最后检查一次。
         if (!options.forceRestart && routes.normal.process.isRunning() && !canApplyNativePolicy()) {
+            options.onDeferred?.();
             pendingNativePolicy = true;
             await postNativeCompactionState();
             return;

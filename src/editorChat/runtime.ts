@@ -31,7 +31,7 @@ import { buildPromptWithAttachments, buildUserDisplaySegments, sanitizeUploadFil
 import { readClipboardImage } from '../chatRuntime/clipboardImages';
 import type { RequestUsageSummary } from '../relay/requestUsage';
 import type { UsageReport } from '../relay/usageReporter';
-import { attachImageView, getImageService, imageScope, receiveImageMessage, resetImageIdentity } from '../imageTools/entry';
+import { attachImageView, getImageService, imageScope, imageToolEnvironment, receiveImageMessage, resetImageIdentity } from '../imageTools/entry';
 import type { ImageScope, ImageTask, ImageWebviewRequest } from '../imageTools/types';
 import { imageResultMessage, imageResultPrompt } from '../imageTools/results';
 import { ImageResultReceipts } from '../imageTools/delivery';
@@ -57,6 +57,7 @@ export class EditorChatRuntime {
     private settingsQueue: Promise<void> = Promise.resolve();
     private overrideCliPath?: string;
     private applied = '';
+    private appliedImageEnvironment = '';
     private starting?: Promise<void>;
     private restarting = false;
     private continuationTimer?: NodeJS.Timeout;
@@ -83,14 +84,14 @@ export class EditorChatRuntime {
     private readonly wakeupHost: WakeupHost;
     private readonly wakeupQueue: string[] = [];
     private readonly checkpoint = setInterval(() => { if (!this.closed && this.busy) void this.persist().catch(error => this.post({ type: 'toast', level: 'error', text: String(error) })); }, 5000);
-    /** Bind immutable conversation identity and owned tools; dedicated compaction errors pause only this recovery turn. */
+    /** Bind immutable identity, owned tools, safe image-schema refresh and turn-scoped compaction failures. */
     public constructor(public readonly data: EditorConversation, private readonly store: EditorConversationStore,
         private readonly panel: IndependentChatHost, private readonly manager: ConfigManager,
         private readonly openNew: () => Promise<void>, private readonly history: () => Promise<void>) {
         const context = getExtensionContext(); if (context) this.imageReceipts = new ImageResultReceipts(context.workspaceState);
         this.imageSubscription = attachImageView(this.data.conversationId, {
             scope: () => this.imageTaskScope(), post: message => this.post(message), delivered: (scope, task) => this.imageReceipts?.has(scope, task) ?? false,
-            complete: (scope, task) => this.appendImageResult(scope, task)
+            complete: (scope, task) => this.appendImageResult(scope, task), refreshCli: () => this.refreshImageToolsCli()
         });
         this.opener = new EditorAutoOpener(() => [{ uri: vscode.Uri.file(data.cwd), name: path.basename(data.cwd), index: 0 }], () => !this.closed && data.settings.codePreviewEnabled);
         this.service = new LlsTaskService(manager, new TaskFlowStore(path.join(data.cwd, '.LLSOAI/editor-sessions', data.conversationId, 'task-flow.json')));
@@ -181,11 +182,14 @@ export class EditorChatRuntime {
         this.starting = this.startCli(forCliUpdate);
         try { await this.starting; } finally { this.starting = undefined; }
     }
-    /** Start an isolated CLI with workspace MCP policy and session-private HTTP/tool capabilities. */
+    /** Start an isolated CLI with current image capability schemas and session-private HTTP/tool capabilities. */
     private async startCli(forCliUpdate = false): Promise<void> {
         if (this.closed || this.busy) return;
         const settings = this.currentSettings(); const signature = JSON.stringify(settings);
-        if (this.cli?.isRunning() && this.applied === signature) return;
+        const imageEnv = await imageToolEnvironment();
+        if (this.closed || this.busy) return;
+        const imageSignature = JSON.stringify(imageEnv);
+        if (this.cli?.isRunning() && this.applied === signature && this.appliedImageEnvironment === imageSignature) return;
         const claimedSession = this.data.cliSessionId;
         if (claimedSession) {
             const { routes } = await import('../chatRuntime/routeState');
@@ -227,7 +231,7 @@ export class EditorChatRuntime {
         const mcpServers = Object.fromEntries(Object.entries(base.mcpServers ?? {}).filter(([name]) => !['llsccaiBrowser', 'llsccaiVscode', 'llsccaiWakeup', 'llsccaiImage', 'llsccaiHttp'].includes(name)));
         for (const name of ['llsccaiBrowser', 'llsccaiVscode', 'llsccaiWakeup', 'llsccaiImage', 'llsccaiHttp']) if (base.mcpServers?.[name]) {
             mcpServers[name] = { type: 'stdio', command: process.execPath, args: ['-e', `require(${JSON.stringify(require.resolve('./mcp'))}).startEditorBridge()`],
-                env: { ELECTRON_RUN_AS_NODE: '1', LLS_EDITOR_BRIDGE: name, LLS_EDITOR_TOOL_URL: `${url}/tools` } };
+                env: { ELECTRON_RUN_AS_NODE: '1', LLS_EDITOR_BRIDGE: name, LLS_EDITOR_TOOL_URL: `${url}/tools`, ...(name === 'llsccaiImage' ? imageEnv : {}) } };
         }
         if (this.closed || (!forCliUpdate && (await import('../setup/gate')).isCliUpdateInProgress())) { adapter.dispose(); cli.dispose(); return; }
         await cli.start({ ...base, cwd: this.data.cwd, model: settings.normalModel, permissionMode: settings.permissionMode,
@@ -236,7 +240,7 @@ export class EditorChatRuntime {
             cliEnv: { ...base.cliEnv, LLS_EDITOR_PRIVATE_RELAY: '1', CLAUDE_CODE_SKIP_AUTH_LOGIN: '1', CLAUDE_CODE_SKIP_MODEL_VALIDATION: '1', ANTHROPIC_MODEL: settings.normalModel, ANTHROPIC_BASE_URL: url, ANTHROPIC_API_KEY: 'editor-session-local', ANTHROPIC_AUTH_TOKEN: 'editor-session-local', ANTHROPIC_CUSTOM_HEADERS: '', ...native.env },
             nativeCompaction: native.policy, nativeCompactionEnv: env });
         if (this.closed) { await cli.stop(); return; }
-        this.applied = signature;
+        this.applied = signature; this.appliedImageEnvironment = imageSignature;
         this.post({ type: 'autoCompact/current', enabled: settings.autoCompactEnabled, policy: native.policy });
         this.post({ type: 'cli/status', status: 'running' });
     }
@@ -357,7 +361,12 @@ export class EditorChatRuntime {
         this.relay.compactionFailures.reset(this.data.cliSessionId ?? '');
         try { await this.adapter!.sendUserMessage(prompt); } catch (error) { await this.cancel(); throw error; }
     }
-    /** Merge CLI public events into this panel, rejecting stale process generations at the subscription. */
+    /**
+     * Merge CLI public events into this panel, rejecting stale process generations at the subscription.
+     * Native compaction requires an explicit result and never invents summary text or token measurements.
+     * Silent notifications cannot reopen completed messages; background patches preserve omitted state.
+     * @param event Parsed event emitted by this conversation's current CLI process.
+     */
     private async onEvent(event: ParsedCliEvent): Promise<void> {
         if (event.type === 'session/init') {
             if (getImageService()) await imageScope(this.data.cwd, this.data.conversationId, event.sessionId, this.data.title).catch(() => {});
@@ -365,7 +374,7 @@ export class EditorChatRuntime {
             if (this.recoveryIdentity) this.recoveryIdentity = this.recovery.bindSession(this.recoveryIdentity, event.sessionId) ?? this.recoveryIdentity;
             await this.persist();
         }
-        if (event.type === 'segments' && this.assistant) {
+        if (event.type === 'segments' && event.segments.length > 0 && this.assistant) {
             for (const segment of event.segments) {
                 this.bindSegmentUsage(segment);
                 if (segment.tool) {
@@ -375,17 +384,15 @@ export class EditorChatRuntime {
                 const index = segment.id ? this.assistant.segments.findIndex(item => item.id === segment.id && item.requestId === segment.requestId) : -1;
                 if (index >= 0) this.assistant.segments[index] = segment; else this.assistant.segments.push(segment);
             }
-            this.post({ type: 'message/patch', id: this.assistant.id, segments: event.segments, pending: true, append: true });
+            this.post({ type: 'message/patch', id: this.assistant.id, segments: event.segments, pending: this.busy && this.assistant.pending === true, append: true });
         }
-        if (event.type === 'backgroundTasks/snapshot') { this.background.clear(); event.tasks.forEach(task => this.background.add(task.taskId)); }
-        if (event.type === 'backgroundTasks/update') {
-            if (['completed', 'failed', 'cancelled', 'killed'].includes(String(event.patch.status))) this.background.delete(event.taskId); else this.background.add(event.taskId);
-        }
+        if (event.type === 'backgroundTasks/snapshot' || event.type === 'backgroundTasks/update') this.updateBackgroundTasks(event);
         if (event.type === 'compact/status') {
             const sessionId = this.data.cliSessionId ?? '';
             if (event.status === 'compacting') this.post({ type: 'compaction/started', sessionId, beforeTokens: 0 });
-            else if (event.compactError || event.compactResult === 'failed') this.post({ type: 'compaction/failed', sessionId, error: event.compactError ?? 'Compaction failed' });
-            else this.post({ type: 'compaction/finished', oldSessionId: sessionId, newSessionId: sessionId, beforeTokens: 0, afterTokens: 0, summary: 'CLI context compacted; visible history preserved.' });
+            else if (event.compactError || (event.compactResult && event.compactResult !== 'success')) this.post({ type: 'compaction/failed', sessionId, error: event.compactError || event.compactResult || 'Compaction failed' });
+            // Like the main sidebar, native completion only clears the busy state; no summary or post-compact usage is available.
+            else if (event.compactResult === 'success') this.post({ type: 'compaction/finished', oldSessionId: sessionId, newSessionId: sessionId, beforeTokens: 0, afterTokens: 0, summary: '' });
         }
         if (event.type === 'api/retry' && this.recoveryIdentity) this.recovery.onCliApiRetry(this.recoveryIdentity, { status: event.errorStatus, code: event.errorCode });
         if (event.type === 'error') { this.turnFailed = true; this.post({ type: 'message/error', error: event.message }); }
@@ -402,6 +409,25 @@ export class EditorChatRuntime {
         }
         if ((event.type === 'done' || event.type === 'segments') && event.turnFinished) { this.turnFinished = true; this.turnFailed ||= event.turnResult?.isError === true; }
         await this.finishTurn();
+    }
+    /**
+     * Merge background activity without treating metadata-only patches as new running tasks.
+     * @param event Authoritative active-task snapshot or partial update from this CLI session.
+     */
+    private updateBackgroundTasks(event: Extract<ParsedCliEvent, { type: 'backgroundTasks/snapshot' | 'backgroundTasks/update' }>): void {
+        if (event.sessionId && this.data.cliSessionId && event.sessionId !== this.data.cliSessionId) return;
+        if (event.type === 'backgroundTasks/snapshot') {
+            this.background.clear();
+            for (const task of event.tasks) this.background.add(task.taskId);
+            return;
+        }
+        const { status, end_time: endTime } = event.patch;
+        if (['completed', 'failed', 'cancelled', 'canceled', 'killed'].includes(status ?? '')
+            || (typeof endTime === 'number' && Number.isFinite(endTime))) {
+            this.background.delete(event.taskId);
+        } else if (['running', 'pending', 'queued'].includes(status ?? '')) {
+            this.background.add(event.taskId);
+        }
     }
     /** Commit turn completion after all tracked work settles, then schedule only this workflow. */
     private async finishTurn(): Promise<void> {
@@ -464,6 +490,20 @@ export class EditorChatRuntime {
             if (!this.closed) await this.appendRestartNotice(`${text[6]}: ${String(error)}`);
             throw error;
         } finally { this.restarting = false; }
+    }
+    /**
+     * Refresh image MCP schemas only when this running conversation is idle; accepted image tasks stay in the host.
+     * @returns True when applied/already stopped, or false while the turn, tools, recovery or CLI update is active.
+     */
+    private async refreshImageToolsCli(): Promise<boolean> {
+        if (this.closed) return true;
+        if (this.starting || this.restarting) return false;
+        if (!this.cli?.isRunning()) return true;
+        if (this.imageDeliveryBusy() || this.imageResultSending || (await import('../setup/gate')).isCliUpdateInProgress()) return false;
+        if (this.imageDeliveryBusy() || this.closed) return false;
+        this.restarting = true;
+        try { await this.ensureCli(); return true; }
+        finally { this.restarting = false; }
     }
     /** Report whether switching this host to another conversation would interrupt active work. */
     public isBusy(): boolean { return this.busy || this.background.size > 0 || !!this.starting || this.restarting; }

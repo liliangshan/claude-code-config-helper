@@ -12,13 +12,16 @@ import { ImageTaskManager } from './taskManager';
 import { ImageTaskStore } from './taskStore';
 import { safeDirectory } from './storage';
 import { loadLocalImageSources } from './localImages';
-import { IMAGE_TOOL_SCHEMAS, isImageToolName } from './tools';
+import { imageToolSchemas, isImageToolName } from './tools';
+import { imageAnimationOptions } from './animation';
 import { isImageTaskTerminal } from './results';
 import { IMAGE_BODY_LIMIT, ImageError, imageErrorCode, type ImageScope, type ImageSubmission, type ImageTask, type ImageWebviewMessage, type ImageWebviewRequest } from './types';
 
 /** A bound presentation supplies its own current task scope and never selects a global model itself. */
 export interface ImageViewBinding {
     scope(): Promise<ImageScope>; post(message: ImageWebviewMessage): void;
+    /** Reload this running conversation's tool schemas at a safe idle point; return false while busy. */
+    refreshCli?(): Promise<boolean>;
     /** Read the durable result-delivery receipt for this exact conversation and task. */
     delivered?(scope: ImageScope, task: ImageTask): boolean;
     /** Persist a completion user event and deliver it once; return false while this conversation is busy or changed. */
@@ -46,7 +49,12 @@ export class ImageToolHost {
     private readonly providerSubscription: vscode.Disposable;
     private stopped = false;
     private updateTimer?: NodeJS.Timeout;
-    /** Bind global storage without copying provider secrets or conversation-specific model defaults. */
+    private refreshTimer?: NodeJS.Timeout;
+    private refreshRunning = false;
+    private configRevision?: number;
+    private readonly pendingRefresh = new Map<ImageViewBinding, number>();
+    private mainRefreshRevision?: number;
+    /** Bind global storage and debounce committed revisions without copying credentials into CLI environments. */
     public constructor(private readonly context: vscode.ExtensionContext, private readonly manager: ConfigManager) {
         this.config = new ImageConfigStore(context.globalStorageUri.fsPath, context.secrets, manager);
         this.config.on('change', () => {
@@ -61,6 +69,7 @@ export class ImageToolHost {
      */
     public async initialize(): Promise<void> {
         await this.config.initialize();
+        try { this.configRevision = (await this.config.read()).revision; } catch { this.configRevision ??= 0; /* A later repaired save must still refresh running CLIs. */ }
         for (const folder of vscode.workspace.workspaceFolders ?? []) {
             if (!vscode.workspace.isTrusted || !['file', 'vscode-remote'].includes(folder.uri.scheme)) continue;
             try {
@@ -74,20 +83,59 @@ export class ImageToolHost {
             }
         }
     }
-    /** Attach a chat without retaining its Webview after disposal. */
+    /** Attach a chat without retaining its Webview or pending schema refresh after disposal. */
     public attach(view: ImageViewBinding): vscode.Disposable {
         this.views.add(view);
         const delivered = this.delivered.get(view); if (delivered) delivered.clear();
-        return { dispose: () => { this.views.delete(view); const timer = this.retryTimers.get(view); if (timer) clearTimeout(timer); this.retryTimers.delete(view); } };
+        return { dispose: () => { this.views.delete(view); this.pendingRefresh.delete(view); const timer = this.retryTimers.get(view); if (timer) clearTimeout(timer); this.retryTimers.delete(view); } };
     }
-    /** Refresh all configuration chips and scheduling limits, never replacing open form drafts. */
+    /** Broadcast committed configuration and schedule one safe CLI refresh per new revision. */
     private async broadcast(): Promise<void> {
         if (this.stopped) return;
         try {
             const state = await this.config.publicState();
             for (const queue of this.queues.values()) queue.configure(state.config.maxConcurrent, state.config.maxQueue);
             for (const view of this.views) view.post({ type: 'imageGeneration/state', state });
+            if (state.config.revision > (this.configRevision ?? state.config.revision)) {
+                this.configRevision = state.config.revision;
+                this.mainRefreshRevision = state.config.revision;
+                for (const view of this.views) if (view.refreshCli) this.pendingRefresh.set(view, state.config.revision);
+                this.scheduleCliRefresh();
+            } else if (this.configRevision === undefined) this.configRevision = state.config.revision;
         } catch { /* The next explicit read reports storage failure without leaking internal errors. */ }
+    }
+    /** Coalesce saved revisions; the timer only waits for safe local CLI restart admission, never polls a provider. */
+    private scheduleCliRefresh(): void {
+        if (this.stopped || this.refreshTimer || this.refreshRunning) return;
+        this.refreshTimer = setTimeout(() => {
+            this.refreshTimer = undefined;
+            void this.refreshClis();
+        }, 250);
+        this.refreshTimer.unref?.();
+    }
+    /** Refresh each running CLI independently; busy conversations retain their newest pending revision. */
+    private async refreshClis(): Promise<void> {
+        if (this.stopped || this.refreshRunning) return;
+        this.refreshRunning = true;
+        try {
+            const revision = this.mainRefreshRevision;
+            if (revision !== undefined) {
+                try {
+                    const { refreshImageToolsCli } = await import('../chatRuntime/cliLifecycle');
+                    if (await refreshImageToolsCli() && this.mainRefreshRevision === revision) this.mainRefreshRevision = undefined;
+                } catch { if (this.mainRefreshRevision === revision) this.mainRefreshRevision = undefined; Logger.warn('[image-config] Main CLI refresh failed; restart the chat CLI manually.'); }
+            }
+            for (const [view, revision] of this.pendingRefresh) {
+                if (this.stopped) break;
+                if (!this.views.has(view)) { this.pendingRefresh.delete(view); continue; }
+                try {
+                    if (await view.refreshCli?.() && this.pendingRefresh.get(view) === revision) this.pendingRefresh.delete(view);
+                } catch { if (this.pendingRefresh.get(view) === revision) this.pendingRefresh.delete(view); Logger.warn('[image-config] Independent CLI refresh failed; restart the chat CLI manually.'); }
+            }
+        } finally {
+            this.refreshRunning = false;
+            if (this.mainRefreshRevision !== undefined || this.pendingRefresh.size) this.scheduleCliRefresh();
+        }
     }
     /** Resolve a real workspace directory; virtual/absent/untrusted workspaces cannot receive generated files. */
     private async workspace(cwd: string, writable = true): Promise<string> {
@@ -209,9 +257,9 @@ export class ImageToolHost {
             } catch { /* Saved task results remain available for the next ready/refresh if a view disappears. */ }
         }
     }
-    /** Enforce schema fields and tool envelope size again at the trusted host boundary. */
+    /** Enforce the full supported field allowlist; current GIF capability is checked before task admission. */
     private validate(name: string, args: Record<string, unknown>): void {
-        const schema = IMAGE_TOOL_SCHEMAS.find(item => item.name === name);
+        const schema = imageToolSchemas(true).find(item => item.name === name);
         if (!schema || !args || Array.isArray(args) || typeof args !== 'object') throw new ImageError('IMAGE_ARGUMENT_INVALID');
         if (Object.keys(args).some(key => !Object.hasOwnProperty.call(schema.inputSchema.properties, key))) throw new ImageError('IMAGE_ARGUMENT_INVALID');
         if (Buffer.byteLength(JSON.stringify({ name, arguments: args })) > IMAGE_BODY_LIMIT) throw new ImageError('IMAGE_PAYLOAD_TOO_LARGE');
@@ -246,7 +294,8 @@ export class ImageToolHost {
         this.validate(name, args);
         if (name === 'openapi_image_generation_info') {
             const state = await this.config.publicState(); const c = state.config;
-            return { enabled: c.enabled, configured: !state.error && !!c.modelId, model: c.modelId, sizeRequired: true,
+            return { enabled: c.enabled, configured: !state.error && !!c.modelId, model: c.modelId, sizeRequired: true, supportsGif: c.supportsGif,
+                ...(c.supportsGif ? { gif: { output_format: 'gif', sizeMultiple: 16, frame_count: { min: 2, max: 64, default: 9 }, frame_duration_ms: { min: 20, max: 2000, default: 200 } } } : {}),
                 storageDirectory: '.LLSOAI/openapi-image-generation',
                 editEnabled: c.editEnabled, editInput: 'local-file-paths-only', sourcePathsOutsideWorkspace: true, timeoutMs: c.timeoutMs, maxConcurrent: c.maxConcurrent, maxQueue: c.maxQueue,
                 maxResponseBytes: c.maxResponseBytes, maxFileBytes: c.maxFileBytes, error: state.error };
@@ -274,7 +323,7 @@ export class ImageToolHost {
         const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : '';
         const size = args.size;
         if (!prompt || prompt.length > 10000 || typeof size !== 'string' || !/^[1-9]\d{0,5}x[1-9]\d{0,5}$/.test(size)) throw new ImageError('IMAGE_ARGUMENT_INVALID');
-        const input: ImageSubmission = { prompt, size, operation };
+        const input: ImageSubmission = { prompt, size, operation, ...imageAnimationOptions(args, size, config.supportsGif) };
         if (operation === 'edit') {
             if (!config.editEnabled) throw new ImageError('IMAGE_EDIT_DISABLED');
             input.image = await loadLocalImageSources(args.image, scope.cwd, config.maxFileBytes, () => {
@@ -296,7 +345,7 @@ export class ImageToolHost {
      * Handle configuration and explicit image actions with the same local/remote URI resolution as auto-open.
      * @param request The bound view's image-only message.
      * @param view The originating conversation binding used to validate task ownership.
-     * @returns Completion without changing chat model selection or restarting the CLI.
+     * @returns Completion after saving and scheduling safe CLI refresh, without changing chat model selection.
      */
     public async receive(request: ImageWebviewRequest, view: ImageViewBinding): Promise<void> {
         if (!request || typeof request.requestId !== 'string' || request.requestId.length > 100 || this.stopped) return;
@@ -308,7 +357,7 @@ export class ImageToolHost {
                 if (!vscode.workspace.isTrusted) throw new ImageError('IMAGE_WORKSPACE_REQUIRED');
                 if (request.type === 'imageGeneration/configCheck') {
                     await this.config.check(request.input); await this.workspace((await view.scope()).cwd);
-                } else await this.config.save(request.input);
+                } else { await this.config.save(request.input); await this.broadcast(); }
                 view.post({ type: 'imageGeneration/state', state: await this.config.publicState() });
                 view.post({ type: 'imageGeneration/saveResult', requestId: request.requestId, ok: true, checked: request.type === 'imageGeneration/configCheck' }); return;
             }
@@ -333,9 +382,10 @@ export class ImageToolHost {
         const choice = await vscode.window.showWarningMessage(labels.running, { modal: true }, labels.background, labels.stop);
         if (choice === labels.stop) await queue.interruptScope(scope.id);
     }
-    /** Stop all admissions before closing views and draining local task writes. */
+    /** Stop admissions and schema-refresh timers before draining this host's image-task writes. */
     public async close(): Promise<void> {
         this.stopped = true; if (this.updateTimer) clearTimeout(this.updateTimer);
+        if (this.refreshTimer) clearTimeout(this.refreshTimer); this.pendingRefresh.clear(); this.mainRefreshRevision = undefined;
         for (const timer of this.retryTimers.values()) clearTimeout(timer); this.retryTimers.clear();
         this.providerSubscription.dispose(); this.config.dispose(); this.views.clear();
         const pendingAtClose = [...this.queues.values()];

@@ -4,6 +4,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { ConfigManager } from '../configManager';
 import { ImageToolHost, type ImageViewBinding } from './imageToolHost';
 import { ImageError, type ImageScope, type ImageWebviewRequest } from './types';
+import { IMAGE_CONFIG_REVISION_ENV, IMAGE_GIF_ENV } from './animation';
+import { refreshImageRequestSchemas } from './requestSchemas';
 
 let service: ImageToolHost | undefined;
 let extensionContext: vscode.ExtensionContext | undefined;
@@ -17,6 +19,21 @@ export async function configureImages(context: vscode.ExtensionContext, manager:
 }
 /** Obtain the host service without exposing it to MCP subprocesses. */
 export function getImageService(): ImageToolHost | undefined { return service; }
+/** Read non-sensitive capability and revision values for a fresh CLI/MCP startup; invalid settings expose static tools only. */
+export async function imageToolEnvironment(): Promise<Record<string, string>> {
+    try {
+        const config = await service?.config.read();
+        return { [IMAGE_GIF_ENV]: config?.supportsGif ? '1' : '0', [IMAGE_CONFIG_REVISION_ENV]: String(config?.revision ?? 0) };
+    } catch { return { [IMAGE_GIF_ENV]: '0', [IMAGE_CONFIG_REVISION_ENV]: 'invalid' }; }
+}
+/** Refresh only already-advertised built-in image tools from committed host capability; never edit CLI history. */
+export async function refreshImageToolsForRequest(body: unknown): Promise<unknown> {
+    if (!service || !body || typeof body !== 'object' || !Array.isArray((body as { tools?: unknown }).tools)) return body;
+    const tools = (body as { tools: Array<{ name?: unknown }> }).tools;
+    if (!tools.some(tool => tool?.name === 'mcp__llsccaiImage__openapi_generate_image' || tool?.name === 'mcp__llsccaiImage__openapi_edit_image')) return body;
+    try { return refreshImageRequestSchemas(body, (await service.config.read()).supportsGif); }
+    catch { return body; }
+}
 /** Hash stable identity fields, never accepting model-supplied filesystem keys. */
 function scopeHash(cwd: string, owner: string, identity: string): string { return createHash('sha256').update(JSON.stringify([cwd, owner, identity])).digest('hex'); }
 /** Resolve/persist an image identity before a CLI session exists and bind it when native history appears. */

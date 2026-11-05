@@ -20,6 +20,7 @@ import type { ChatRoute } from '../chat/protocol';
 import type { ConfigManager } from '../configManager';
 import { readCompactionConfigFromVscode } from '../chatRuntime/compactionConfig';
 import { Logger } from '../logger';
+import { refreshImageToolsForRequest } from '../imageTools/entry';
 import type { AutoContinueScheduler } from '../llsTask/autoContinue';
 import { isLlsCcaiTaskTriggered } from '../llsTask/detector';
 import type { LlsTaskService } from '../llsTask/service';
@@ -375,7 +376,7 @@ function sanitizeHeaders(headers: http.IncomingHttpHeaders): Record<string, stri
 /**
  * 创建 Relay 路由处理函数。
  *
- * 该函数承担路径校验、模型解析、压缩配置失败收尾与适配器分发，
+ * 该函数承担路径校验、模型解析、内置图片工具历史 schema 刷新、压缩配置失败收尾与适配器分发，
  * 真正的上游 HTTP 请求由具体的 {@link UpstreamAdapter} 负责发起；
  * 专用压缩请求通过缓冲响应事务保证失败时直接返回不可重试错误。
  *
@@ -552,6 +553,8 @@ export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
         const selectedEffort = configManager.getChatReasoningEffort?.() ?? 'auto';
         const reasoningEffort = selectedEffort === 'auto' ? undefined : selectedEffort;
         try {
+            const refreshedBody = await refreshImageToolsForRequest(parsedBody);
+            if (refreshedBody !== parsedBody) { parsedBody = refreshedBody; rawBody = JSON.stringify(refreshedBody); }
             const context = { req, res, provider, modelId, rawBody, parsedBody, reasoningEffort, usageContext, outcome, llsTaskCreateTriggered, compactCommandTriggered, onUpstreamTimeout };
             if (compactionModel) await compactionFailures.forward(compactionSessionId, res, outcome, () => forwardDedicatedCompaction(adapter, context));
             else await adapter.handle(context);

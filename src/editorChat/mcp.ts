@@ -5,13 +5,16 @@ import { BROWSER_BRIDGE } from '../browserTools/bridge';
 import { VSCODE_BRIDGE } from '../vscodeTools/bridge';
 import { WAKEUP_BRIDGE } from '../wakeupTools/bridge';
 import { IMAGE_BRIDGE } from '../imageTools/bridge';
+import { imageToolSchemas } from '../imageTools/tools';
+import { IMAGE_GIF_ENV } from '../imageTools/animation';
 import { HTTP_BRIDGE } from '../httpTools/bridge';
 import { forwardHttpTool } from '../httpTools/transport';
 import { forwardImageTool } from '../imageTools/transport';
 
-/** Launch an owned bridge without VS Code imports; HTTP calls use bounded, non-retrying transport. */
+/** Launch an owned bridge with capability-specific image schemas and bounded, non-retrying HTTP transport. */
 export function startEditorBridge(): void {
-    const descriptor = [BROWSER_BRIDGE, VSCODE_BRIDGE, WAKEUP_BRIDGE, IMAGE_BRIDGE, HTTP_BRIDGE].find(item => item.serverName === process.env.LLS_EDITOR_BRIDGE);
+    const base = [BROWSER_BRIDGE, VSCODE_BRIDGE, WAKEUP_BRIDGE, IMAGE_BRIDGE, HTTP_BRIDGE].find(item => item.serverName === process.env.LLS_EDITOR_BRIDGE);
+    const descriptor = base?.serverName === IMAGE_BRIDGE.serverName ? { ...base, schemas: imageToolSchemas(process.env[IMAGE_GIF_ENV] === '1') } : base;
     const endpoint = new URL(process.env.LLS_EDITOR_TOOL_URL ?? 'http://127.0.0.1:0/');
     if (!descriptor || endpoint.hostname !== '127.0.0.1' || endpoint.protocol !== 'http:') throw new Error('Invalid editor bridge');
     new McpStdioServer({ descriptor, host: { execute: async (name, args) => {

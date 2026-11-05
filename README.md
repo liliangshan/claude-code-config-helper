@@ -1,6 +1,6 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.87
+**Version:** 3.2.89
 
 **Website: [www.zhineng.dev](https://www.zhineng.dev/)**
 
@@ -37,6 +37,22 @@ When the Responses stream converter detects malformed tool arguments, it automat
 Files share the existing 20-snapshot error retention limit across date directories. Detection compares the upstream final arguments with the actual emitted argument fragments, including `__unparsedToolInput` wrappers and late fragments. The recorder also retains up to eight recent tool responses in memory (64 MiB total) to correlate a subsequent CLI `InputValidationError` by call ID. If the original response has expired or the extension was reloaded, the fallback file explicitly marks `originalResponseUnavailable`; it never substitutes an unrelated response.
 
 Request bodies, URLs and authentication headers are not included in these diagnostics, but **raw model responses and tool arguments can contain sensitive content**; review them before sharing. Token limits remain unchanged, and arguments are never repaired by guessing missing JSON characters.
+
+## What's New in 3.2.89
+
+- **Opt-in animated GIF generation and editing.** Enable **Model supports GIF** in the global image configuration to expose animation fields to the model. GIF requests must set `output_format: "gif"` and choose a `size` whose width and height are multiples of 16. `frame_count` accepts 2–64 frames (default 9); `frame_duration_ms` accepts 20–2000 milliseconds (default 200). Invalid requests are rejected before provider submission; ordinary static requests omit the GIF fields and remain unchanged.
+- **GIF files stay animated.** GIF87a/GIF89a results are accepted from Base64, Data URLs or downloads and saved unchanged as `.gif`, with requested animation parameters retained in task/completion records. History restoration and the existing automatic/manual editor-open actions support these outputs. Signature validation does not verify the provider's actual frame count or timing.
+- **Image settings refresh running CLIs safely.** Successful saves refresh main, left and retained-editor CLIs at idle points, preserving their existing sessions. Busy conversations wait for their current work to settle; accepted image tasks continue without cancellation or replay. Stopped chats are not started.
+- **GIF fields also reach resumed conversations.** CLI history can replay old tool definitions even after MCP restart. The relay now synchronizes existing built-in image generation/edit schemas before forwarding model requests, without rewriting history, adding tools, changing external MCPs or disabling prompt snapshots. Both normal and ToolSearch deferred modes are covered by real CLI 2.1.312 tests against local fixtures.
+
+**Upgrade note:** reload the installed extension or stop and restart the F5 development host to load the updated relay; restarting only a chat CLI does not load new extension code. Reloading can interrupt active CLI work. Then enable **Model supports GIF** only for a compatible image model and save. This is a user-declared capability, not a paid provider probe. Known `requestUsageBinding` and reused-response-ID limitations remain unchanged; real provider GIF support and actual editor animation display still require manual acceptance.
+
+## What's New in 3.2.88
+
+- **Consistent compaction feedback on both sides.** Left-side and independent editor chats now follow the main/right chat behavior after native CLI compaction: the input and token meter leave the busy state without showing the misleading "new session / 0 tokens / 0% saved" card. The host no longer supplies a placeholder summary when the CLI has not returned one.
+- **Only explicit success counts.** Failed, cancelled, unknown and error-bearing compaction results are reported as failures. A status reset without a result does not become a success notification. The existing session identity and visible conversation history are retained.
+
+**Upgrade note:** reload VS Code or restart the development host when ready to load the fix; active CLI tasks may be interrupted. This corrects future status notifications, not the compaction model, token thresholds or retry policy, and does not actively remove an old card already displayed. Known `requestUsageBinding` and reused-response-ID limitations remain unchanged.
 
 ## What's New in 3.2.87
 
@@ -437,8 +453,11 @@ Click **Image**, immediately after the **Task flow** model chip, to edit the glo
 
 - **Existing provider:** select an enabled model from an OpenAI-compatible or Responses provider. Reusing its connection does not prove that the provider/model supports the Images API; add a missing image model in provider settings if necessary.
 - **Independent connection:** enter an Images API Base URL, model ID and API key. The model field accepts manual input and existing model suggestions. The key is stored in SecretStorage, never filled back into the dialog; leaving it blank preserves the saved key. Local unauthenticated services require the explicit no-authentication choice and must satisfy the current connection policy.
-- **Global selection:** main, parallel and retained editor chats use the same configuration within the current VS Code profile/extension-host storage environment. Saving updates subsequent tool calls, not already accepted tasks, without restarting the CLI. This is not automatic cross-device or local/remote synchronization.
+- **Global selection:** main, parallel and retained editor chats use the same configuration within the current VS Code profile/extension-host storage environment. Saving updates subsequent tool calls, not already accepted tasks, and automatically refreshes running chat CLIs at a safe idle point to reload tool schemas. Busy conversations wait until the current turn, permissions, compaction and recovery settle; the same session is resumed without replaying prompts. Stopped chats are not started. This is not automatic cross-device or local/remote synchronization.
 - **Per-request dimensions:** the model supplies `size` as `widthxheight`, for example `1024x1024`, according to your request and provider capabilities. There is no global size or advanced-settings form.
+- **Optional animated GIF:** enable **Model supports GIF** only if the selected image model supports it; old configurations default to off. This adds `output_format`, `frame_count` and `frame_duration_ms` to both generation/edit tool schemas. For an animation the model must explicitly choose `output_format: "gif"` and a `size` whose width and height are positive multiples of 16. `frame_count` accepts integers 2–64 (default 9); `frame_duration_ms` accepts integers 20–2000 (default 200). Frame settings are chosen per request, not saved as global form defaults. Omit all GIF fields for an ordinary static image; enabling the capability does not force animations. Invalid parameters or GIF requests while disabled fail before provider submission. Local configuration checks do not verify actual provider GIF support.
+
+- **Resumed conversations:** newer CLIs can replay tool schemas saved in native history even after restart. Before forwarding a model request, the relay refreshes only existing built-in image generation/edit definitions to the currently configured GIF capability. Conversation messages, external MCP tools and native history files remain unchanged; no new conversation or paid regeneration is needed.
 
 The bundled MCP server is `llsccaiImage`; installing a separate image MCP package is unnecessary.
 
@@ -451,7 +470,7 @@ The bundled MCP server is `llsccaiImage`; installing a separate image MCP packag
 | `openapi_search_images` | Search original task prompts using a case-insensitive literal substring. |
 | `openapi_image_generation_info` | Read non-sensitive model, enablement and limit information. |
 
-**Editing inputs are paths only:** pass `image` as an existing local path string, or an array of up to 16 paths. Absolute paths anywhere readable by the extension host, workspace-relative paths, `../` paths, symlinks, `~/` and local `file://` URIs are supported; no extra workspace-boundary authorization dialog is added. Remote sessions read files on the remote extension-host machine. Do not submit HTTP URLs, Base64 or Data URIs, and do not encode the image yourself. Missing files return `IMAGE_SOURCE_NOT_FOUND`; directories and unreadable files are rejected. Single-file limits remain, with a 100 MiB aggregate source limit. Source-format acceptance is still left to the provider. The host reads each source once and freezes a complete `data:<MIME>;base64,<encoded bytes>` URL in memory before accepting the task, rather than sending bare Base64. PNG/JPEG/WebP signatures determine their MIME type even when the filename is misleading; other sources use an extension-based MIME hint or `application/octet-stream` without adding a new format rejection. The MCP tool keeps its path-only `image` string/array input, but the upstream JSON edit request always uses `images: [{ "image_url": "data:<MIME>;base64,..." }]` and `n: 1`, including for a single source. It never sends the legacy top-level `image` field. Text-only generation still sends only `model`, `prompt` and `size`. No encoded source crosses the MCP request or is returned to the model.
+**Editing inputs are paths only:** pass `image` as an existing local path string, or an array of up to 16 paths. Absolute paths anywhere readable by the extension host, workspace-relative paths, `../` paths, symlinks, `~/` and local `file://` URIs are supported; no extra workspace-boundary authorization dialog is added. Remote sessions read files on the remote extension-host machine. Do not submit HTTP URLs, Base64 or Data URIs, and do not encode the image yourself. Missing files return `IMAGE_SOURCE_NOT_FOUND`; directories and unreadable files are rejected. Single-file limits remain, with a 100 MiB aggregate source limit. Source-format acceptance is still left to the provider. The host reads each source once and freezes a complete `data:<MIME>;base64,<encoded bytes>` URL in memory before accepting the task, rather than sending bare Base64. PNG/JPEG/WebP/GIF signatures determine their MIME type even when the filename is misleading; other sources use an extension-based MIME hint or `application/octet-stream` without adding a new format rejection. The MCP tool keeps its path-only `image` string/array input, but the upstream JSON edit request always uses `images: [{ "image_url": "data:<MIME>;base64,..." }]` and `n: 1`, including for a single source. It never sends the legacy top-level `image` field. Static text-only generation still sends only `model`, `prompt` and `size`; explicit GIF requests additionally send the validated format and frame parameters. No encoded source crosses the MCP request or is returned to the model.
 
 **Failure diagnostics:** task details and completion messages show the HTTP status and the first 500 Unicode characters of the response body after credential/image-data redaction. This also covers HTTP-success responses containing API errors, HTML, invalid JSON or missing image data. The bounded excerpt survives task/chat restoration; full responses and request credentials are not saved. Error-body capture is capped at 64 KiB and never triggers a retry. Existing failures without a saved response cannot recover that body retroactively.
 
@@ -460,7 +479,9 @@ After acceptance, continue other work or finish the turn: completion is automati
 Output is stored under the conversation's workspace:
 
 - `.LLSOAI/openapi-image-generation/tasks/<taskId>.json`
-- `.LLSOAI/openapi-image-generation/images/<imageId>.png` (or `.jpg` / `.webp`)
+- `.LLSOAI/openapi-image-generation/images/<imageId>.png` (or `.jpg` / `.webp` / `.gif`)
+
+GIF87a/GIF89a output is accepted from Base64, Data URLs or downloads and saved unchanged, preserving its animation bytes. GIF task/completion records retain the requested format, frame count and frame duration; the existing automatic/manual image-open actions also accept GIF files. Signature validation is not a full animation decoder and does not independently verify the provider's frame count or timing.
 
 The model receives `workspacePath`, each image's relative `path`, `absolutePath` and complete `fileUri`. Completion guidance asks for that URI verbatim when returning an image or open-original link, rather than rewriting it as a relative path. The chat keeps a compact localized summary with a checked open-image action; it does not expose a public download URL, rewrite Markdown resource addresses or guarantee inline file previews.
 
@@ -545,7 +566,7 @@ Command titles may be localized according to your configured UI language.
 
 ### Option 1: Install from a local VSIX
 
-Install the packaged `claude-code-config-helper-3.2.87.vsix` using VS Code's **Extensions → … → Install from VSIX…** action. Reload the window when ready to activate the installed build; reload interrupts currently running extension CLIs. To build a package yourself, install the repository dependencies, run `npm run compile`, then package with `@vscode/vsce`.
+Install the packaged `claude-code-config-helper-3.2.89.vsix` using VS Code's **Extensions → … → Install from VSIX…** action. Reload the window when ready to activate the installed build; reload interrupts currently running extension CLIs. To build a package yourself, install the repository dependencies, run `npm run compile`, then package with `@vscode/vsce`.
 
 ### CLI installation through setup
 

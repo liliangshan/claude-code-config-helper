@@ -60,8 +60,13 @@ test('left CLI keeps native project MCP discovery and private bridges while resp
             assert.ok(bridge.env?.LLS_EDITOR_TOOL_URL?.endsWith('/tools'));
             assert.equal(bridge.env?.LLS_BROWSER_TOOL_RELAY_PORT, undefined, 'Built-in bridges remain session-private');
         }
+        assert.equal(first.config.mcpServers?.llsccaiImage.env?.LLS_IMAGE_SUPPORTS_GIF, '0');
+        const imageEntry = await import('../../imageTools/entry');
+        t.mock.method(imageEntry, 'imageToolEnvironment', async () => ({ LLS_IMAGE_SUPPORTS_GIF: '1', LLS_IMAGE_CONFIG_REVISION: '12' }));
         stub.values.claudeCodeConfigHelper['chat.strictMcpConfig'] = true;
         await left.receive({ type: 'cli/restart' });
+        assert.equal(launches.at(-1)!.config.mcpServers?.llsccaiImage.env?.LLS_IMAGE_SUPPORTS_GIF, '1');
+        assert.equal(launches.at(-1)!.config.mcpServers?.llsccaiImage.env?.LLS_IMAGE_CONFIG_REVISION, '12');
         assert.equal(launches.at(-1)!.args.includes('--strict-mcp-config'), true, 'An explicitly enabled strict policy must remain enabled');
         stub.values.claudeCodeConfigHelper['chat.strictMcpConfig'] = false;
         await left.receive({ type: 'cli/restart' });

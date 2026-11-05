@@ -4,7 +4,7 @@ export const IMAGE_TOTAL_LIMIT = 100 * 1024 * 1024;
 
 /** Global persisted settings; credentials are referenced, never serialized here. */
 export interface ImageGenerationConfig {
-    version: 1; revision: number; enabled: boolean; source: 'provider' | 'custom';
+    version: 1; revision: number; enabled: boolean; supportsGif: boolean; source: 'provider' | 'custom';
     providerId: string; modelId: string; baseUrl: string; authMode: 'bearer' | 'none'; secretRef?: string;
     allowLocalHttp: boolean; generationEndpointOverride: string;
     editEnabled: boolean; editEndpointOverride: string; editModelId: string;
@@ -34,15 +34,17 @@ export interface ImageScope { cwd: string; id: string; title: string }
 export interface ImageFile { id: string; relativePath: string; mimeType: string; bytes: number }
 /** Redacted upstream response prefix, capped at 500 Unicode characters; never a complete response archive. */
 export interface ImageResponsePreview { status: number; body: string; truncated: boolean }
+/** Optional GIF request parameters; normalized submissions contain both frame values when output_format is gif. */
+export interface ImageAnimationOptions { output_format?: 'gif'; frame_count?: number; frame_duration_ms?: number }
 /** Per-task durable record; source images and request credentials are deliberately absent. */
-export interface ImageTask {
+export interface ImageTask extends ImageAnimationOptions {
     version: 1; taskId: string; scopeId: string; operation: 'generate' | 'edit'; prompt: string;
     model: string; configRevision: number; size: string;
     status: 'queued' | 'running' | 'succeeded' | 'partially_failed' | 'failed' | 'interrupted';
     createdAt: number; startedAt?: number; finishedAt?: number; images: ImageFile[]; error?: string; responsePreview?: ImageResponsePreview;
 }
 /** Host-prepared transient submission; image contains complete Base64 Data URLs, never model-supplied inline data. */
-export interface ImageSubmission { prompt: string; size: string; operation: 'generate' | 'edit'; image?: string | string[] }
+export interface ImageSubmission extends ImageAnimationOptions { prompt: string; size: string; operation: 'generate' | 'edit'; image?: string | string[] }
 /** Configuration requests and task actions accepted from the shared chat UI. */
 export type ImageWebviewRequest =
     | { type: 'imageGeneration/configGet'; requestId: string }
@@ -67,9 +69,9 @@ export class ImageError extends Error {
 export function imageErrorCode(error: unknown): string {
     return error instanceof ImageError ? error.code : 'IMAGE_STORAGE_FAILED';
 }
-/** Fresh disabled defaults; no commercial endpoint or model is preselected. */
+/** Fresh disabled defaults; GIF capability is opt-in and no commercial endpoint or model is preselected. */
 export function defaultImageConfig(): ImageGenerationConfig {
-    return { version: 1, revision: 0, enabled: false, source: 'custom', providerId: '', modelId: '', baseUrl: '', authMode: 'bearer',
+    return { version: 1, revision: 0, enabled: false, supportsGif: false, source: 'custom', providerId: '', modelId: '', baseUrl: '', authMode: 'bearer',
         allowLocalHttp: false, generationEndpointOverride: '', editEnabled: true,
         editEndpointOverride: '', editModelId: '', timeoutMs: 180000, maxConcurrent: 1, maxQueue: 100,
         maxResponseBytes: 20 * 1024 * 1024, maxFileBytes: 20 * 1024 * 1024 };

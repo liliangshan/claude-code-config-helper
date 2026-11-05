@@ -25,3 +25,23 @@ export const IMAGE_TOOL_SCHEMAS: readonly ImageSchema[] = [
     tool('openapi_image_generation_info', 'Read non-sensitive global model, enablement, defaults and limits. Never returns URLs or credentials.', {}, [], true)
 ];
 export const isImageToolName = createToolNameGuard(IMAGE_TOOL_SCHEMAS);
+
+/**
+ * Build capability-specific public schemas without importing host settings or secrets into MCP processes.
+ * @param supportsGif User-declared capability of the globally selected image model.
+ * @returns Fresh schemas; static tools remain unchanged unless GIF support is enabled.
+ */
+export function imageToolSchemas(supportsGif: boolean): readonly ImageSchema[] {
+    if (!supportsGif) return IMAGE_TOOL_SCHEMAS;
+    return IMAGE_TOOL_SCHEMAS.map(schema => {
+        if (schema.name !== 'openapi_generate_image' && schema.name !== 'openapi_edit_image') return schema;
+        return { ...schema,
+            description: schema.description + ' This model supports animated GIF output. For animation you MUST submit output_format="gif" and choose size with both dimensions multiples of 16. Choose frame_count (2–64, default 9) and frame_duration_ms (20–2000 ms, default 200) for the requested animation. Omit all three GIF fields for an ordinary static image.',
+            inputSchema: { ...schema.inputSchema, properties: { ...schema.inputSchema.properties,
+                size: { ...size, description: size.description + ' For GIF animations both width and height must be multiples of 16, e.g. 512x512 or 768x432.' },
+                output_format: { type: 'string', enum: ['gif'], description: 'Required for animated output: MUST be gif. Omit for ordinary static images; enabling GIF capability alone does not request an animation.' },
+                frame_count: { type: 'integer', minimum: 2, maximum: 64, default: 9, description: 'Animation frame count, 2–64. Choose per request; omitted uses 9. Requires output_format="gif".' },
+                frame_duration_ms: { type: 'integer', minimum: 20, maximum: 2000, default: 200, description: 'Duration of each animation frame in milliseconds, 20–2000. Choose per request; omitted uses 200. Requires output_format="gif".' }
+            } } };
+    });
+}

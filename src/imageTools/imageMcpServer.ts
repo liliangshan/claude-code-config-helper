@@ -3,8 +3,10 @@ import { McpStdioServer } from '../mcpKit/stdioServer';
 import { IMAGE_BRIDGE } from './bridge';
 import { forwardImageTool } from './transport';
 import { imageErrorCode } from './types';
+import { imageToolSchemas } from './tools';
+import { IMAGE_GIF_ENV } from './animation';
 
-/** Launch an authenticated, revocable main-chat bridge; missing relay remains visibly unavailable. */
+/** Launch a capability-specific authenticated bridge; missing relay remains visibly unavailable. */
 export function startImageMcpServer(): void {
     const port = Number(process.env.LLS_IMAGE_TOOL_RELAY_PORT || 0);
     const capability = process.env.LLS_IMAGE_TOOL_CAPABILITY || '';
@@ -14,5 +16,5 @@ export function startImageMcpServer(): void {
             catch (error) { return { isError: true, content: [{ type: 'text' as const, text: imageErrorCode(error) }] }; }
         }
     } : undefined;
-    new McpStdioServer({ descriptor: IMAGE_BRIDGE, host }).start();
+    new McpStdioServer({ descriptor: { ...IMAGE_BRIDGE, schemas: imageToolSchemas(process.env[IMAGE_GIF_ENV] === '1') }, host }).start();
 }

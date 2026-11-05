@@ -16,6 +16,7 @@ import type { UsageReport } from '../relay/usageReporter';
 import type { LlsTaskService } from '../llsTask/service';
 import type { EditorContinuation } from './continuation';
 import { readImageRequest } from '../imageTools/transport';
+import { refreshImageToolsForRequest } from '../imageTools/entry';
 import { readHttpToolRequest } from '../httpTools/transport';
 import type { EditorSettings } from './store';
 
@@ -52,7 +53,7 @@ export class EditorRelay {
         this.url = this.url.substring(0, this.url.lastIndexOf('/') + 1) + this.token;
         return this.url;
     }
-    /** Resolve the owned snapshot and bounded HTTP tool envelopes; disconnects cancel only that tool request. */
+    /** Resolve owned requests, refresh stale image schemas and cancel only the disconnected HTTP tool request. */
     private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
         const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
         if (req.method !== 'POST' || ![`/${this.token}/v1/messages`, `/${this.token}/tools`, `/${this.token}/tools/image`, `/${this.token}/tools/http`].includes(pathname) || !this.settings || !this.active) { res.writeHead(403); res.end(); return; }
@@ -61,7 +62,7 @@ export class EditorRelay {
             const imageRequest = pathname.endsWith('/tools/image');
             const httpRequest = pathname.endsWith('/tools/http');
             const rawBody = await (imageRequest ? readImageRequest(req) : httpRequest ? readHttpToolRequest(req) : readRequestBody(req));
-            const body = JSON.parse(rawBody) as Record<string, unknown>;
+            let body = JSON.parse(rawBody) as Record<string, unknown>;
             if (pathname.endsWith('/tools') || imageRequest || httpRequest) {
                 if (!this.toolHandler) throw new Error('Editor tools unavailable');
                 if ((body.bridge === 'llsccaiHttp') !== httpRequest) throw new Error('HTTP_RELAY_REJECTED');
@@ -132,6 +133,7 @@ export class EditorRelay {
             const usageContext = createRequestUsageContext(body, 'normal', model.providerId, model.modelId, compact, provider.apiType);
             const outcome = new RequestOutcomeReporter(usageContext, this.onOutcome); this.onRequest?.(usageContext.requestId);
             try {
+                body = await refreshImageToolsForRequest(body) as Record<string, unknown>;
                 const context = { req, res, provider, modelId: model.modelId, rawBody: JSON.stringify(body), parsedBody: body,
                     llsTaskCreateTriggered: triggered, compactCommandTriggered: compact, reasoningEffort: compact || settings.reasoningEffort === 'auto' ? undefined : settings.reasoningEffort,
                     usageContext, usageRegistry: this.usageRegistry, outcome };

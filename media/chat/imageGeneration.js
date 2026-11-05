@@ -12,7 +12,17 @@
         fr: ['Image', 'Génération d’images', 'Connexion globale · partagée entre tous les chats', 'Activer les outils image', 'Connexion', 'Fournisseur existant', 'Connexion indépendante', 'Fournisseur', 'Modèle', 'Base URL', 'API Key', 'Clé enregistrée · vide pour conserver', 'Aucune clé enregistrée', 'Supprimer la clé', 'Sans authentification', 'Annuler', 'Vérifier localement', 'Enregistrer', 'Recharger', 'Tâches image de ce chat', 'Ouvrir l’image', 'Non configuré', 'Désactivé', 'Configuration invalide', 'Vérifications locales réussies. API image non testée.', 'Configuration modifiée ailleurs. Rechargez avant d’enregistrer.', 'Aucune tâche image', 'En attente', 'En cours', 'Terminé', 'Échec partiel', 'Échec', 'Interrompu', 'Choisissez un modèle compatible Images. Ajoutez les modèles manquants dans les paramètres du fournisseur.', 'Vérifiez configuration, autorisations et stockage. Ne répétez pas automatiquement une requête payante.', 'Fermer', 'Images et tâches enregistrées dans le projet', 'Le modèle précise la taille à chaque requête. Des frais peuvent s’appliquer ; les sources sont envoyées au fournisseur pour l’édition.'],
         de: ['Bild', 'Bilderzeugung', 'Globale Verbindung · für alle Chats', 'Bildwerkzeuge aktivieren', 'Verbindung', 'Vorhandener Anbieter', 'Separate Verbindung', 'Anbieter', 'Modell', 'Base URL', 'API Key', 'Schlüssel gespeichert · leer lassen zum Beibehalten', 'Kein Schlüssel gespeichert', 'Schlüssel entfernen', 'Keine Authentifizierung', 'Abbrechen', 'Lokal prüfen', 'Speichern', 'Neu laden', 'Bildaufgaben dieses Chats', 'Bild öffnen', 'Nicht konfiguriert', 'Deaktiviert', 'Ungültige Konfiguration', 'Lokale Prüfung erfolgreich. Bild-API nicht getestet.', 'Konfiguration wurde anderswo geändert. Bitte neu laden.', 'Keine Bildaufgaben', 'Wartend', 'Läuft', 'Erfolgreich', 'Teilweise fehlgeschlagen', 'Fehlgeschlagen', 'Unterbrochen', 'Images-kompatibles Modell wählen. Fehlende Modelle in den Anbietereinstellungen ergänzen.', 'Konfiguration, Berechtigungen und Speicher prüfen. Kostenpflichtige Anfragen nicht automatisch wiederholen.', 'Schließen', 'Bilder und Aufgaben werden im Arbeitsbereich gespeichert', 'Die Bildgröße wird bei jeder Anfrage vom Modell angegeben. Kosten können entstehen; Quellbilder werden zur Bearbeitung an den Anbieter gesendet.']
     };
-    Object.entries(rows).forEach(([language, values]) => { translations[language] = Object.fromEntries(keys.map((key, index) => [key, values[index]])); });
+    const gifRows = {
+        en: ['Model supports GIF', 'Enable only for a GIF-capable model. For animations the model must set output_format=gif and size to multiples of 16; frame_count is 2–64 (default 9), frame_duration_ms is 20–2000 (default 200). Static images remain available.', 'Saving automatically refreshes running chat CLIs when idle. Busy conversations wait until the current turn ends; accepted image tasks continue.'],
+        'zh-cn': ['模型支持 GIF', '仅支持 GIF 的图片模型才勾选。动画由模型提交 output_format=gif、宽高为 16 倍数的 size；frame_count 为 2～64（默认 9），frame_duration_ms 为 20～2000（默认 200）。仍可生成静态图片。', '保存后自动在空闲时重启聊天 CLI；忙碌会话等本轮结束，已受理图片任务继续执行。'],
+        'zh-tw': ['模型支援 GIF', '僅支援 GIF 的圖片模型才勾選。動畫由模型提交 output_format=gif、寬高為 16 倍數的 size；frame_count 為 2～64（預設 9），frame_duration_ms 為 20～2000（預設 200）。仍可產生靜態圖片。', '儲存後自動在閒置時重啟聊天 CLI；忙碌會話等本輪結束，已受理圖片任務繼續執行。'],
+        ja: ['モデルは GIF に対応', 'GIF 対応モデルのみ有効にしてください。動画では output_format=gif と縦横が16の倍数の size を指定。frame_count は2～64（既定9）、frame_duration_ms は20～2000（既定200）。静止画も生成できます。', '保存後、待機中のチャット CLI を自動再起動します。実行中の会話はターン終了を待ち、受付済み画像タスクは継続します。'],
+        ko: ['GIF 지원 모델', 'GIF 지원 모델에서만 활성화하세요. 애니메이션은 output_format=gif와 가로·세로가 16의 배수인 size를 지정합니다. frame_count는 2–64(기본 9), frame_duration_ms는 20–2000(기본 200)입니다. 정적 이미지도 가능합니다.', '저장 후 유휴 채팅 CLI가 자동 재시작됩니다. 실행 중인 대화는 턴 종료를 기다리며 접수된 이미지 작업은 계속됩니다.'],
+        fr: ['Modèle compatible GIF', 'Activez uniquement pour un modèle GIF. Animation : output_format=gif, dimensions multiples de 16 ; frame_count de 2 à 64 (défaut 9), frame_duration_ms de 20 à 2000 (défaut 200). Les images fixes restent disponibles.', 'Après enregistrement, les CLI inactifs redémarrent automatiquement. Les conversations actives attendent la fin du tour ; les tâches image acceptées continuent.'],
+        de: ['Modell unterstützt GIF', 'Nur für GIF-fähige Modelle aktivieren. Animation: output_format=gif und Bildmaße als Vielfache von 16; frame_count 2–64 (Standard 9), frame_duration_ms 20–2000 (Standard 200). Statische Bilder bleiben verfügbar.', 'Nach dem Speichern starten untätige Chat-CLIs automatisch neu. Aktive Gespräche warten auf das Rundenende; angenommene Bildaufgaben laufen weiter.']
+    };
+    keys.push('supportsGif', 'gifHint', 'restartHint');
+    Object.entries(rows).forEach(([language, values]) => { translations[language] = Object.fromEntries(keys.map((key, index) => [key, [...values, ...gifRows[language]][index]])); });
 
     /** Install isolated image UI using the existing acquired VS Code API, never acquiring another instance. */
     window.createImageGenerationUi = function (post) {
@@ -79,8 +89,11 @@
         const removeKey = button('deleteKey', keyRow, () => { deleteKey = !deleteKey; updateKey(); }, 'image-picker__text-button');
         let deleteKey = false;
         field('noAuth', 'noAuth', 'checkbox', customSection);
+        field('supportsGif', 'supportsGif', 'checkbox').setAttribute('role', 'switch');
+        label('p', 'gifHint', body, 'image-picker__hint');
         const note = document.createElement('aside'); note.className = 'image-picker__note'; body.append(note);
         label('p', 'sizeHint', note);
+        label('p', 'restartHint', note, 'image-picker__hint');
         label('p', 'storage', note, 'image-picker__hint');
         const storage = document.createElement('code'); storage.textContent = '.LLSOAI/openapi-image-generation/'; note.append(storage);
         const feedback = document.createElement('p'); feedback.className = 'image-picker__feedback'; feedback.setAttribute('role', 'status'); feedback.setAttribute('aria-live', 'polite'); body.append(feedback);
@@ -142,11 +155,11 @@
         }
         /** Query task history separately from shared configuration and without generating images. */
         function loadTasks() { tasksId = crypto.randomUUID(); post({ type: 'imageGeneration/tasksList', requestId: tasksId }); }
-        /** Submit connection fields only; dimensions and operational limits are not user settings. */
+        /** Submit connection and GIF capability only; dimensions/frame parameters are model-supplied per request. */
         function submit(checked) {
             if (!state || !form.reportValidity()) return;
             if (state.config.revision !== draftRevision) { feedback.textContent = t('conflict'); return; }
-            const config = { enabled: fields.enabled.checked, source: source(), providerId: fields.providerId.value,
+            const config = { enabled: fields.enabled.checked, supportsGif: fields.supportsGif.checked, source: source(), providerId: fields.providerId.value,
                 modelId: source() === 'provider' ? fields.providerModel.value : fields.customModel.value.trim(),
                 baseUrl: fields.baseUrl.value.trim(), authMode: fields.noAuth.checked ? 'none' : 'bearer' };
             const keyAction = source() === 'provider' ? 'keep' : deleteKey ? 'delete' : fields.apiKey.value && !fields.noAuth.checked ? 'replace' : 'keep';

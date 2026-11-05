@@ -29,7 +29,7 @@ import { VSCODE_BRIDGE } from '../../vscodeTools/bridge';
 import { WAKEUP_BRIDGE } from '../../wakeupTools/bridge';
 import { IMAGE_BRIDGE } from '../../imageTools/bridge';
 import { HTTP_BRIDGE, HTTP_CAPABILITY, HTTP_CAPABILITY_ENV } from '../../httpTools/bridge';
-import { currentImageCapability } from '../../imageTools/entry';
+import { currentImageCapability, imageToolEnvironment } from '../../imageTools/entry';
 import type { McpBridgeDescriptor } from '../../mcpKit/registry';
 import {
     loadAllVscodeMcpJsons,
@@ -219,7 +219,7 @@ export class ChatCliConfigService {
      * 派生 Chat CLI 路由配置。
      *
      * 任务流模型只切换当前主模型后复用 normal CLI，不再派生独立进程配置，
-     * 因此这里只产出 normal 一路，并将可信工作区的 HTTP 桥绑定到当前 relay。
+     * 因此这里只产出 normal 一路，并将 HTTP 桥及图片能力/schema 修订绑定到当前 relay。
      *
      * @param relayPort 本地 HTTP 中转服务实际监听端口。
      * @returns 已派生好的 normal 配置。
@@ -253,7 +253,7 @@ export class ChatCliConfigService {
         };
 
         const image = normal.mcpServers?.[IMAGE_BRIDGE.serverName];
-        if (image) image.env = { ...image.env, LLS_IMAGE_TOOL_CAPABILITY: currentImageCapability('main', normal.cwd ?? '') };
+        if (image) image.env = { ...image.env, ...await imageToolEnvironment(), LLS_IMAGE_TOOL_CAPABILITY: currentImageCapability('main', normal.cwd ?? '') };
         return { normal };
     }
 

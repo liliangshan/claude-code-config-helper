@@ -13,12 +13,16 @@ test('工具调用 HTTP 空隙不能重启，整轮结束后保留会话应用�
     let enabled = true;
     let starts = 0;
     let compacting = false;
+    let busyDuringConfigRead = false;
     const configs: import('../../chat/cli/types').ChatCliConfig[] = [];
     const readConfig = () => {
         const native = buildNativeCompactionPolicy('m', 200000, enabled, {}, [], '2.1.280');
         return { enabled: true, cliPath: '/synthetic-cli', cliArgs: [], model: 'p/m', cwd: '/tmp', transport: 'streamJsonStdio' as const, cliEnv: native.env, nativeCompaction: native.policy };
     };
-    lifecycle.createCliLifecycleServices({ getConfigWithRelayEnv: async () => readConfig(), getRoutedConfigsWithRelayEnv: async () => ({ normal: readConfig() }) } as never);
+    lifecycle.createCliLifecycleServices({ getConfigWithRelayEnv: async () => readConfig(), getRoutedConfigsWithRelayEnv: async () => {
+        if (busyDuringConfigRead) { busyDuringConfigRead = false; route.noteCliTurn(1); }
+        return { normal: readConfig() };
+    } } as never);
     const fakeProcess = {
         isRunning: () => starts > 0,
         isRunningWithConfig: () => false,
@@ -60,6 +64,24 @@ test('工具调用 HTTP 空隙不能重启，整轮结束后保留会话应用�
         assert.equal(configs[1].resumeSessionId, 'original-session');
         assert.equal(configs[1].cliEnv.DISABLE_AUTO_COMPACT, '1');
         assert.equal(messages.filter(message => message.type === 'autoCompact/current').at(-1)?.pending, false);
+        route.noteCliTurn(1);
+        assert.equal(await lifecycle.refreshImageToolsCli(), false); assert.equal(starts, 2);
+        route.noteCliTurn(-1);
+        compacting = true; assert.equal(await lifecycle.refreshImageToolsCli(), false); compacting = false;
+        route.pendingAskUserRequests.set('gif-pending', {} as never);
+        assert.equal(await lifecycle.refreshImageToolsCli(), false); route.pendingAskUserRequests.clear();
+        assert.equal(await lifecycle.refreshImageToolsCli(), true); assert.equal(starts, 3);
+        assert.equal(configs[2].resumeSessionId, 'original-session');
+        busyDuringConfigRead = true;
+        assert.equal(await lifecycle.refreshImageToolsCli(), false, 'A turn admitted during async config reading keeps schema refresh pending');
+        assert.equal(starts, 3); route.noteCliTurn(-1);
+        const { setCliUpdateInProgress } = await import('../../setup/gate');
+        setCliUpdateInProgress(true);
+        try { assert.equal(await lifecycle.refreshImageToolsCli(), false); assert.equal(starts, 3); }
+        finally { setCliUpdateInProgress(false); }
+        const savedProcess = route.routes.normal.process; route.routes.normal.process = undefined;
+        assert.equal(await lifecycle.refreshImageToolsCli(), true); assert.equal(starts, 3);
+        route.routes.normal.process = savedProcess;
     } finally {
         lifecycle.disposeCliLifecycleServices();
         route.resetAllRouteBusy();

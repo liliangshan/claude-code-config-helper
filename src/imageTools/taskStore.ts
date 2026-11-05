@@ -6,6 +6,7 @@ import { readJson, safeDirectory, writeJson } from './storage';
 import { imageType } from './imageClient';
 import { ImageError, type ImageTask, type ImageFile } from './types';
 import { parseImageResponsePreview } from './responsePreview';
+import { imageAnimationOptions } from './animation';
 
 export const IMAGE_TASK_ID = /^\d{8}T\d{9}Z_[0-9a-f-]{36}$/;
 
@@ -14,7 +15,7 @@ export function assertImageScope(scope: string): void {
     if (!/^[a-f0-9]{64}$/.test(scope)) throw new ImageError('IMAGE_TASK_NOT_FOUND');
 }
 /**
- * Validate restored fields and keep only bounded, sanitized diagnostic metadata.
+ * Validate restored GIF/static fields and keep only bounded, sanitized diagnostic metadata.
  * @param raw Task data loaded from disk or prepared for persistence.
  * @param scope Expected host-owned conversation identity.
  * @returns An allowlisted task record with no credentials or full response payloads.
@@ -27,14 +28,14 @@ export function parseImageTask(raw: unknown, scope: string): ImageTask {
         || !Number.isFinite(v.createdAt) || !Array.isArray(v.images) || v.images.length > 16
         || !['queued', 'running', 'succeeded', 'partially_failed', 'failed', 'interrupted'].includes(v.status)) throw new ImageError('IMAGE_STORAGE_FAILED');
     const images = v.images.map(item => {
-        if (!item || !/^[a-f0-9-]{36}$/.test(item.id) || !/^images\/[a-f0-9-]{36}\.(png|jpg|webp)$/.test(item.relativePath)
-            || path.basename(item.relativePath).split('.')[0] !== item.id || !['image/png', 'image/jpeg', 'image/webp'].includes(item.mimeType)
+        if (!item || !/^[a-f0-9-]{36}$/.test(item.id) || !/^images\/[a-f0-9-]{36}\.(png|jpg|webp|gif)$/.test(item.relativePath)
+            || path.basename(item.relativePath).split('.')[0] !== item.id || !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(item.mimeType)
             || !Number.isSafeInteger(item.bytes) || item.bytes < 1) throw new ImageError('IMAGE_STORAGE_FAILED');
         return { id: item.id, relativePath: item.relativePath, mimeType: item.mimeType, bytes: item.bytes };
     });
     const responsePreview = parseImageResponsePreview(v.responsePreview);
     return { version: 1, taskId: v.taskId, scopeId: scope, operation: v.operation, prompt: v.prompt, model: v.model,
-        configRevision: v.configRevision, size: v.size, status: v.status, createdAt: v.createdAt, images,
+        configRevision: v.configRevision, size: v.size, ...imageAnimationOptions(v, v.size, true), status: v.status, createdAt: v.createdAt, images,
         ...(Number.isFinite(v.startedAt) ? { startedAt: v.startedAt } : {}), ...(Number.isFinite(v.finishedAt) ? { finishedAt: v.finishedAt } : {}),
         ...(typeof v.error === 'string' && /^IMAGE_[A-Z0-9_]+$/.test(v.error) ? { error: v.error } : {}),
         ...(responsePreview ? { responsePreview } : {}) };

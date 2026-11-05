@@ -129,6 +129,26 @@ test('image task cards show at most 500 response characters using textContent', 
     assert.equal(preview?.children.length, 0);
 });
 
+/** GIF controls save only capability; per-request timing stays out of global settings and is localized. */
+test('GIF UI submits the capability with both sources but never stores request animation defaults', () => {
+    const source = asset('media/chat/imageGeneration.js');
+    assert.ok(source.includes("field('supportsGif', 'supportsGif', 'checkbox')"));
+    assert.ok(source.includes("label('p', 'restartHint'"));
+    for (const forbidden of ["field('output_format'", "field('frame_count'", "field('frame_duration_ms'"]) assert.equal(source.includes(forbidden), false);
+    const start = source.indexOf('        function submit(checked)'), end = source.indexOf('\n        /**', start);
+    const sent: any[] = [];
+    const fields = { enabled: { checked: true }, supportsGif: { checked: true }, providerId: { value: 'provider' }, providerModel: { value: 'image-provider' }, customModel: { value: 'image-custom' }, baseUrl: { value: 'https://example.com' }, noAuth: { checked: true }, apiKey: { value: '' } };
+    let selected = 'provider';
+    const submit = runInNewContext(source.slice(start, end) + '\nsubmit;', { state: { config: { revision: 4 } }, draftRevision: 4, form: { reportValidity: () => true }, fields,
+        source: () => selected, deleteKey: false, crypto: { randomUUID: () => 'save' }, save: {}, check: {}, feedback: {}, post: (message: any) => sent.push(message) });
+    submit(false); selected = 'custom'; submit(false);
+    for (const message of sent) {
+        assert.equal(message.input.config.supportsGif, true);
+        assert.equal('output_format' in message.input.config, false); assert.equal('frame_count' in message.input.config, false);
+    }
+    assert.equal(sent[0].input.config.modelId, 'image-provider'); assert.equal(sent[1].input.config.modelId, 'image-custom');
+});
+
 test('image stdio process starts without vscode and lists tools without receiving a secret or relay', async () => {
     const child = spawn(process.execPath, ['-e', `require(${JSON.stringify(resolve(root, 'out/imageTools/imageMcpServer'))}).startImageMcpServer()`], {
         env: { ...process.env, LLS_IMAGE_TOOL_RELAY_PORT: '', LLS_IMAGE_TOOL_CAPABILITY: '' }, stdio: ['pipe', 'pipe', 'pipe']

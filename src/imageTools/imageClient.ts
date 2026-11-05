@@ -3,6 +3,7 @@ import * as http from 'node:http';
 import * as https from 'node:https';
 import { ImageError, type ImageGenerationExecutionSnapshot, type ImageSubmission } from './types';
 import { IMAGE_ERROR_CAPTURE_BYTES, imageResponsePreview } from './responsePreview';
+import { imageAnimationOptions } from './animation';
 
 /** A successful bounded response retains its HTTP status for malformed-body diagnostics. */
 interface ImageHttpResponse { bytes: Buffer; status: number }
@@ -55,16 +56,17 @@ async function requestBytes(url: URL, method: 'GET' | 'POST', headers: Record<st
         req.end(body);
     });
 }
-/** Recognize only raster signatures, never trust filenames or response Content-Type. */
+/** Recognize PNG/JPEG/WebP and GIF87a/GIF89a raster signatures without trusting names or Content-Type. */
 export function imageType(bytes: Buffer): { mimeType: string; extension: string } {
     if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) return { mimeType: 'image/png', extension: 'png' };
     if (bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return { mimeType: 'image/jpeg', extension: 'jpg' };
     if (bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') return { mimeType: 'image/webp', extension: 'webp' };
+    if (bytes.length >= 6 && ['GIF87a', 'GIF89a'].includes(bytes.toString('ascii', 0, 6))) return { mimeType: 'image/gif', extension: 'gif' };
     throw new ImageError('IMAGE_FORMAT_UNSUPPORTED');
 }
-/** Strict bounded Base64 decoding rejects malformed input before allocating excessive memory. */
+/** Strict bounded Base64 decoding supports GIF Data URLs and rejects malformed input before allocating memory. */
 export function decodeImage(value: string, limit: number): Buffer {
-    const raw = value.replace(/^data:image\/(?:png|jpeg|webp);base64,/i, '');
+    const raw = value.replace(/^data:image\/(?:png|jpeg|webp|gif);base64,/i, '');
     if (!raw || raw.length > Math.ceil(limit / 3) * 4) throw new ImageError('IMAGE_RESPONSE_TOO_LARGE');
     if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(raw)) throw new ImageError('IMAGE_FORMAT_UNSUPPORTED');
     const bytes = Buffer.from(raw, 'base64');
@@ -72,7 +74,7 @@ export function decodeImage(value: string, limit: number): Buffer {
     imageType(bytes); return bytes;
 }
 /**
- * Send one Images JSON request; edits use an images array of image_url Data URL objects and n: 1.
+ * Send one Images JSON request with validated optional GIF settings; edits use images[].image_url and n: 1.
  * Invalid success responses retain a sanitized 500-character excerpt.
  * @param snapshot Frozen provider configuration and credentials.
  * @param input Host-prepared prompt, dimensions and optional edit Data URLs.
@@ -84,7 +86,8 @@ export async function generateImages(snapshot: ImageGenerationExecutionSnapshot,
     const sources = editing ? (Array.isArray(input.image) ? input.image : [input.image]) : [];
     if (editing && (!sources.length || sources.length > 16 || sources.some(source => typeof source !== 'string' || !source.trim()))) throw new ImageError('IMAGE_ARGUMENT_INVALID');
     const payload = JSON.stringify({ model: editing ? snapshot.config.editModelId || snapshot.config.modelId : snapshot.config.modelId,
-        prompt: input.prompt, size: input.size, ...(editing ? { images: sources.map(image_url => ({ image_url })), n: 1 } : {}) });
+        prompt: input.prompt, size: input.size, ...imageAnimationOptions(input, input.size, snapshot.config.supportsGif),
+        ...(editing ? { images: sources.map(image_url => ({ image_url })), n: 1 } : {}) });
     const { bytes, status } = await requestBytes(new URL(editing ? snapshot.editUrl : snapshot.generationUrl), 'POST', snapshot.headers, payload, snapshot.config.maxResponseBytes, signal, false);
     const secrets = Object.entries(snapshot.headers).filter(([name]) => !['content-type', 'accept', 'user-agent', 'content-length'].includes(name.toLowerCase()))
         .flatMap(([, value]) => [value, value.replace(/^(?:Bearer|Basic)\s+/i, '')]);
@@ -99,7 +102,7 @@ export async function generateImages(snapshot: ImageGenerationExecutionSnapshot,
  * @param item An image entry from the provider's data array.
  * @param limit Maximum decoded or downloaded bytes.
  * @param signal Request deadline or explicit cancellation.
- * @returns Verified PNG, JPEG or WebP bytes.
+ * @returns Verified PNG, JPEG, WebP or unchanged GIF bytes.
  */
 export async function loadGeneratedImage(item: unknown, limit: number, signal: AbortSignal): Promise<Buffer> {
     const value = item as { b64_json?: unknown; url?: unknown };

@@ -2,6 +2,63 @@
 
 All notable changes to this extension are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- Independent left/editor chats no longer send `pending: true` patches for empty CLI notifications after a completed turn. Late titles, heartbeats and ignored status records remain silent; nonempty late patches retain the assistant's actual pending state instead of turning the send arrow back into a stop square.
+- Background task updates now preserve omitted state: description-only, null-end-time and unknown-status patches cannot create or resurrect active tasks. Explicit running/pending/queued states add activity; completed/failed/cancelled/canceled/killed states or finite end times remove it. Foreign-session background events do not modify the owning chat's task set.
+- Completion still requires the CLI's final result, no active owned background tasks and a drained relay; a message stream ending or one task completing cannot prematurely release another active turn.
+
+### Validation
+
+- Five new regressions exercise the real CLI parser and composer button-state functions, including late empty/nonempty events, background metadata after completion, terminal statuses/end times, cross-session isolation and result/task/relay ordering. All five pass; related acceptance passed 53 tests with 1 opt-in CLI test skipped.
+- VS Code diagnostics, TypeScript type checking/compilation and 314 JavaScript syntax checks passed. Full regression: 761 tests, 741 passed, 19 skipped and the unchanged `requestUsageBinding` assertion failed (`true !== false`). No provider requests, extension installation or debug-host restart were performed.
+
+## [3.2.89] - 2026-11-05
+
+### Added
+
+- Opt-in global **Model supports GIF** capability for existing-provider and independent image connections, with seven-language guidance. GIF-enabled generation/edit tools publish `output_format` (only `gif`), `frame_count` (2–64, default 9) and `frame_duration_ms` (20–2000, default 200); models still choose `size` per request, with both GIF dimensions required to be multiples of 16. Static requests remain unchanged, and disabled capability or invalid animation parameters are rejected before provider submission.
+- GIF87a/GIF89a output support across Base64/Data URL decoding, downloads, unchanged `.gif` storage, task restoration, completion metadata and automatic/manual editor opening. Requested animation parameters are frozen with accepted work; signature checks do not claim full decoding or verification of actual frame count/timing.
+
+### Changed
+
+- Successful global image-configuration saves automatically refresh already-running main, left and retained-editor CLIs at safe idle points, preserving native sessions and visible history. Busy turns, tools, permissions, compaction, recovery and CLI updates defer refresh; repeated notifications/revisions coalesce. Local checks, failed saves, initialization and stopped chats do not start/restart a CLI. Accepted image work remains host-owned and is neither cancelled nor replayed.
+- Image MCP startup receives only non-sensitive GIF capability and configuration revision; static schemas remain the default and provider credentials stay in the extension host. The toggle declares provider capability rather than probing a paid API.
+
+### Fixed
+
+- Resumed CLI conversations can replay saved image-tool descriptions and schemas even after reconnecting to an updated MCP process. Main and independent relays now synchronize only already-advertised built-in image generation/edit schemas from the current host capability before Anthropic/Chat/Responses dispatch. This exposes GIF fields in old conversations and removes them when disabled, without rewriting native history, adding tools, changing external MCPs or disabling prompt snapshots.
+
+### Upgrade
+
+- Reload the installed extension or stop and restart the F5 development host to load the new relay. Restarting only a chat CLI cannot load changed extension code, and reloading can interrupt active CLI tasks. Enable **Model supports GIF** and save only when the selected provider/model supports these fields; the switch defaults to off for existing configurations.
+
+### Validation
+
+- VS Code diagnostics, TypeScript compilation/type checking and 313 JavaScript syntax checks passed. Image and independent-chat acceptance: 92 tests, 91 passed and 1 opt-in real-CLI authentication check skipped. Tests cover both MCP subprocess entry points, frame defaults/bounds, local GIF API payloads/downloads, task persistence/restoration, editor opening, seven-language labels, saved revision coalescing and busy/idle session-preserving CLI refresh.
+- Real CLI 2.1.312 acceptance reproduces old schemas after resume in both ordinary and ToolSearch deferred modes, then verifies corrected model-visible fields and successful execution of one GIF tool call against a local mock bridge. The test-1 captured request was also converted locally with the repaired schema; no real history was modified and no image/model provider was called.
+- Latest default full regression: 756 tests, 736 passed, 19 skipped, and the unchanged `requestUsageBinding` assertion failed (`true !== false`). Release acceptance initially also hit the previously observed intermittent `leftUsage` response-binding assertion; its isolated rerun and the subsequent complete acceptance rerun passed. This does not resolve the underlying usage-association limitation. Real provider GIF compatibility and actual VS Code animation display remain manual acceptance items.
+
+## [3.2.88] - 2026-11-03
+
+### Fixed
+
+- Independent left-side and editor chats no longer insert a placeholder summary after native CLI compaction. Completion now matches the main/right chat: it releases the composer and token-meter busy state without triggering the legacy "new session / 0 tokens / 0% saved" card. Native status events do not supply a real summary or post-compaction measurements; the existing CLI session and visible history are preserved.
+- Compaction completes only on an explicit `compact_result: "success"` without an error. Failed, cancelled, unknown and error-bearing results display failure instead of success; a status reset without a result does not manufacture a completion notification.
+
+### Compatibility and Scope
+
+- This fixes presentation and native-result interpretation only. Compaction model routing, thresholds, request usage, dedicated-model failure handling and retry policy are unchanged. No summary generation, session replacement or transcript rewriting is added.
+- Reload the installed extension or restart the development host when ready; active CLI tasks may be interrupted. The fix applies to future completion events and does not actively remove an already-rendered legacy card. Existing `requestUsageBinding` and reused-response-ID association issues remain outside this change.
+
+### Validation
+
+- The regression reproduces the old placeholder summary, then exercises the actual shared Webview compaction handler with runtime events. It covers busy-state cleanup, no fabricated card, explicit success/failure handling, and preservation of session identity and visible history.
+- VS Code diagnostics, TypeScript type checking/compilation, 307 JavaScript syntax checks and release-version consistency passed. Independent-chat, token-budget and CLI-event acceptance: 64 tests, 63 passed, 1 opt-in real-CLI authentication test skipped, no failures.
+- Full regression: 743 tests, 725 passed, 17 skipped, and the existing `requestUsageBinding` assertion failed (`true !== false`). No paid provider requests were made; real-window compaction presentation still requires manual acceptance.
+
 ## [3.2.87] - 2026-11-02
 
 ### Added

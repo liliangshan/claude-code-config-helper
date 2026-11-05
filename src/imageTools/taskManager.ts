@@ -5,6 +5,7 @@ import { ImageTaskStore } from './taskStore';
 import { generateImages, loadGeneratedImage } from './imageClient';
 import { IMAGE_TOTAL_LIMIT, ImageError, imageErrorCode, type ImageGenerationExecutionSnapshot, type ImageSubmission, type ImageTask } from './types';
 import { parseImageResponsePreview } from './responsePreview';
+import { imageAnimationOptions } from './animation';
 
 /** Transient queue item: secrets and edit sources never reach task JSON. */
 interface Work { task: ImageTask; snapshot: ImageGenerationExecutionSnapshot; input: ImageSubmission }
@@ -32,7 +33,7 @@ export class ImageTaskManager extends EventEmitter {
         this.initializing ??= this.store.acquire().catch(error => { this.initializing = undefined; throw error; });
         await this.initializing;
     }
-    /** Persist acceptance before acknowledging, serializing lock acquisition and capacity checks. */
+    /** Persist acceptance and validated animation parameters before acknowledging; serialize capacity checks. */
     public submit(scope: string, snapshot: ImageGenerationExecutionSnapshot, input: ImageSubmission, admit?: () => Promise<void>): Promise<ImageTask> {
         const operation = this.admission.then(async () => {
             if (this.stopped) throw new ImageError('IMAGE_INTERRUPTED');
@@ -43,7 +44,7 @@ export class ImageTaskManager extends EventEmitter {
             const task: ImageTask = { version: 1, taskId: `${new Date().toISOString().replace(/[-:.]/g, '')}_${randomUUID()}`,
                 scopeId: scope, operation: input.operation, prompt: input.prompt,
                 model: input.operation === 'edit' ? snapshot.config.editModelId || snapshot.config.modelId : snapshot.config.modelId,
-                configRevision: snapshot.config.revision, size: input.size, status: 'queued', createdAt: Date.now(), images: [] };
+                configRevision: snapshot.config.revision, size: input.size, ...imageAnimationOptions(input, input.size, snapshot.config.supportsGif), status: 'queued', createdAt: Date.now(), images: [] };
             await this.store.save(task, true);
             const accepted = JSON.parse(JSON.stringify(task)) as ImageTask;
             this.pending.push({ task, snapshot: { ...snapshot, config: { ...snapshot.config }, headers: { ...snapshot.headers } }, input: { ...input, ...(Array.isArray(input.image) ? { image: [...input.image] } : {}) } });

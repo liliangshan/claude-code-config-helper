@@ -39,7 +39,8 @@ test('two windows share global settings, detect stale drafts, preserve snapshots
     const left = new ImageConfigStore(root, secrets, manager()); const right = new ImageConfigStore(root, secrets, manager());
     try {
         assert.equal((await left.read()).enabled, false);
-        const first = await left.save(input(0)); const snapshot = await left.resolve(first);
+        const first = await left.save(input(0, { supportsGif: true })); const snapshot = await left.resolve(first);
+        assert.equal((await right.read()).supportsGif, true);
         assert.equal((await right.read()).modelId, 'test-image');
         assert.ok(first.secretRef); assert.equal([...secrets.values.keys()].filter(key => key.startsWith('llsccai.imageGeneration.secret.')).length, 1);
         assert.ok(!(await fs.readFile(path.join(root, 'image-generation/config.json'), 'utf8')).includes('test-image-key-not-real'));
@@ -48,6 +49,7 @@ test('two windows share global settings, detect stale drafts, preserve snapshots
         await assert.rejects(right.save(input(0)), /IMAGE_CONFIG_CONFLICT/);
         await right.save({ ...input(1, { modelId: 'new-image' }), apiKey: 'rotated-test-key' });
         assert.equal((await left.read()).modelId, 'new-image'); assert.equal(snapshot.config.modelId, 'test-image');
+        assert.equal((await left.read()).supportsGif, false); assert.equal(snapshot.config.supportsGif, true);
         assert.equal(snapshot.headers.authorization, 'Bearer test-image-key-not-real');
         await left.save({ ...input(2, { enabled: false }), keyAction: 'delete', apiKey: undefined });
         assert.equal((await right.publicState()).hasApiKey, false); assert.equal((await right.read()).secretRef, undefined);

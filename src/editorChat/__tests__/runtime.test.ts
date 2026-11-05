@@ -2,6 +2,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as fs from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as http from 'node:http';
@@ -160,6 +162,22 @@ test('parallel editor messages, settings, closing and resume do not affect anoth
         } finally { setCliUpdateInProgress(false); }
         await restored.runtime.send('After update'); await idle(restored.value);
         assert.equal(restored.value.cliSessionId, beforeUpdate);
+        const imageEntry = await import('../../imageTools/entry');
+        let imageRevision = '1';
+        t.mock.method(imageEntry, 'imageToolEnvironment', async () => ({ LLS_IMAGE_SUPPORTS_GIF: '1', LLS_IMAGE_CONFIG_REVISION: imageRevision }));
+        const beforeImageRefresh = (restored.runtime as any).cli, historyBeforeImageRefresh = JSON.stringify(restored.value.messages);
+        assert.equal(await (restored.runtime as any).refreshImageToolsCli(), true);
+        assert.notEqual((restored.runtime as any).cli, beforeImageRefresh);
+        assert.equal(restored.value.cliSessionId, beforeUpdate); assert.equal(JSON.stringify(restored.value.messages), historyBeforeImageRefresh);
+        const afterImageRefresh = (restored.runtime as any).cli;
+        assert.equal(await (restored.runtime as any).refreshImageToolsCli(), true); assert.equal((restored.runtime as any).cli, afterImageRefresh);
+        await restored.runtime.send('slow GIF refresh'); imageRevision = '2';
+        assert.equal(await (restored.runtime as any).refreshImageToolsCli(), false); assert.equal((restored.runtime as any).cli, afterImageRefresh);
+        await idle(restored.value);
+        assert.equal(await (restored.runtime as any).refreshImageToolsCli(), true); assert.notEqual((restored.runtime as any).cli, afterImageRefresh);
+        assert.equal(restored.value.cliSessionId, beforeUpdate);
+        await restored.runtime.cancel();
+        assert.equal(await (restored.runtime as any).refreshImageToolsCli(), true); assert.equal((restored.runtime as any).cli, undefined, 'Stopped chats are not automatically started');
     } finally { await Promise.all(runtimes.map(runtime => runtime.close())); await fs.rm(cwd, { recursive: true, force: true }); }
 });
 
@@ -222,5 +240,62 @@ test('editor compaction failure pauses only its owning turn and stale outcomes c
         assert.equal(owned.recovery.getSnapshot().state, 'awaiting_request');
         assert.equal(owned.turnFailed, false); assert.equal(owned.flowPaused, false);
         assert.equal(received.filter(event => event.message.type === 'compaction/failed').length, 1);
+    } finally { await runtime.close(); await fs.rm(cwd, { recursive: true, force: true }); }
+});
+
+/** Native completion must release the real Webview controls without fabricating a summary or a new session. */
+test('independent chat compaction matches the sidebar UI and only explicit success completes', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'editor-compact-ui-'));
+    const sessionId = randomUUID();
+    const value: EditorConversation = { version: 1, conversationId: randomUUID(), cliSessionId: sessionId, cwd, title: 'Compaction', revision: 0,
+        createdAt: Date.now(), updatedAt: Date.now(), lastRunState: 'idle',
+        messages: [{ id: 'existing-message', role: 'user', createdAt: 1, text: 'Keep visible history', segments: [{ kind: 'text', text: 'Keep visible history' }] }],
+        settings: { normalModel: 'p/main', taskFlowModel: '', compactionModel: 'p/summary', reasoningEffort: 'auto', permissionMode: 'acceptEdits', subagentsEnabled: false, autoCompactEnabled: false, codePreviewEnabled: false, cacheTtl: 'default' } };
+    const store = new EditorConversationStore(cwd, value.conversationId); await store.acquire();
+    const source = readFileSync(path.resolve(__dirname, '../../../media/chat/main.js'), 'utf8');
+    const start = source.indexOf("            case 'compaction/started':");
+    const end = source.indexOf("            case 'sessions/list/result':", start);
+    assert.ok(start > 0 && end > start);
+    const ui = { composerCompacting: false, meterCompacting: false, cards: [] as unknown[], errors: [] as string[] };
+    const received: any[] = [];
+    const panel = { webview: { postMessage: async (envelope: any) => {
+        const message = envelope.message; received.push(message);
+        if (message.type.startsWith('compaction/')) runInNewContext('switch (message.type) { ' + source.slice(start, end) + ' }', {
+            message,
+            setComposerCompacting: (active: boolean) => { ui.composerCompacting = active; },
+            setTokenMeterCompacting: (active: boolean) => { ui.meterCompacting = active; },
+            renderCompactionCard: (info: unknown) => { ui.cards.push(info); },
+            showToast: (level: string, text: string) => { if (level === 'error') ui.errors.push(text); },
+            t: (key: string) => key, tf: (_key: string, args: { error: string }) => args.error
+        });
+        return true;
+    } } };
+    const manager = { getResolvedUiLanguage: () => 'en' } as any;
+    const runtime = new EditorChatRuntime(value, store, panel, manager, async () => {}, async () => {});
+    const owned = runtime as any;
+    const originalHistory = JSON.stringify(value.messages);
+    try {
+        await owned.onEvent({ type: 'compact/status', status: 'compacting', sessionId });
+        assert.equal(ui.composerCompacting, true); assert.equal(ui.meterCompacting, true);
+        await owned.onEvent({ type: 'compact/status', status: null, compactResult: 'success', sessionId });
+        assert.deepEqual(received.at(-1), { type: 'compaction/finished', oldSessionId: sessionId, newSessionId: sessionId,
+            beforeTokens: 0, afterTokens: 0, summary: '' });
+        assert.equal(ui.composerCompacting, false); assert.equal(ui.meterCompacting, false);
+        assert.deepEqual(ui.cards, [], 'Native status contains no measured token counts or summary for the legacy card');
+        assert.deepEqual(ui.errors, []);
+        const beforeNoResult = received.length;
+        await owned.onEvent({ type: 'compact/status', status: null, sessionId });
+        assert.equal(received.length, beforeNoResult, 'A status reset without a result cannot fabricate success');
+        for (const [result, error] of [['failed', 'quota exceeded'], ['cancelled', undefined], ['unknown', undefined], ['success', 'summary rejected']]) {
+            await owned.onEvent({ type: 'compact/status', status: 'compacting', sessionId });
+            await owned.onEvent({ type: 'compact/status', status: null, compactResult: result, compactError: error, sessionId });
+            assert.equal(received.at(-1).type, 'compaction/failed');
+            assert.equal(ui.errors.at(-1), error || result);
+            assert.equal(ui.composerCompacting, false); assert.equal(ui.meterCompacting, false);
+        }
+        assert.equal(received.filter(message => message.type === 'compaction/finished').length, 1);
+        assert.deepEqual(ui.cards, []);
+        assert.equal(value.cliSessionId, sessionId, 'Compaction retains the existing CLI session');
+        assert.equal(JSON.stringify(value.messages), originalHistory, 'Native compaction never rewrites visible history');
     } finally { await runtime.close(); await fs.rm(cwd, { recursive: true, force: true }); }
 });
