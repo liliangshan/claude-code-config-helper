@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { installVscodeStub } from '../../llsTask/__tests__/vscodeStub';
 import { createRequestUsageContext } from '../requestUsage';
-import { requestUsageRegistry } from '../../chatRuntime/requestUsage';
+import { requestUsageRegistry, RequestUsageRegistry } from '../../chatRuntime/requestUsage';
+import { requestUsageMessageId } from '../responseIdentity';
 installVscodeStub();
 const { UsageReporter, getRequestUsageReporter } = require('../usageReporter') as typeof import('../usageReporter');
 const context = createRequestUsageContext({ metadata: { session_id: 'test' } }, 'normal', 'p', 'm');
@@ -74,5 +75,25 @@ test('CRLF passthrough binds message before completion and preserves zero cache 
     } finally {
         requestUsageRegistry.clearRequestUsageBindings();
     }
+});
+
+/** Usage and request identity exist before an async sink or a later CLI segment can race with one another. */
+test('forwarded identity and usage are available before sink delivery, with isolated registries and stale generations', () => {
+    const registry = new RequestUsageRegistry(), other = new RequestUsageRegistry();
+    const ctx = createRequestUsageContext({ metadata: { session_id: 's' } }, 'normal', 'p', 'm');
+    let reports = 0;
+    const reporter = new UsageReporter(report => {
+        reports++; assert.equal(registry.getSummary(ctx.requestId)?.inputTokens, 12);
+        assert.equal(other.getSummary(ctx.requestId), undefined);
+        assert.equal(report.summary?.context, ctx);
+    }, ctx, registry);
+    const wire = reporter.forwardJson(JSON.stringify({ id: 'repeated', type: 'message', role: 'assistant', content: [], usage: { input_tokens: 12 } }));
+    assert.equal(JSON.parse(wire).id, requestUsageMessageId(ctx)); assert.equal(reports, 1);
+    assert.equal(registry.resolveRequestForSegment('s', requestUsageMessageId(ctx))?.requestId, ctx.requestId);
+    const generation = registry.generationToken(); registry.clearRequestUsageBindings();
+    const late = new UsageReporter(() => {}, ctx, registry, generation);
+    late.forwardJson(wire);
+    assert.equal(registry.getSummary(ctx.requestId), undefined);
+    assert.equal(registry.resolveRequestForSegment('s', requestUsageMessageId(ctx)), undefined);
 });
 

@@ -24,7 +24,7 @@ import { refreshImageToolsForRequest } from '../imageTools/entry';
 import type { AutoContinueScheduler } from '../llsTask/autoContinue';
 import { isLlsCcaiTaskTriggered } from '../llsTask/detector';
 import type { LlsTaskService } from '../llsTask/service';
-import type { RequestUsageRegistry } from '../chatRuntime/requestUsage';
+import { requestUsageRegistry, type RequestUsageRegistry } from '../chatRuntime/requestUsage';
 import { createRequestUsageContext, readRequestSessionId, type RequestUsageContext } from './requestUsage';
 import { isClaudeCompactCommandRequest } from './summCommand';
 import { CompactionFailureGuard, forwardDedicatedCompaction, writeCompactionFailure } from './compactionFailure';
@@ -56,6 +56,8 @@ export interface UpstreamRequestContext {
     usageContext?: RequestUsageContext;
     /** 独立会话提供私有请求关联表，未提供时沿用主聊天关联表。 */
     usageRegistry?: RequestUsageRegistry;
+    /** Registry generation captured at request admission; prevents an old async request entering a new session. */
+    usageGeneration?: number;
     /** 原始 HTTP 请求。 */
     req: http.IncomingMessage;
     /** 原始 HTTP 响应。 */
@@ -408,6 +410,7 @@ export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
             return;
         }
         const route = parsedPath.route;
+        const usageGeneration = requestUsageRegistry.generationToken();
 
         let rawBody = '';
         try {
@@ -555,7 +558,7 @@ export function createRelayRouter(deps: RelayRouterDeps): RelayRequestHandler {
         try {
             const refreshedBody = await refreshImageToolsForRequest(parsedBody);
             if (refreshedBody !== parsedBody) { parsedBody = refreshedBody; rawBody = JSON.stringify(refreshedBody); }
-            const context = { req, res, provider, modelId, rawBody, parsedBody, reasoningEffort, usageContext, outcome, llsTaskCreateTriggered, compactCommandTriggered, onUpstreamTimeout };
+            const context = { req, res, provider, modelId, rawBody, parsedBody, reasoningEffort, usageContext, usageGeneration, outcome, llsTaskCreateTriggered, compactCommandTriggered, onUpstreamTimeout };
             if (compactionModel) await compactionFailures.forward(compactionSessionId, res, outcome, () => forwardDedicatedCompaction(adapter, context));
             else await adapter.handle(context);
         } catch (error) {

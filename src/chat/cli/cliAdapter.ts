@@ -1302,7 +1302,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     }
 
     /**
-     * 把尚未输出的文本块整块解析为 segments。
+     * 把尚未输出的文本块整块解析为 segments，保留所属响应 ID，包含 result 提前到达的收尾路径。
      *
      * @param index 仅结算该 content block；省略时结算当前 message 的全部文本块。
      * @returns 本次产出的 segments。
@@ -1319,6 +1319,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
             const parsed = this.parseCompleteDisplayText(block.text);
             if (parsed.type === 'segments' && parsed.segments.length > 0) {
                 this.hasEmittedAssistantContent = true;
+                this.attachResponseIdentity(parsed, this.currentMessage?.messageId);
                 segments.push(...parsed.segments);
             }
         }

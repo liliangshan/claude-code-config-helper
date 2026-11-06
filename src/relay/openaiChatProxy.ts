@@ -307,7 +307,7 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
     }
 
     /**
-     * 处理非流式 OpenAI JSON 响应；原生搜索优先保留引用，正文降级时附带来源声明。
+     * Convert JSON responses with request-scoped downstream identity; preserve native-search source evidence.
      *
      * @param ctx 请求上下文。
      * @param statusCode 上游状态码。
@@ -331,11 +331,11 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
                 : { body: anthropicBody };
             // 在 Anthropic 转换完成后立即抽取 usage 并上报给 Chat UI。
             const usageReporter = getRequestUsageReporter(ctx, this.usageSink);
-            usageReporter.feedJson(intercepted.body);
+            const finalBody = usageReporter.forwardJson(intercepted.body);
             ctx.res.statusCode = statusCode;
             this.copyResponseHeaders(ctx.res, headers, 'application/json; charset=utf-8');
-            ctx.res.end(intercepted.body);
-            return intercepted.body;
+            ctx.res.end(finalBody);
+            return finalBody;
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             ctx.outcome?.fail('upstream_inline_error', err instanceof NativeWebSearchError ? err.code : 'invalid_json');
@@ -347,7 +347,7 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
     }
 
     /**
-     * 处理流式 OpenAI SSE 响应；搜索子请求不注入任务流，并读取完成后才到达的引用。
+     * Convert SSE and bind request-scoped message identity before delivery; search remains workflow-isolated.
      *
      * @param ctx 请求上下文。
      * @param upstreamRes 上游响应。
@@ -387,7 +387,7 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
             const message = sanitizeErrorMessage(`上游流式响应空闲超时（${seconds}s）`);
             ctx.outcome?.fail('upstream_stream', 'stream_idle_timeout');
             ctx.onUpstreamTimeout?.('stream_idle');
-            const out = finishConversion() + formatAnthropicSseError('timeout', message);
+            const out = usageReporter.forwardStream(finishConversion() + formatAnthropicSseError('timeout', message)) + usageReporter.finishStream();
             chunks.push(out);
             if (!ctx.res.writableEnded) {
                 ctx.res.write(out);
@@ -404,17 +404,15 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
             ctx.outcome?.feed(text);
             const converted = converter.feed(text);
             if (!converted) return;
-            const out = interceptor ? interceptor.feed(converted) : converted;
+            const out = usageReporter.forwardStream(interceptor ? interceptor.feed(converted) : converted);
             chunks.push(out);
-            usageReporter.feed(out);
             ctx.res.write(out);
         });
         upstreamRes.on('end', () => {
             const tail = finishConversion();
-            const out = interceptor ? interceptor.feed(tail) + interceptor.end() : tail;
+            const out = usageReporter.forwardStream(interceptor ? interceptor.feed(tail) + interceptor.end() : tail) + usageReporter.finishStream();
             chunks.push(out);
             if (out) {
-                usageReporter.feed(out);
                 ctx.res.write(out);
             }
             if (converter.getSearchFailure()) ctx.outcome?.fail('upstream_inline_error', 'unsupported_web_search');
@@ -426,7 +424,7 @@ export class OpenAIChatProxyAdapter implements UpstreamAdapter {
         upstreamRes.on('error', (err) => {
                     ctx.outcome?.fail('upstream_stream', (err as NodeJS.ErrnoException).code);
             const message = sanitizeErrorMessage(`上游响应流中断：${err.message}`);
-            const out = finishConversion() + formatAnthropicSseError('api_error', message);
+            const out = usageReporter.forwardStream(finishConversion() + formatAnthropicSseError('api_error', message)) + usageReporter.finishStream();
             chunks.push(out);
             if (!ctx.res.writableEnded) {
                 ctx.res.write(out);

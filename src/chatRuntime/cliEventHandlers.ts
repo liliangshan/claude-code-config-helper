@@ -106,7 +106,7 @@ export function notifyPermissionDeniedToUser(resultText: string): void {
 }
 
 /**
- * 处理 CLI 适配器解析出的事件，并更新 ChatSession/Webview。
+ * 处理 CLI 事件并精确绑定请求用量；已确定的片段归属不随之后的响应重写。
  *
  * @param event 已解析的 CLI 事件。
  * @param source 事件来源路由；taskFlow 复用 normal CLI，事件仍以 `'normal'` 上报。
@@ -128,10 +128,7 @@ export async function handleParsedCliEvent(event: ParsedCliEvent, source: ChatRo
                     if (identity && segment.kind === 'tool' && segment.tool?.name !== 'System' && segment.id) {
                         recovery?.setBlocked(identity, `tool:${segment.id}`, ['pending', 'running'].includes(segment.tool?.status || ''));
                     }
-                    const context = requestUsageRegistry.resolveRequestForSegment(
-                        getSessionIdForRoute(source), segment.responseMessageId, segment.responseCallId
-                    );
-                    if (context) segment.requestId = context.requestId;
+                    requestUsageRegistry.bindSegment(getSessionIdForRoute(source), segment);
                 }
                 const chunkText = event.segments.map(getSegmentLogText).filter(Boolean).join('');
                 if (chunkText) assistantTurnTextBySource[source] += chunkText;

@@ -16,11 +16,11 @@ export type ChatRole = 'user' | 'assistant' | 'system' | 'tool';
 
 /** Chat 消息片段。 */
 export interface ChatSegment {
-    /** 可靠绑定的上游请求 ID；无法关联时留空。 */
-    /** CLI 原样携带的响应 ID，不使用本地生成的消息 ID。 */
+    /** CLI-carried response message ID; the relay makes it unique per request before downstream delivery. */
     responseMessageId?: string;
     /** 上游工具调用 ID，供工具结果精确关联。 */
     responseCallId?: string;
+    /** Exact relay request ID; absent when ownership is unknown or ambiguous. */
     requestId?: string;
     /** 随消息历史保存的请求统计。 */
     requestUsage?: RequestUsageSummary;

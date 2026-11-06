@@ -71,6 +71,19 @@ test('response identity survives stream and SDK parsing', () => {
     adapter.dispose();
 });
 
+/** A CLI result can flush buffered text before content_block_stop; it must keep that response's identity. */
+test('result-before-message-stop keeps the buffered text response identity', () => {
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    try {
+        feedStreamEvent(adapter, { type: 'message_start', message: { id: 'msg_request_scoped', role: 'assistant', content: [] } });
+        feedStreamEvent(adapter, { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+        feedStreamEvent(adapter, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Buffered response' } });
+        const events = adapter.parseOutput({ source: 'stdout', receivedAt: Date.now(), text: JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'Buffered response' }) + '\n' });
+        const segments = events.flatMap(event => event.type === 'segments' ? event.segments : []);
+        assert.ok(segments.length > 0); assert.ok(segments.every(segment => segment.responseMessageId === 'msg_request_scoped'));
+    } finally { adapter.dispose(); }
+});
+
 /** Responses 可见摘要经统一 CLI 适配器应逐片更新，并跳过聚合重复内容。 */
 test('Responses 摘要 delta 打字机增长，所有完成快照和 CLI 聚合事件不重复', () => {
     const { OpenAIResponsesToAnthropicStreamConverter } = require('../../relay/converters/openAIResponsesToAnthropic') as typeof import('../../relay/converters/openAIResponsesToAnthropic');

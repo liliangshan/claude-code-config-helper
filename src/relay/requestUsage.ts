@@ -13,6 +13,8 @@ export interface RequestUsageContext {
     readonly apiType: string;
     readonly compactCommandTriggered: boolean;
     readonly startedAt: number;
+    /** Host-local ordering breaks ties when multiple requests begin in the same millisecond. */
+    readonly sequence?: number;
 }
 
 /** 只接受请求显式提供的 session_id，未知 user_id 不冒充会话 ID。 */
@@ -29,14 +31,21 @@ export function readRequestSessionId(body: unknown): string {
     } catch { return ''; }
 }
 
-/** 为每次转发创建唯一、不可变的身份快照。 */
+let requestSequence = 0;
+
+/** Compare request creation order, preserving older saved records that have no host-local sequence. */
+export function compareRequestUsageOrder(left: RequestUsageContext, right: RequestUsageContext): number {
+    return left.startedAt - right.startedAt || (left.sequence ?? 0) - (right.sequence ?? 0);
+}
+
+/** 为每次转发创建唯一、不可变的身份快照，包含毫秒内请求序号。 */
 export function createRequestUsageContext(
     body: unknown, route: ChatRoute, providerId: string, modelId: string, compactCommandTriggered = false,
     apiType = ''
 ): RequestUsageContext {
     return Object.freeze({
         requestId: randomUUID(), sessionId: readRequestSessionId(body), route, providerId, modelId, apiType,
-        compactCommandTriggered, startedAt: Date.now()
+        compactCommandTriggered, startedAt: Date.now(), sequence: ++requestSequence
     });
 }
 

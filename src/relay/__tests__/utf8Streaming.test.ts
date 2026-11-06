@@ -1,4 +1,4 @@
-/** @file UTF-8 网络分片与 Responses 工具参数快照冲突回归测试。 */
+/** @file UTF-8/BOM 网络分片与 Responses 工具参数快照冲突回归测试。 */
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import * as http from 'node:http';
@@ -95,8 +95,8 @@ function fixture(protocol: string): [string, string] {
 }
 
 for (const protocol of ['responses', 'chat', 'anthropic']) {
-    for (const intercept of [false, true]) {
-        test(`${protocol} intercept=${intercept}: 每字节拆包仍保留中文、emoji、完整工具 JSON 和实时文本`, async (t) => {
+    for (const intercept of [false, true]) for (const bom of protocol === 'anthropic' ? [false] : [false, true]) {
+        test(`${protocol} intercept=${intercept} BOM=${bom}: 每字节拆包仍保留中文、emoji、完整工具 JSON 和实时文本`, async (t) => {
             const wire: Buffer[] = [];
             const upstream = Object.assign(new EventEmitter(), {
                 statusCode: 200, headers: { 'content-type': 'text/event-stream' }, complete: false, readableEnded: false, destroyed: false,
@@ -139,7 +139,7 @@ for (const protocol of ['responses', 'chat', 'anthropic']) {
             });
             await ready;
             const [early, late] = fixture(protocol);
-            for (const byte of Buffer.from(early)) upstream.emit('data', Buffer.from([byte]));
+            for (const byte of Buffer.from((bom ? String.fromCharCode(0xFEFF) : '') + early)) upstream.emit('data', Buffer.from([byte]));
             assert.ok(Buffer.concat(wire).toString('utf8').includes(text), '正文应在工具生成完成前发送');
             if (protocol === 'responses') {
                 const earlyEvents = parseEvents(Buffer.concat(wire).toString('utf8'));
@@ -153,6 +153,7 @@ for (const protocol of ['responses', 'chat', 'anthropic']) {
             const output = Buffer.concat(wire).toString('utf8');
             assert.equal(output.includes('�'), false);
             const events = parseEvents(output);
+            assert.equal(events.find(event => event.type === 'message_start')?.message.id, protocol === 'anthropic' ? 'fixture' : 'msg_fixture', '流首响应身份不能因 BOM 丢失');
             const emitted = events.filter(event => event.delta?.type === 'input_json_delta').map(event => event.delta.partial_json).join('');
             assert.equal(emitted, args);
             assert.deepEqual(JSON.parse(emitted), JSON.parse(args));

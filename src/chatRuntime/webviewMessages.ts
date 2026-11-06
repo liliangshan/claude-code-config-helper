@@ -363,6 +363,7 @@ async function dispatchChatWebviewMessage(message: WebviewToExtension): Promise<
             Logger.info(`[session/resume] 解析历史 JSONL：cwd=${cwd} path=${jsonlPath}`);
             // Read and validate before stopping the old process or replacing any cached transcript.
             const historyMessages = await parseSessionJsonl(jsonlPath, { strict: true });
+            if (chatSessionState.sessionId === targetSessionId) requestUsageRegistry.restoreSegmentUsage(targetSessionId, historyMessages, chatSessionState.messages);
             const resumeTitle = await extractSessionTitle(jsonlPath);
             requireDeps().clearHttpExpectation('session_resume');
             requireDeps().cancelPendingResend('session_resume');

@@ -151,6 +151,7 @@ async function restoreSidebarHistory(): Promise<void> {
     const currentId = currentChatCliSessionIdSync() || await getChatCliSessionStore()?.readSessionId(config.cwd, 'normal');
     if (currentId !== sessionId || originalMessages !== chatSessionState.messages || originalLength !== chatSessionState.messages.length || chatSessionState.activeAssistantMessageId) return;
     const sameCache = (!chatSessionState.sessionId || chatSessionState.sessionId === sessionId) && (!chatSessionState.cwd || chatSessionState.cwd === config.cwd);
+    if (sameCache) requestUsageRegistry.restoreSegmentUsage(sessionId, messages, originalMessages);
     if (messages.length || !sameCache) chatSessionState.messages = messages;
     chatSessionState.sessionId = sessionId; chatSessionState.cwd = config.cwd;
     await flushPersistedChatSession();
@@ -181,7 +182,7 @@ export function sanitizePersistedChatMessages(messages: ChatMessage[]): ChatMess
 }
 
 /**
- * Read native CLI history, accepting text strings and content-block arrays without replaying tasks.
+ * Read native history with response identities for exact saved usage restoration; never replay tasks.
  * @param jsonlPath Requested session's native history file.
  * @param options.strict Reject missing, unreadable or empty history before an explicit switch changes chat state.
  */
@@ -216,6 +217,7 @@ export async function parseSessionJsonl(jsonlPath: string, options: { strict?: b
 
         const msg = rec['message'] as {
             role?: string;
+            id?: string;
             content?: string | Array<{ type: string; text?: string; name?: string; id?: string; input?: unknown }>;
             model?: string;
         } | undefined;
@@ -248,6 +250,10 @@ export async function parseSessionJsonl(jsonlPath: string, options: { strict?: b
                 }
             }
             if (segments.length === 0) { skippedEmptyAssistant++; continue; }
+            for (const segment of segments) {
+                if (typeof msg.id === 'string') segment.responseMessageId = msg.id;
+                if (segment.kind === 'tool' && segment.id) segment.responseCallId = segment.id;
+            }
             messages.push({ id: uuid, role: 'assistant', segments, modelLabel: msg.model, createdAt: ts });
         }
     }
@@ -592,9 +598,11 @@ async function patchSegmentIntoOwnerMessage(incoming: ChatSegment, activeMessage
 
 /** 保存请求统计到所有所属片段，并通知前端；旧会话的迟到报告不写入当前历史。 */
 export async function recordChatRequestUsage(summary: RequestUsageSummary): Promise<void> {
-    if (summary.context.compactCommandTriggered || !requestUsageRegistry.recordRequestUsage(summary)) return;
+    const sessionId = currentChatCliSessionIdSync() || chatSessionState.sessionId || '';
+    if (summary.context.compactCommandTriggered || summary.context.sessionId !== sessionId || !requestUsageRegistry.recordRequestUsage(summary)) return;
     for (const message of chatSessionState.messages) {
         for (const segment of message.segments) {
+            if (segment.requestId || segment.responseMessageId?.startsWith('msg_llsccai_')) requestUsageRegistry.bindSegment(sessionId, segment);
             if (segment.kind !== 'usage' && segment.requestId === summary.context.requestId) segment.requestUsage = summary;
         }
     }

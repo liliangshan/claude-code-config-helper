@@ -38,6 +38,12 @@ Files share the existing 20-snapshot error retention limit across date directori
 
 Request bodies, URLs and authentication headers are not included in these diagnostics, but **raw model responses and tool arguments can contain sensitive content**; review them before sharing. Token limits remain unchanged, and arguments are never repaired by guessing missing JSON characters.
 
+## Unreleased: Request Usage Isolation
+
+Ordinary Anthropic, Chat and Responses replies now receive an opaque, request-scoped message ID before they reach the CLI. Reused provider response IDs no longer merge usage or hide a later response; tool call/result IDs, model content, signatures and token values stay unchanged. Main and independent conversations use separate registries, and missing-session/compaction requests are excluded from ordinary message attribution.
+
+Usage may arrive before or after visible content. Saved ownership is retained instead of rebinding old messages, startup identity confirmation is explicit, and older requests cannot overwrite a newer context meter, including requests started in the same millisecond. Reloaded UI history retains saved summaries; rereading the same native history merges existing summaries only by exact request-scoped message IDs. Legacy histories without saved statistics are not backfilled with guessed token counts. These changes are in the development build, not the previously packaged 3.2.89 VSIX; reload the development host to test them.
+
 ## What's New in 3.2.89
 
 - **Opt-in animated GIF generation and editing.** Enable **Model supports GIF** in the global image configuration to expose animation fields to the model. GIF requests must set `output_format: "gif"` and choose a `size` whose width and height are multiples of 16. `frame_count` accepts 2–64 frames (default 9); `frame_duration_ms` accepts 20–2000 milliseconds (default 200). Invalid requests are rejected before provider submission; ordinary static requests omit the GIF fields and remain unchanged.

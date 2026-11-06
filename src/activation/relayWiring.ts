@@ -16,7 +16,7 @@ import { createBrowserToolRelayHandler } from '../browserTools/httpBridge';
 import { BrowserSessionStore } from '../browserTools/sessionStore';
 import { handleUpstreamTimeoutAutoContinue, sendHiddenUserMessageToCli } from '../chatRuntime/chatMessaging';
 import { setTokenBudgetServiceRef } from '../chatRuntime/chatSession';
-import { setRelayRouteBusy } from '../chatRuntime/routeState';
+import { setRelayRouteBusy, getSessionIdForRoute } from '../chatRuntime/routeState';
 import { applyPendingNativeCompactionPolicy } from '../chatRuntime/cliLifecycle';
 import { observeRecoveryRequestStart, observeRecoveryRequestOutcome } from '../chatRuntime/selfHealing';
 import { EditorAutoOpener, extractFilePathFromToolInput } from '../editorAutoOpen';
@@ -29,8 +29,10 @@ import { OpenAIResponsesProxyAdapter } from '../relay/openaiResponsesProxy';
 import { createRelayRouter } from '../relay/router';
 import { mainCompactionFailures } from '../relay/compactionFailure';
 import { TokenBudgetService, type CompactionState } from '../relay/tokenBudget/service';
-import { recordChatRequestUsage } from '../chatRuntime/chatSession';
+import { recordChatRequestUsage, chatSessionState } from '../chatRuntime/chatSession';
+import { requestUsageRegistry } from '../chatRuntime/requestUsage';
 import type { UsageSink } from '../relay/usageReporter';
+import { compareRequestUsageOrder, type RequestUsageContext } from '../relay/requestUsage';
 import { getChatViewHost, getConfigManager, getLlsTaskService, getRelayServer } from '../runtime';
 import { createVscodeToolRelayHandler } from '../vscodeTools/httpBridge';
 import { createWakeupToolRelayHandler } from '../wakeupTools/httpBridge';
@@ -99,16 +101,18 @@ function createTokenBudgetService(context: vscode.ExtensionContext): TokenBudget
 /**
  * 构造三个 proxy 共用的 usage sink。
  *
- * 上游 usage 里没有 providerId，只有 model 字段无法可靠反查 provider，
- * 因此这里用 sessionId 去 TokenBudgetService 的快照里反查 providerId；
- * requestBodyAtSend 由 service 在 beforeSend 阶段自行缓存，sink 给空串即可。
+ * Bind usage to the registered request and current session; older reports update their own messages,
+ * but cannot replace the latest context meter or a newly selected conversation.
  *
  * @param tokenBudgetService 已创建的 token 预算服务。
  */
-function createUsageSink(tokenBudgetService: TokenBudgetService): UsageSink {
+export function createUsageSink(tokenBudgetService: TokenBudgetService): UsageSink {
+    let latestRequest: { generation: number; context: RequestUsageContext } | undefined;
     return (report) => {
         const context = report.context;
-        if (!context?.sessionId) return;
+        const session = getSessionIdForRoute('normal') || chatSessionState.sessionId;
+        if (!context?.sessionId || context.sessionId !== session || context.compactCommandTriggered
+            || !requestUsageRegistry.getSummary(context.requestId)) return;
         const { sessionId, providerId, modelId } = context;
         if (report.summary) {
             void recordChatRequestUsage(report.summary).catch(error => Logger.warn(`[usage] 保存请求统计失败：${String(error)}`));
@@ -116,6 +120,9 @@ function createUsageSink(tokenBudgetService: TokenBudgetService): UsageSink {
         // 无 usage 的失败报告不能清零会话计量或触发自动压缩。
         if (report.inputTokens === undefined && report.outputTokens === undefined
             && report.cacheReadInputTokens === undefined && report.cacheCreationInputTokens === undefined) return;
+        const generation = requestUsageRegistry.generationToken();
+        if (latestRequest?.generation === generation && latestRequest.context.sessionId === sessionId && compareRequestUsageOrder(context, latestRequest.context) < 0) return;
+        latestRequest = { generation, context };
         tokenBudgetService.afterRecv({
             sessionId,
             providerId,

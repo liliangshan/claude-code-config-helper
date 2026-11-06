@@ -1,5 +1,6 @@
 /** @file 独立于用量统计的请求故障证据与单次终态报告。 */
 import type { RequestUsageContext } from './requestUsage';
+import { SseStreamPrefix } from './sseStreamPrefix';
 
 /** 原始状态与本地映射状态分别保存；未知不得当作成功。 */
 export interface RelayRequestOutcome {
@@ -19,6 +20,7 @@ export class RequestOutcomeReporter {
     private value: RelayRequestOutcome;
     private reported = false;
     private buffer = '';
+    private readonly streamPrefix = new SseStreamPrefix();
     private streamTerminal = false;
     /** 冻结请求身份，不接触用户正文。 */
     public constructor(context?: RequestUsageContext, private readonly sink?: (result: RelayRequestOutcome) => void) {
@@ -50,10 +52,10 @@ export class RequestOutcomeReporter {
             this.fail('upstream_inline_error', typeof e.code === 'string' ? e.code : typeof e.type === 'string' ? e.type : undefined);
         }
     }
-    /** 分片 SSE 只解析完整事件并保留 [DONE] 终态；避免无限缓存异常行。 */
+    /** 分片 SSE 只去除流首 BOM，解析完整事件并保留错误/[DONE] 终态，限制异常行缓存。 */
     public feed(chunk: string): void {
         if (this.reported) return;
-        this.buffer += chunk;
+        this.buffer += this.streamPrefix.feed(chunk);
         let marker: RegExpExecArray | null;
         while ((marker = /\r?\n\r?\n/.exec(this.buffer)) !== null) {
             const event = this.buffer.slice(0, marker.index);

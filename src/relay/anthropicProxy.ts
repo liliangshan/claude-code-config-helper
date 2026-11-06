@@ -302,7 +302,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
     ) {}
 
     /**
-     * 执行一次 `/v1/messages` 透传。
+     * Forward one Messages request, binding only downstream message IDs for exact per-request usage.
      *
      * @param ctx 路由器构造好的请求上下文。
      */
@@ -482,10 +482,9 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                         const text = streamDecoder.write(buf);
                         ctx.outcome?.feed(text);
                         if (!res.writableEnded) {
-                            const out = streamInterceptor ? streamInterceptor.feed(text) : text;
+                            const out = usageReporter.forwardStream(streamInterceptor ? streamInterceptor.feed(text) : text);
                             if (out) {
                                 streamedOutputChunks.push(out);
-                                usageReporter.feed(out);
                                 res.write(out);
                             }
                         }
@@ -512,10 +511,9 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                         if (isStream) {
                             const decodedTail = streamDecoder.end();
                             if (decodedTail) ctx.outcome?.feed(decodedTail);
-                            const tail = streamInterceptor ? streamInterceptor.feed(decodedTail) + streamInterceptor.end() : decodedTail;
+                            const tail = usageReporter.forwardStream(streamInterceptor ? streamInterceptor.feed(decodedTail) + streamInterceptor.end() : decodedTail) + usageReporter.finishStream();
                             if (tail) {
                                 streamedOutputChunks.push(tail);
-                                usageReporter.feed(tail);
                                 res.write(tail);
                             }
                             usageReporter.end();
@@ -524,14 +522,13 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
                             return;
                         }
                         try { ctx.outcome?.json(JSON.parse(rawResponseBody)); } catch { ctx.outcome?.fail('upstream_inline_error', 'invalid_json'); }
-                        const finalBody = this.taskDeps
+                        const finalBody = usageReporter.forwardJson(this.taskDeps
                             ? interceptAnthropicResponse(rawResponseBody, upstreamRes.headers['content-type'], {
                                 service: this.taskDeps.llsTaskService,
                                 autoContinueScheduler: this.taskDeps.autoContinueScheduler,
                                 onFileTool: this.fileOpenObserver
                             }).body
-                            : rawResponseBody;
-                        usageReporter.feedJson(finalBody);
+                            : rawResponseBody);
                         try {
                             res.removeHeader('transfer-encoding');
                             res.setHeader('content-length', String(Buffer.byteLength(finalBody, 'utf-8')));

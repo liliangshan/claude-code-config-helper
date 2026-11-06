@@ -29,7 +29,7 @@ import { WakeupScheduler } from '../wakeupTools/wakeupScheduler';
 import { WakeupHost } from '../wakeupTools/wakeupHost';
 import { buildPromptWithAttachments, buildUserDisplaySegments, sanitizeUploadFileName, openWorkspaceFileReference } from '../chatRuntime/chatMessaging';
 import { readClipboardImage } from '../chatRuntime/clipboardImages';
-import type { RequestUsageSummary } from '../relay/requestUsage';
+import { compareRequestUsageOrder, type RequestUsageSummary } from '../relay/requestUsage';
 import type { UsageReport } from '../relay/usageReporter';
 import { attachImageView, getImageService, imageScope, imageToolEnvironment, receiveImageMessage, resetImageIdentity } from '../imageTools/entry';
 import type { ImageScope, ImageTask, ImageWebviewRequest } from '../imageTools/types';
@@ -58,6 +58,7 @@ export class EditorChatRuntime {
     private overrideCliPath?: string;
     private applied = '';
     private appliedImageEnvironment = '';
+    private latestUsage?: RequestUsageSummary;
     private starting?: Promise<void>;
     private restarting = false;
     private continuationTimer?: NodeJS.Timeout;
@@ -105,6 +106,7 @@ export class EditorChatRuntime {
         this.relay = new EditorRelay(manager, this.service, this.continuation, report => {
             this.queueEvent(async () => { await this.recordUsage(report); });
         });
+        if (data.cliSessionId) this.relay.usageRegistry.bindInitialSession(data.conversationId, data.cliSessionId);
         this.recovery = new RequestRecoveryController({ now: Date.now, setTimer: (fn, delay) => setTimeout(fn, delay), clearTimer: timer => clearTimeout(timer as NodeJS.Timeout),
             notify: state => this.post({ type: 'request/recovery', state }),
             recover: async (context, signal) => {
@@ -253,21 +255,17 @@ export class EditorChatRuntime {
         if (this.cli === cli) this.cli = undefined;
         cli?.dispose(); this.applied = '';
     }
-    /** Bind visible CLI output to exact response or tool identities in this runtime's private registry. */
-    private bindSegmentUsage(segment: ChatSegment): void {
-        if (segment.kind === 'usage') return;
-        const context = this.relay.usageRegistry.resolveRequestForSegment(this.data.cliSessionId ?? this.data.conversationId,
-            segment.responseMessageId, segment.responseCallId);
-        if (context) {
-            segment.requestId = context.requestId;
-            segment.requestUsage = this.relay.usageRegistry.getSummary(context.requestId);
-        }
+    /** Bind only once; saved request IDs are never replaced and legacy history cannot adopt new raw response IDs. */
+    private bindSegmentUsage(segment: ChatSegment, currentOutput = false): void {
+        if (!currentOutput && !segment.requestId && !segment.responseMessageId?.startsWith('msg_llsccai_')) return;
+        this.relay.usageRegistry.bindSegment(this.data.cliSessionId ?? this.data.conversationId, segment);
     }
 
     /** Save request statistics on their own output segments so reattachment and reload retain visible usage. */
     private async recordUsage(report: UsageReport): Promise<void> {
         const summary = report.summary; const context = summary?.context;
         if (!summary || !context || context.compactCommandTriggered
+            || !this.relay.usageRegistry.ownsSession(this.data.cliSessionId ?? this.data.conversationId, context.sessionId)
             || !this.relay.usageRegistry.recordRequestUsage(summary)) return;
         for (const message of this.data.messages) {
             for (const segment of message.segments) {
@@ -280,17 +278,18 @@ export class EditorChatRuntime {
         await this.persist();
     }
 
-    /** Restore the newest actual context usage, including output, without substituting compact-model statistics. */
+    /** Publish only the newest request's real context usage; late reports cannot move the meter backwards. */
     private publishUsageBudget(summary?: RequestUsageSummary): void {
         if (!summary) {
-            for (let index = this.data.messages.length - 1; index >= 0 && !summary; index--) {
-                const summaries = this.data.messages[index].segments.map(segment => segment.requestUsage)
-                    .filter((value): value is RequestUsageSummary => !!value && !value.context.compactCommandTriggered
-                        && [value.inputTokens, value.outputTokens, value.cacheReadInputTokens, value.cacheCreationInputTokens].some(tokens => tokens !== undefined));
-                summary = summaries.sort((a, b) => b.context.startedAt - a.context.startedAt)[0];
-            }
+            const summaries = this.data.messages.flatMap(message => message.segments.map(segment => segment.requestUsage))
+                .filter((value): value is RequestUsageSummary => !!value && !value.context.compactCommandTriggered
+                    && this.relay.usageRegistry.ownsSession(this.data.cliSessionId ?? this.data.conversationId, value.context.sessionId)
+                    && [value.inputTokens, value.outputTokens, value.cacheReadInputTokens, value.cacheCreationInputTokens].some(tokens => tokens !== undefined));
+            summary = summaries.sort((a, b) => compareRequestUsageOrder(b.context, a.context))[0] ?? this.latestUsage;
         }
         if (!summary || [summary.inputTokens, summary.outputTokens, summary.cacheReadInputTokens, summary.cacheCreationInputTokens].every(value => value === undefined)) return;
+        if (this.latestUsage && compareRequestUsageOrder(summary.context, this.latestUsage.context) < 0) summary = this.latestUsage;
+        this.latestUsage = summary;
         const context = summary.context;
         const limit = this.manager.getProviderModel(context.providerId, context.modelId)?.contextLength ?? 200000;
         const used = (summary.inputTokens ?? 0) + (summary.outputTokens ?? 0) + (summary.cacheReadInputTokens ?? 0) + (summary.cacheCreationInputTokens ?? 0);
@@ -370,13 +369,14 @@ export class EditorChatRuntime {
     private async onEvent(event: ParsedCliEvent): Promise<void> {
         if (event.type === 'session/init') {
             if (getImageService()) await imageScope(this.data.cwd, this.data.conversationId, event.sessionId, this.data.title).catch(() => {});
+            if (!this.data.cliSessionId) this.relay.usageRegistry.bindInitialSession(this.data.conversationId, event.sessionId);
             this.data.cliSessionId = event.sessionId; this.relay.sessionId = event.sessionId;
             if (this.recoveryIdentity) this.recoveryIdentity = this.recovery.bindSession(this.recoveryIdentity, event.sessionId) ?? this.recoveryIdentity;
             await this.persist();
         }
         if (event.type === 'segments' && event.segments.length > 0 && this.assistant) {
             for (const segment of event.segments) {
-                this.bindSegmentUsage(segment);
+                this.bindSegmentUsage(segment, true);
                 if (segment.tool) {
                     const filePath = extractFilePathFromToolInput(segment.tool.name, segment.tool.input);
                     if (filePath && !this.closed) void this.opener.observeToolUse({ toolName: segment.tool.name, filePath });
@@ -563,7 +563,7 @@ export class EditorChatRuntime {
     private async newChat(): Promise<void> {
         await this.cancel(); await this.archiveContext();
         await resetImageIdentity(this.data.cwd, this.data.conversationId);
-        this.relay.usageRegistry.clearRequestUsageBindings();
+        this.relay.usageRegistry.clearRequestUsageBindings(); this.latestUsage = undefined;
         this.data.cliSessionId = undefined; this.data.messages = []; this.assistant = undefined;
         this.data.draft = { text: '', attachments: [] }; this.data.title = 'Chat'; this.panel.title = this.data.title;
         this.service.clear(); this.data.lastRunState = 'idle';
@@ -581,10 +581,12 @@ export class EditorChatRuntime {
         const stat = await fs.lstat(file); if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Invalid CLI history file');
         await fs.access(file);
         const messages = await parseSessionJsonl(file, { strict: true }); const title = await extractSessionTitle(file) || 'Chat';
+        if (this.data.cliSessionId === sessionId) this.relay.usageRegistry.restoreSegmentUsage(sessionId, messages, this.data.messages);
         if (this.closed) return;
         await this.cancel(); await this.archiveContext();
         await resetImageIdentity(this.data.cwd, this.data.conversationId);
-        this.relay.usageRegistry.clearRequestUsageBindings();
+        this.relay.usageRegistry.clearRequestUsageBindings(); this.latestUsage = undefined;
+        this.relay.usageRegistry.bindInitialSession(this.data.conversationId, sessionId);
         this.data.cliSessionId = sessionId; this.data.messages = messages; this.assistant = undefined;
         this.data.title = title; this.panel.title = title; this.data.draft = { text: '', attachments: [] };
         this.service.clear(); this.data.lastRunState = 'idle';

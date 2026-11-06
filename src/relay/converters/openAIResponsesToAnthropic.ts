@@ -1,6 +1,7 @@
 /** @file OpenAI Responses JSON/SSE 到 Anthropic Messages 的转换与可见思考摘要透传。 */
 
 import type { ModelReasoningMode } from '../../types';
+import { SseStreamPrefix } from '../sseStreamPrefix';
 
 import type { ResponsesConversionWarning } from './anthropicToOpenAIResponses';
 import { formatAnthropicSseError } from './openAIErrorToAnthropic';
@@ -142,6 +143,8 @@ interface OpenAIResponsesToAnthropicState {
 export class OpenAIResponsesToAnthropicStreamConverter {
     /** 尚未形成完整 SSE event 的输入缓冲。 */
     private buffer = '';
+    /** BOM normalization belongs to the response, not to individual events or decoder chunks. */
+    private readonly streamPrefix = new SseStreamPrefix();
 
     /** 当前流转换状态。 */
     private readonly state: OpenAIResponsesToAnthropicState = {
@@ -227,20 +230,20 @@ export class OpenAIResponsesToAnthropicStreamConverter {
     private readonly warnings: ResponsesConversionWarning[] = [];
 
     /**
-     * 输入一段 OpenAI Responses SSE 原始文本并输出 Anthropic SSE 文本。
+     * 输入一段 Responses SSE 文本，仅去除整条流开头的一个 BOM，保留正文字符。
      *
      * @param chunk 上游 SSE chunk。
      * @returns 可写给客户端的 Anthropic SSE 文本。
      */
     public feed(chunk: string): string {
         if (this.state.finished) return '';
-        this.buffer += chunk;
+        this.buffer += this.streamPrefix.feed(chunk);
         const events = this.drainCompleteEvents();
         return events.map((eventText) => this.handleOpenAIEvent(eventText)).join('');
     }
 
     /**
-     * 结束输入流，并在必要时合成 message_delta / message_stop。
+     * 结束输入流，按原文解析尾事件（不 trim 字段名前缀），并在必要时合成结束事件。
      *
      * @returns 剩余应输出的 Anthropic SSE 文本。
      */
@@ -251,7 +254,7 @@ export class OpenAIResponsesToAnthropicStreamConverter {
             }
             return '';
         }
-        const tail = this.buffer.trim();
+        const tail = this.buffer;
         this.buffer = '';
         const out = tail ? this.handleOpenAIEvent(tail) : '';
         const final = out + this.finishIfNeeded('end');

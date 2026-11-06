@@ -53,16 +53,21 @@ export class EditorRelay {
         this.url = this.url.substring(0, this.url.lastIndexOf('/') + 1) + this.token;
         return this.url;
     }
-    /** Resolve owned requests, refresh stale image schemas and cancel only the disconnected HTTP tool request. */
+    /** Freeze owner identity before awaits, refresh image schemas and cancel only the owned HTTP request. */
     private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
         const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
         if (req.method !== 'POST' || ![`/${this.token}/v1/messages`, `/${this.token}/tools`, `/${this.token}/tools/image`, `/${this.token}/tools/http`].includes(pathname) || !this.settings || !this.active) { res.writeHead(403); res.end(); return; }
+        const sessionId = this.sessionId;
+        const settings = this.settings;
+        const generationToken = this.token;
+        const usageGeneration = this.usageRegistry.generationToken();
         this.inFlight++;
         try {
             const imageRequest = pathname.endsWith('/tools/image');
             const httpRequest = pathname.endsWith('/tools/http');
             const rawBody = await (imageRequest ? readImageRequest(req) : httpRequest ? readHttpToolRequest(req) : readRequestBody(req));
             let body = JSON.parse(rawBody) as Record<string, unknown>;
+            if (generationToken !== this.token || !this.active) { res.writeHead(403); res.end(); return; }
             if (pathname.endsWith('/tools') || imageRequest || httpRequest) {
                 if (!this.toolHandler) throw new Error('Editor tools unavailable');
                 if ((body.bridge === 'llsccaiHttp') !== httpRequest) throw new Error('HTTP_RELAY_REJECTED');
@@ -84,20 +89,19 @@ export class EditorRelay {
             const triggered = !this.service.hasActiveWorkflow() && isLlsCcaiTaskTriggered(body.messages);
             if (triggered) this.service.markWorkflowCreationPending();
             const compact = isClaudeCompactCommandRequest(body);
-            const settings = this.settings;
             const dedicatedCompaction = compact && !!settings.compactionModel;
             const model = parseModelField({ model: dedicatedCompaction ? settings.compactionModel : settings.normalModel });
             /** Surface configuration failures as terminal outcomes before returning the non-retryable API error. */
             const failCompaction = (reason: string): void => {
-                this.compactionFailures.fail(this.sessionId);
-                const usageContext = createRequestUsageContext({ metadata: { session_id: this.sessionId } }, 'normal', model?.providerId ?? '', model?.modelId ?? '', true);
+                this.compactionFailures.fail(sessionId);
+                const usageContext = createRequestUsageContext({ metadata: { session_id: sessionId } }, 'normal', model?.providerId ?? '', model?.modelId ?? '', true);
                 const outcome = new RequestOutcomeReporter(usageContext, this.onOutcome);
                 this.onRequest?.(usageContext.requestId);
                 this.continuation.notifyRequestStarted();
                 try { writeCompactionFailure(res, reason, outcome); }
                 finally { outcome.end(res.statusCode); }
             };
-            if (compact && this.compactionFailures.hasFailed(this.sessionId)) {
+            if (compact && this.compactionFailures.hasFailed(sessionId)) {
                 failCompaction('This compaction already failed; automatic upstream retries are disabled.'); return;
             }
             if (!model) {
@@ -115,7 +119,7 @@ export class EditorRelay {
                 throw new Error('Selected model unavailable');
             }
             body.model = model.modelId;
-            body.metadata = { ...(body.metadata as object ?? {}), session_id: this.sessionId };
+            body.metadata = { ...(body.metadata as object ?? {}), session_id: sessionId };
             req.headers = { 'content-type': 'application/json' };
             const scopedManager = new Proxy(this.manager, { get: (target, key) => {
                 if (key === 'getChatSubagentsEnabled') return () => settings.subagentsEnabled;
@@ -136,8 +140,8 @@ export class EditorRelay {
                 body = await refreshImageToolsForRequest(body) as Record<string, unknown>;
                 const context = { req, res, provider, modelId: model.modelId, rawBody: JSON.stringify(body), parsedBody: body,
                     llsTaskCreateTriggered: triggered, compactCommandTriggered: compact, reasoningEffort: compact || settings.reasoningEffort === 'auto' ? undefined : settings.reasoningEffort,
-                    usageContext, usageRegistry: this.usageRegistry, outcome };
-                if (dedicatedCompaction) await this.compactionFailures.forward(this.sessionId, res, outcome, () => forwardDedicatedCompaction(adapter, context));
+                    usageContext, usageRegistry: this.usageRegistry, usageGeneration, outcome };
+                if (dedicatedCompaction) await this.compactionFailures.forward(sessionId, res, outcome, () => forwardDedicatedCompaction(adapter, context));
                 else await adapter.handle(context);
             } catch (error) { outcome.fail('upstream_connect', (error as NodeJS.ErrnoException).code); throw error; }
             finally { outcome.end(res.statusCode); }

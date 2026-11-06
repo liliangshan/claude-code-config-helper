@@ -17,6 +17,7 @@
 import { requestUsageRegistry, type RequestUsageRegistry } from '../chatRuntime/requestUsage';
 import type { UpstreamRequestContext } from './router';
 import { Logger } from '../logger';
+import { bindJsonResponseIdentity, ResponseIdentityStream } from './responseIdentity';
 
 /** 每个转发上下文共享一个报告器，覆盖尚未收到响应头的失败路径。 */
 const requestReporters = new WeakMap<UpstreamRequestContext, UsageReporter>();
@@ -25,7 +26,7 @@ const requestReporters = new WeakMap<UpstreamRequestContext, UsageReporter>();
 export function getRequestUsageReporter(ctx: UpstreamRequestContext, sink?: UsageSink): UsageReporter {
     let reporter = requestReporters.get(ctx);
     if (!reporter) {
-        reporter = new UsageReporter(sink, ctx.usageContext, ctx.usageRegistry);
+        reporter = new UsageReporter(sink, ctx.usageContext, ctx.usageRegistry, ctx.usageGeneration);
         requestReporters.set(ctx, reporter);
     }
     return reporter;
@@ -86,17 +87,33 @@ export class UsageReporter {
 
     /** 是否已经触发过上报，避免 end 时重复上报。 */
     private reported = false;
+    private readonly identityStream: ResponseIdentityStream;
 
     /**
-     * 创建请求级用量报告器，将响应身份写入所属会话的关联表。
+     * Create a generation-bound reporter and downstream message identity before any response reaches the CLI.
      * @param sink 最终用量回调。
      * @param context 请求开始时冻结的身份。
      * @param registry 独立会话关联表；主聊天默认使用原关联表。
+     * @param generation 请求入口记录的会话代次，拒绝会话切换后的迟到登记。
      */
     public constructor(private readonly sink: UsageSink | undefined, context?: RequestUsageContext,
-        private readonly registry: RequestUsageRegistry = requestUsageRegistry) {
+        private readonly registry: RequestUsageRegistry = requestUsageRegistry, generation = registry.generationToken()) {
         this.report.context = context;
-        if (context) this.registry.registerRequest(context);
+        this.identityStream = new ResponseIdentityStream(context);
+        if (context) this.registry.registerRequest(context, generation);
+    }
+
+    /** Rewrite the downstream message ID and register it before the CLI receives any response event. */
+    public forwardStream(chunk: string): string {
+        const output = this.identityStream.feed(chunk); this.feed(output); return output;
+    }
+    /** Flush identity framing before usage finalization; do not synthesize a protocol terminal. */
+    public finishStream(): string {
+        const output = this.identityStream.end(); this.feed(output); return output;
+    }
+    /** Bind complete JSON responses using the same request-scoped identity as streaming responses. */
+    public forwardJson(body: string): string {
+        const output = bindJsonResponseIdentity(body, this.report.context); this.feedJson(output); return output;
     }
 
     /** 终止状态；错误事件优先于普通流结束。 */
@@ -237,12 +254,13 @@ export class UsageReporter {
     }
 
     /**
-     * 通过 sink 上报最终 usage；若信息全空则跳过。
+     * Publish final usage once and cache it before invoking asynchronous UI sinks.
      */
     private flushReport(): void {
         if (this.reported) return;
         if (this.report.context) {
             this.report.summary = normalizeRequestUsage(this.report.context, this.report, this.status);
+            this.registry.recordRequestUsage(this.report.summary);
         }
         this.reported = true;
         // 每个上游请求独立汇总一次，不等待 CLI 整轮 result；缺失字段不冒充实际用量。
