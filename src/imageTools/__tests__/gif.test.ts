@@ -50,12 +50,12 @@ test('GIF schemas expose exact public fields and leave default static schemas un
     for (const name of ['openapi_generate_image', 'openapi_edit_image']) {
         const off = imageToolSchemas(false).find(tool => tool.name === name)!;
         const on = imageToolSchemas(true).find(tool => tool.name === name)!;
-        assert.equal(off.inputSchema.properties.output_format, undefined);
-        assert.deepEqual((on.inputSchema.properties.output_format as any).enum, ['gif']);
+        assert.deepEqual((off.inputSchema.properties.output_format as any).enum, ['png']);
+        assert.deepEqual((on.inputSchema.properties.output_format as any).enum, ['png', 'gif']);
         assert.equal((on.inputSchema.properties.frame_count as any).default, 9);
         assert.equal((on.inputSchema.properties.frame_duration_ms as any).default, 200);
         assert.ok(on.inputSchema.required.includes('size'));
-        assert.match(on.description, /MUST submit output_format="gif"/);
+        assert.match(on.description, /ONLY when the user explicitly asks for GIF or animation/);
         assert.equal(on.inputSchema.additionalProperties, false);
     }
     assert.equal(imageToolSchemas(false)[0].inputSchema.properties.frame_count, undefined);
@@ -66,7 +66,7 @@ test('main and independent MCP subprocesses publish capability-specific GIF sche
     for (const editor of [false, true]) for (const enabled of [false, true]) {
         const entry = path.resolve(__dirname, editor ? '../../editorChat/mcp' : '../imageMcpServer');
         const child = spawn(process.execPath, ['-e', `require(${JSON.stringify(entry)}).${editor ? 'startEditorBridge' : 'startImageMcpServer'}()`], {
-            env: { ...process.env, [IMAGE_GIF_ENV]: enabled ? '1' : '0', LLS_IMAGE_TOOL_RELAY_PORT: '', LLS_IMAGE_TOOL_CAPABILITY: '', LLS_EDITOR_BRIDGE: 'llsccaiImage', LLS_EDITOR_TOOL_URL: 'http://127.0.0.1:1/test/tools' }, stdio: ['pipe', 'pipe', 'pipe']
+            env: { ...process.env, LLS_IMAGE_OUTPUT_FORMATS: enabled ? 'png,gif' : 'png', [IMAGE_GIF_ENV]: enabled ? '1' : '0', LLS_IMAGE_TOOL_RELAY_PORT: '', LLS_IMAGE_TOOL_CAPABILITY: '', LLS_EDITOR_BRIDGE: 'llsccaiImage', LLS_EDITOR_TOOL_URL: 'http://127.0.0.1:1/test/tools' }, stdio: ['pipe', 'pipe', 'pipe']
         });
         let output = '', error = '';
         child.stdout.on('data', chunk => { output += chunk; }); child.stderr.on('data', chunk => { error += chunk; });
@@ -75,7 +75,7 @@ test('main and independent MCP subprocesses publish capability-specific GIF sche
         assert.equal(code, 0, error);
         const tools = JSON.parse(output).result.tools;
         assert.equal(tools.length, 6);
-        assert.equal('output_format' in tools[0].inputSchema.properties, enabled);
+        assert.equal('frame_count' in tools[0].inputSchema.properties, enabled);
     }
 });
 
@@ -102,7 +102,7 @@ test('GIF client supports signatures and sends normalized fields without changin
         assert.equal(requests[1].frame_count, 64); assert.equal(requests[1].frame_duration_ms, 20);
         assert.equal(requests[1].images.length, 1); assert.equal(requests[1].n, 1); assert.equal('image' in requests[1], false);
         await generateImages(snapshot, { prompt: 'static', size: '513x513', operation: 'generate' }, new AbortController().signal);
-        assert.deepEqual(requests[2], { model: 'gif-model', prompt: 'static', size: '513x513' });
+        assert.deepEqual(requests[2], { model: 'gif-model', prompt: 'static', size: '513x513', output_format: 'png' });
         await assert.rejects(generateImages({ ...snapshot, config: { ...snapshot.config, supportsGif: false } }, { prompt: 'no', size: '512x512', operation: 'generate', output_format: 'gif' }, new AbortController().signal), /IMAGE_GIF_UNSUPPORTED/);
         assert.equal(requests.length, 3);
         assert.deepEqual(await loadGeneratedImage({ url: base + '/result.gif' }, 1024, new AbortController().signal), gif);

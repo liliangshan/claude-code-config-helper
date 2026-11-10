@@ -2,7 +2,62 @@
 
 All notable changes to this extension are documented in this file.
 
-## [Unreleased]
+## [3.2.92] - 2026-11-10
+
+### Fixed
+
+- Left/parallel chat now appends the user message and pending assistant bubble before waiting for CLI startup. Slow CLI initialization no longer delays the visible user message.
+- If left CLI startup fails, the already displayed user message is retained and the failure is reported instead of silently losing the message.
+
+### Validation
+
+- Left runtime regression and parallel-chat tests passed. TypeScript compilation passed. Full regression is not rerun for this version bump; the known `requestUsageBinding` issue remains documented.
+
+## [3.2.91] - 2026-11-08
+
+
+### Added
+
+- Add independent PNG/JPG/GIF/SVG capability switches to the shared image dialog, defaulting new settings to PNG only and retaining existing GIF opt-in. Current enabled formats drive tool enums/descriptions, both MCP bridge environments and resumed-history schema repair. Static requests explicitly select PNG by default and reject GIF frame parameters; GIF is reserved for explicit animation requests rather than two-frame substitutes for static images.
+- Support bounded SVG Base64/Data URL/download output with conservative static UTF-8/XML validation, `.svg` storage, history restoration and default-text-editor opening. Reject active/external SVG content; preserve safe wrong-format provider files with a format-mismatch warning without replaying the request.
+- Add a localized **Switch to parallel session** button at the start of the full settings toolbar. It reuses the existing left independent-chat action, keeping current conversation ownership/history and avoiding duplicate editor tabs or CLI restarts. Provider-only embedded onboarding keeps its existing navigation boundary.
+
+### Changed
+
+- Combine visible thinking blocks within each assistant reply into one disclosure, retaining original block order, request-specific usage anchors, tool positions and manual open/close preferences. Stream updates replace only the changed text block; separate replies and Webviews do not share groups. Existing historical thinking remains supported and selected text stays protected during streaming/completion.
+- Remove the three-dot pending row above the composer, including its markup, styles and running-state updates, so generating no longer reserves an extra row. Keep context files, the send/stop action and the restored running border animation unchanged.
+- Restore the composer's original running-state comet border and subtle glow; actual idle/stop removes the animation and reduced-motion users retain a static border. The calmer message and tool styling remains unchanged.
+- Keep the assistant route/model label one size smaller (11px to 10px by default) and group it with usage on the left, without wide left/right separation. Legacy source-only labels also align left, and narrow views or long model names wrap without hiding content. Inset tool-card usage headers by 10px on the left without adding bottom spacing.
+- Restyle the shared Chat model picker with an icon/title description, separate normal/task-flow/compaction/cache cards, calmer native selects and restart guidance. The body scrolls independently so header close and footer actions remain visible in narrow or short views. Associate each select with a localized accessible label and description, and complete French/German compaction labels. Native selections, model-save messages, CLI restart behavior and immediate cache-TTL changes are unchanged.
+- Refine the model picker with side-by-side optional model cards on wide views and a single column on narrow views. Display the real selected provider/model identifier as wrapping plain text, with full native hover labels. Add seven-language timing labels and an explicit reminder that cache changes apply immediately and survive cancelling the dialog; unsaved model selections remain unapplied. Improve visible keyboard focus and native dropdown dark/light palettes without changing request or restart behavior.
+
+- Increase image task defaults to 100 concurrent upstream submissions and a 1200-second (20-minute) per-task deadline. Existing accepted tasks keep their frozen settings; the local MCP acknowledgement transport remains short because it only confirms queue admission.
+
+### Upgrade
+
+- Install 3.2.91 and reload VS Code, or restart the F5 development host, when ready. Reloading can interrupt active CLI/image tasks; restarting a chat CLI alone does not load changed extension code. Existing models, credentials, history and saved GIF opt-in are retained. New/missing format switches default to PNG on and JPG/SVG off; keep at least one supported output enabled. Provider limits still apply to the 100-task local concurrency setting, and interrupted/billable work is never automatically replayed.
+- SVG output uses conservative static validation and source-text opening, not a general SVG/webpage renderer. Format switches are capability declarations, not proof that a provider supports those formats; real local/remote appearance and provider compatibility require manual acceptance.
+
+### Validation
+
+- 3.2.91 release build: VS Code diagnostics, manifest/lockfile/README version consistency, TypeScript type checking/compilation and 326 JavaScript syntax checks passed. Full regression completed with 836 tests: 814 passed, 22 opt-in checks skipped and zero failures. Both real CLI 2.1.312 history/deferred-tool acceptance cases passed separately against local fixtures, without calling a paid provider. This build is packaged only; installation, window reload and repository publication are not part of this release task.
+- Four-format acceptance passed: VS Code diagnostics, TypeScript type checking/compilation and 326 JavaScript syntax checks; full regression completed with 836 tests, 814 passed, 22 opt-in checks skipped and zero failures. All 15 nonempty switch combinations preserve exact enums through Chat/Responses conversion, default PNG never gains frame fields, disabled formats fail before billing, and safe format mismatches retain real files without retries. Local SVG tests cover unsafe XML/active content, persistence/restoration and source-editor opening. Both MCP entry points and real CLI 2.1.312 resumed/deferred tool refresh passed against loopback fixtures. Browser checks covered 168 viewport/language/source/palette combinations and verified four switches plus one correct save message for each connection mode. No real provider requests were made during these checks.
+- Settings parallel-session switch checks passed: seven-language labels, native button activation and keyboard focus, the existing host command, runtime reuse and embedded-onboarding rejection. Browser checks covered 70 combinations of five widths, two palettes and seven languages with no switch-button overflow or duplicate/wrong click messages. Full regression: 827 tests, 805 passed, 22 opt-in checks skipped, zero failures; VS Code diagnostics, type checking, compilation and settings-script syntax passed.
+- Grouped-thinking browser checks passed across 112 width/palette/language combinations. Actual production-script checks covered cross-request member IDs, late usage isolation, tool/node reuse, manual disclosure choices, locale redraw, selected-text deferral, real running/idle animation and the reduced-motion fallback. No paid provider requests were made.
+- Model-picker browser checks used production assets with a loopback-only synthetic host: 672 combinations of six widths (280–1000px), two heights, four palettes, seven languages and normal/long model names had no dialog/body horizontal overflow or clipped header/footer actions. Wide optional-model cards use two columns and narrow cards use one. Selection-detail, optional fallback, immediate cache update, cancel/draft reset and exact model-save message checks passed; Tab focus has a visible 2px outline. Actual installed VS Code Webview appearance still requires manual acceptance.
+- Intermediate 3.2.90 local-build checks before this version bump: 828 tests, 806 passed, 22 opt-in checks skipped, zero failures. Left-grouped model/usage and the 10px tool-card left inset also passed 84 browser width/language/long-name combinations; existing bottom spacing is unchanged.
+- Earlier three-dot removal regression passed: 824 tests, 802 passed, 22 opt-in checks skipped, zero failures. Browser running/idle checks at 280px, 380px and 900px confirmed the three-dot row and its space are absent while border animation and send/stop behavior remain.
+- Twelve focused chat/model-picker regressions passed, including all three host resource mappings. The first check caught an unnecessary hidden-detail CSS rule conflicting with the existing control-visibility safeguard; removing that redundant rule restored the native `hidden` behavior and passed the same test. HTML ID uniqueness and all accessible label/description references were checked.
+
+## [3.2.90] - 2026-11-06
+
+### Changed
+
+- Chat messages, tool cards and the composer now grow with the panel width instead of staying in a centered 780px column. Model/source and all five usage fields share one row when space permits and wrap naturally in narrow panels without hiding fields or truncating token counts.
+
+- Apply the approved chat-preview styling to main, left and editor conversations through one shared theme-aware polish layer: calmer message spacing, subtle user bubbles, monochrome tool icons, quieter cards, per-code-block language/copy toolbars and compact composer controls. Existing actions, permission states, five usage fields and model settings remain available; no sample status, model, duration or counts are shipped as live data.
+- Visible thinking now has localized native disclosure controls. Streamed blocks expand automatically and settle on block/turn completion; manual open/close choices persist through deltas and same-view redraws. Selected content is not replaced while copying. Structured presentation metadata contains only returned visible thinking and completion, never signatures or hidden reasoning. Completed SDK/native-history thinking and legacy quote-formatted blocks are supported without changing model context.
+- Exclude standalone `design/` HTML samples from future VSIX packages; the production assets are shared under `media/chat/` and use the existing nonce CSP and resource roots.
 
 ### Fixed
 
@@ -14,7 +69,17 @@ All notable changes to this extension are documented in this file.
 - Background task updates now preserve omitted state: description-only, null-end-time and unknown-status patches cannot create or resurrect active tasks. Explicit running/pending/queued states add activity; completed/failed/cancelled/canceled/killed states or finite end times remove it. Foreign-session background events do not modify the owning chat's task set.
 - Completion still requires the CLI's final result, no active owned background tasks and a drained relay; a message stream ending or one task completing cannot prematurely release another active turn.
 
+### Upgrade
+
+- Reload the installed extension or restart the F5 development host when ready to activate the new assets and relay code; active CLI tasks can be interrupted. Restarting a chat CLI alone does not load new extension code. Existing models, credentials, settings and native history are retained. Manual local/remote Webview appearance acceptance remains necessary.
+
 ### Validation
+
+- Same-version responsive rebuild: VS Code diagnostics, TypeScript type checking/compilation and the layout regression passed. Browser checks covered six widths (300–1800px) and seven locales: 42 cases had no page/header overflow or offscreen send button, all five fields remained present, and 1800px model/usage headers stayed on one line. Full regression with concurrency capped at two: 814 tests, 792 passed, 22 skipped, zero failures. Version 3.2.90 is retained for this unpublished local trial; replacing the package does not activate updated resources until window reload.
+
+- Chat presentation checks: VS Code diagnostics, TypeScript type checking/compilation and 322 JavaScript syntax checks passed. Latest full regression with concurrency capped at two: 813 tests, 791 passed, 22 opt-in checks skipped, zero failures. Focused thinking/clipboard/history/usage and real CLI acceptance passed 63/63. No paid provider requests were made.
+- Browser acceptance used actual production HTML/CSS/scripts and synthetic host messages: 112 combinations of four palettes (dark/light/high-contrast dark/high-contrast light), four viewport widths and seven locales had no page overflow or offscreen send button. Thinking-node reuse, default/manual disclosure behavior, language redraw, code copy, selection-protected streaming and reduced motion were exercised. All three host layouts were checked separately. Real VS Code Webview/remote presentation still needs manual acceptance after loading the new build.
+- The VSIX file list contains the new local CSS/JS in all production paths and excludes `design/`. Packaging and local installation do not themselves validate remote Webview presentation; activation waits for the user's window reload.
 
 - Five new regressions exercise the real CLI parser and composer button-state functions, including late empty/nonempty events, background metadata after completion, terminal statuses/end times, cross-session isolation and result/task/relay ordering. All five pass; related acceptance passed 53 tests with 1 opt-in CLI test skipped.
 - BOM acceptance adds 16 converter/outcome cases and 4 production-proxy byte-fragmentation cases covering LF/CRLF, empty decoder chunks, separate BOM chunks, first text/tool/usage/identity, event-name fallback, terminal/error evidence and preservation of internal BOM characters. Protocol-related acceptance passed 147/147 using local fixtures and mocked transports, without paid API requests.

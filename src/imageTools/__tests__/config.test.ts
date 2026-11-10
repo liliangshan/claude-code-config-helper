@@ -23,6 +23,13 @@ function input(revision: number, changes = {}): ImageConfigInput {
     return { expectedRevision: revision, config: { ...defaultImageConfig(), enabled: true, baseUrl: 'https://images.example.com/v1', modelId: 'test-image', ...changes }, keyAction: 'replace', apiKey: 'test-image-key-not-real' };
 }
 
+test('fresh image settings default to 20-minute tasks and 100 concurrent submissions', () => {
+    const config = defaultImageConfig();
+    assert.equal(config.timeoutMs, 1_200_000);
+    assert.equal(config.maxConcurrent, 100);
+    assert.equal(config.maxQueue, 100);
+});
+
 test('image endpoints preserve prefixes, reject embedded credentials and restrict provider overrides', () => {
     for (const [base, expected] of [['https://example.com', '/v1'], ['https://example.com/v1/', '/v1'], ['https://example.com/proxy/v1', '/proxy/v1'], ['https://example.com/custom', '/custom']]) {
         assert.equal(imageEndpoints({ ...defaultImageConfig(), baseUrl: base }).generationUrl, `https://example.com${expected}/images/generations`);
@@ -39,8 +46,9 @@ test('two windows share global settings, detect stale drafts, preserve snapshots
     const left = new ImageConfigStore(root, secrets, manager()); const right = new ImageConfigStore(root, secrets, manager());
     try {
         assert.equal((await left.read()).enabled, false);
-        const first = await left.save(input(0, { supportsGif: true })); const snapshot = await left.resolve(first);
+        const first = await left.save(input(0, { supportsGif: true, supportsJpg: true, supportsSvg: true })); const snapshot = await left.resolve(first);
         assert.equal((await right.read()).supportsGif, true);
+        assert.equal((await right.read()).supportsJpg, true); assert.equal((await right.read()).supportsSvg, true); assert.equal((await right.read()).supportsPng, true);
         assert.equal((await right.read()).modelId, 'test-image');
         assert.ok(first.secretRef); assert.equal([...secrets.values.keys()].filter(key => key.startsWith('llsccai.imageGeneration.secret.')).length, 1);
         assert.ok(!(await fs.readFile(path.join(root, 'image-generation/config.json'), 'utf8')).includes('test-image-key-not-real'));
@@ -72,13 +80,13 @@ test('image config rejects secret injection, rolls back vault failures and repor
     } finally { store.dispose(); await fs.rm(root, { recursive: true, force: true }); }
 });
 
-test('old image settings retain their connection but no longer configure dimensions or advanced options', () => {
+test('old image settings retain their connection but adopt the current task deadline and concurrency defaults', () => {
     const config = parseImageConfig({ ...defaultImageConfig(), enabled: true, baseUrl: 'https://example.com/v1', modelId: 'image-model',
         defaultSize: '512x512', editEnabled: false, editModelId: 'old-edit-model', timeoutMs: 12, maxConcurrent: 8,
         generationEndpointOverride: 'https://obsolete.example.com/generate' }, 7);
     assert.equal(config.modelId, 'image-model'); assert.equal(config.baseUrl, 'https://example.com/v1'); assert.equal(config.revision, 7);
     assert.equal('defaultSize' in config, false); assert.equal(config.editEnabled, true); assert.equal(config.editModelId, '');
-    assert.equal(config.timeoutMs, 180000); assert.equal(config.maxConcurrent, 1); assert.equal(config.generationEndpointOverride, '');
+    assert.equal(config.timeoutMs, 1_200_000); assert.equal(config.maxConcurrent, 100); assert.equal(config.generationEndpointOverride, '');
 });
 
 test('local draft checks do not write new secrets or contact an API', async () => {

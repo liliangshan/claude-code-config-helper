@@ -6,7 +6,7 @@ import { readJson, safeDirectory, writeJson } from './storage';
 import { imageType } from './imageClient';
 import { ImageError, type ImageTask, type ImageFile } from './types';
 import { parseImageResponsePreview } from './responsePreview';
-import { imageAnimationOptions } from './animation';
+import { restoredImageOutputOptions } from './formats';
 
 export const IMAGE_TASK_ID = /^\d{8}T\d{9}Z_[0-9a-f-]{36}$/;
 
@@ -15,7 +15,7 @@ export function assertImageScope(scope: string): void {
     if (!/^[a-f0-9]{64}$/.test(scope)) throw new ImageError('IMAGE_TASK_NOT_FOUND');
 }
 /**
- * Validate restored GIF/static fields and keep only bounded, sanitized diagnostic metadata.
+ * Validate restored output/GIF fields and keep only bounded, sanitized diagnostic metadata.
  * @param raw Task data loaded from disk or prepared for persistence.
  * @param scope Expected host-owned conversation identity.
  * @returns An allowlisted task record with no credentials or full response payloads.
@@ -28,14 +28,16 @@ export function parseImageTask(raw: unknown, scope: string): ImageTask {
         || !Number.isFinite(v.createdAt) || !Array.isArray(v.images) || v.images.length > 16
         || !['queued', 'running', 'succeeded', 'partially_failed', 'failed', 'interrupted'].includes(v.status)) throw new ImageError('IMAGE_STORAGE_FAILED');
     const images = v.images.map(item => {
-        if (!item || !/^[a-f0-9-]{36}$/.test(item.id) || !/^images\/[a-f0-9-]{36}\.(png|jpg|webp|gif)$/.test(item.relativePath)
-            || path.basename(item.relativePath).split('.')[0] !== item.id || !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(item.mimeType)
+        if (!item || !/^[a-f0-9-]{36}$/.test(item.id) || !/^images\/[a-f0-9-]{36}\.(png|jpg|webp|gif|svg)$/.test(item.relativePath)
+            || path.basename(item.relativePath).split('.')[0] !== item.id || !['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml'].includes(item.mimeType)
             || !Number.isSafeInteger(item.bytes) || item.bytes < 1) throw new ImageError('IMAGE_STORAGE_FAILED');
+        const extensions: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/svg+xml': 'svg' };
+        if (path.extname(item.relativePath) !== '.' + extensions[item.mimeType]) throw new ImageError('IMAGE_STORAGE_FAILED');
         return { id: item.id, relativePath: item.relativePath, mimeType: item.mimeType, bytes: item.bytes };
     });
     const responsePreview = parseImageResponsePreview(v.responsePreview);
     return { version: 1, taskId: v.taskId, scopeId: scope, operation: v.operation, prompt: v.prompt, model: v.model,
-        configRevision: v.configRevision, size: v.size, ...imageAnimationOptions(v, v.size, true), status: v.status, createdAt: v.createdAt, images,
+        configRevision: v.configRevision, size: v.size, ...restoredImageOutputOptions(v, v.size), status: v.status, createdAt: v.createdAt, images,
         ...(Number.isFinite(v.startedAt) ? { startedAt: v.startedAt } : {}), ...(Number.isFinite(v.finishedAt) ? { finishedAt: v.finishedAt } : {}),
         ...(typeof v.error === 'string' && /^IMAGE_[A-Z0-9_]+$/.test(v.error) ? { error: v.error } : {}),
         ...(responsePreview ? { responsePreview } : {}) };
@@ -131,7 +133,7 @@ export class ImageTaskStore {
         } finally { await fs.unlink(temporary).catch(() => {}); }
         return { id, relativePath: `images/${id}.${extension}`, mimeType, bytes: bytes.length };
     }
-    /** Resolve only an image recorded in this task and revalidate the file before opening it. */
+    /** Revalidate ownership and raster signatures or the entire static SVG document before opening a saved file. */
     public async imagePath(scope: string, taskId: string, imageId: string): Promise<string> {
         const task = await this.get(scope, taskId); const image = task.images.find(item => item.id === imageId);
         if (!image) throw new ImageError('IMAGE_TASK_NOT_FOUND');
@@ -142,8 +144,13 @@ export class ImageTaskStore {
         try {
             const opened = await handle.stat();
             if (opened.ino !== stat.ino || opened.dev !== stat.dev) throw new ImageError('IMAGE_STORAGE_FAILED');
-            const signature = Buffer.alloc(12); const { bytesRead } = await handle.read(signature, 0, signature.length, 0);
-            if (imageType(signature.subarray(0, bytesRead)).mimeType !== image.mimeType) throw new ImageError('IMAGE_FORMAT_UNSUPPORTED');
+            if (image.mimeType === 'image/svg+xml') {
+                if (opened.size > 100 * 1024 * 1024) throw new ImageError('IMAGE_RESPONSE_TOO_LARGE');
+                if (imageType(await handle.readFile()).mimeType !== image.mimeType) throw new ImageError('IMAGE_FORMAT_UNSUPPORTED');
+            } else {
+                const signature = Buffer.alloc(12); const { bytesRead } = await handle.read(signature, 0, signature.length, 0);
+                if (imageType(signature.subarray(0, bytesRead)).mimeType !== image.mimeType) throw new ImageError('IMAGE_FORMAT_UNSUPPORTED');
+            }
         } finally { await handle.close(); }
         return file;
     }

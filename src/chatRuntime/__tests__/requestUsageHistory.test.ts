@@ -42,6 +42,12 @@ test('main request usage stays isolated across late reports and history restorat
         const restored = await sessions.parseSessionJsonl(file);
         requestUsageRegistry.restoreSegmentUsage(sessionId, restored, sessions.chatSessionState.messages);
         assert.equal(restored[0].segments[0].requestUsage?.inputTokens, 10); assert.equal(restored[1].segments[0].requestUsage?.inputTokens, 20);
+        const thinkingFile = path.join(cwd, 'thinking-history.jsonl');
+        await fs.writeFile(thinkingFile, JSON.stringify({ type: 'assistant', uuid: randomUUID(), message: { id: 'historical-thinking', role: 'assistant',
+            content: [{ type: 'thinking', thinking: 'Visible\n\nsummary', signature: 'DO_NOT_DISPLAY' }, { type: 'text', text: 'Final answer' }] } }));
+        const thinkingHistory = await sessions.parseSessionJsonl(thinkingFile);
+        assert.deepEqual(thinkingHistory[0].segments[0].thinking, { text: 'Visible\n\nsummary', complete: true });
+        assert.equal(thinkingHistory[0].segments[1].text, 'Final answer'); assert.equal(JSON.stringify(thinkingHistory).includes('DO_NOT_DISPLAY'), false);
         const before = JSON.stringify(sessions.chatSessionState.messages), count = posted.length;
         routes.normal.sessionId = randomUUID();
         await sessions.recordChatRequestUsage(normalizeRequestUsage(a, { inputTokens: 999 }, 'completed'));

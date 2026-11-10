@@ -25,5 +25,7 @@ yarn.lock
 .LLSOAI/**
 .claude/**
 tool.txt
+# Standalone design samples are not extension runtime assets.
+design/**
 # Promotional copy is not an extension runtime asset.
 docs/宣传文案/**

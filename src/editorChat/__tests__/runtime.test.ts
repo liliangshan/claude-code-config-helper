@@ -15,6 +15,31 @@ const stub = installVscodeStub({ values: { claudeCodeConfigHelper: {} } });
 const { EditorChatRuntime } = require('../runtime') as typeof import('../runtime');
 const { ChatCliConfigService } = require('../../chat/cli/cliConfig') as typeof import('../../chat/cli/cliConfig');
 
+test('left user messages render before slow CLI startup and are not delayed by process initialization', async t => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'editor-left-immediate-send-'));
+    const executable = path.join(cwd, 'cli');
+    await fs.copyFile(path.resolve(__dirname, '../../../fixtures/editor-chat-cli.cjs'), executable); await fs.chmod(executable, 0o700);
+    stub.workspaceFolderFsPath = cwd;
+    t.mock.method(ChatCliConfigService.prototype, 'getConfig', () => ({ enabled: true, cliPath: executable, cwd, cliArgs: [], cliEnv: { CLAUDE_CONFIG_DIR: path.join(cwd, 'config') }, transport: 'streamJsonStdio' as const }));
+    const manager = { getProvider: () => ({ enabled: true }), getProviderModel: (_p: string, id: string) => ({ modelId: id, contextLength: 200000 }), isModelEnabled: () => true,
+        getGlobalSystemPrompt: () => '', getWorkspaceSystemPrompt: () => '', getResolvedUiLanguage: () => 'en', listProviders: () => [] } as unknown as import('../../configManager').ConfigManager;
+    const value: EditorConversation = { version: 1, conversationId: randomUUID(), cwd, title: 'Left', revision: 0, createdAt: Date.now(), updatedAt: Date.now(), messages: [], lastRunState: 'idle',
+        settings: { normalModel: 'p/m', taskFlowModel: '', compactionModel: '', reasoningEffort: 'auto', permissionMode: 'acceptEdits', subagentsEnabled: false, autoCompactEnabled: false, codePreviewEnabled: false, cacheTtl: 'default' } };
+    const store = new EditorConversationStore(cwd, value.conversationId); await store.acquire(); await store.save(value);
+    const received: any[] = []; const panel = { webview: { postMessage: async (message: any) => { received.push(message.message ?? message); return true; } } } as any;
+    const runtime = new EditorChatRuntime(value, store, panel, manager, async () => {}, async () => {});
+    const ensure = t.mock.method(runtime as any, 'ensureCli', async () => { await new Promise(resolve => setTimeout(resolve, 150)); await (runtime as any).startCli(); });
+    try {
+        const sending = runtime.send('left immediate message');
+        await new Promise(resolve => setTimeout(resolve, 20));
+        const appended = received.findIndex(message => message.type === 'message/append' && message.message?.role === 'user');
+        assert.ok(appended >= 0, 'left user message is appended before slow CLI startup finishes');
+        assert.equal((received[appended].message.text || received[appended].message.segments?.[0]?.text), 'left immediate message');
+        await sending;
+    } finally { ensure.mock.restore(); await runtime.close(); await fs.rm(cwd, { recursive: true, force: true }); }
+});
+
+/** Preserve the original real-child-process coverage for concurrent editor lifetimes. */
 test('parallel editor messages, settings, closing and resume do not affect another CLI', { timeout: 15000 }, async t => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'editor-cli-'));
     const executable = path.join(cwd, 'cli');

@@ -140,3 +140,20 @@ test('shared left provider switches between settings and chat without touching t
         assert.ok(reveals > 0);
     } finally { provider.dispose(); runtime.setChatViewHost(undefined); }
 });
+
+/** The settings switch uses the existing left-chat command without saving, starting editor tabs or restarting either chat. */
+test('settings parallel-session action invokes only the existing independent-chat command', async () => {
+    const { ConfigWebviewController } = require('../../views/configView') as typeof import('../../views/configView');
+    const commands: string[] = [];
+    const previous = vscode.commands.executeCommand;
+    vscode.commands.executeCommand = async (command: string) => { commands.push(command); };
+    try {
+        const controller = Object.create(ConfigWebviewController.prototype);
+        await (controller as any).handleMessage({ type: 'openEditorSession' });
+        assert.deepEqual(commands, ['claudeRouter.chat.openParallelSessions']);
+        const embedded = Object.create(ConfigWebviewController.prototype);
+        embedded.pageOptions = { embedded: true, providersOnly: true };
+        embedded.receiveMessage({ type: 'setup/providers', message: { type: 'openEditorSession' } });
+        assert.equal(commands.length, 1, 'Embedded onboarding still rejects chat navigation');
+    } finally { vscode.commands.executeCommand = previous; }
+});

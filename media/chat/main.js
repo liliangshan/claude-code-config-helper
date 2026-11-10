@@ -438,17 +438,46 @@
     });
     Object.assign(chatTranslations.fr, {
         modelsBarNormal: 'Normal :', modelsBarTaskFlow: 'Flux de tâche :', openModelPicker: 'Choisir les modèles',
-        pickerTitle: 'Sélectionner les modèles Chat', pickerNormalSection: 'Modèle de tâche normal', pickerTaskFlowSection: 'Modèle de flux de tâche',
+        pickerTitle: 'Sélectionner les modèles Chat', pickerNormalSection: 'Modèle de tâche normal', pickerTaskFlowSection: 'Modèle de flux de tâche', pickerCompactionSection: 'Modèle de compression',
         pickerCacheTtlSection: 'TTL du cache de prompt', pickerCacheTtlDefault: 'Par défaut (suivre le client)', pickerCacheTtl5m: '5 minutes', pickerCacheTtl1h: '1 heure', pickerCacheTtlHint: 'En cas d’erreur de requête, revenez à Par défaut.',
         pickerSave: 'Enregistrer et redémarrer le CLI', pickerCancel: 'Annuler',
-        taskFlowNotConfigured: 'Non configuré (suivre le modèle normal)', taskFlowNotConfiguredToast: 'Le modèle de flux de tâche n’est pas configuré. Choisissez-en un dans le sélecteur de modèles.'
+        taskFlowNotConfigured: 'Non configuré (suivre le modèle normal)', taskFlowNotConfiguredToast: 'Le modèle de flux de tâche n’est pas configuré. Choisissez-en un dans le sélecteur de modèles.', compactionNotConfigured: '(Utiliser le modèle normal pour la compression)'
     });
     Object.assign(chatTranslations.de, {
         modelsBarNormal: 'Normal:', modelsBarTaskFlow: 'Task-Flow:', openModelPicker: 'Modelle wählen',
-        pickerTitle: 'Chat-Modelle auswählen', pickerNormalSection: 'Normales Aufgabenmodell', pickerTaskFlowSection: 'Task-Flow-Modell',
+        pickerTitle: 'Chat-Modelle auswählen', pickerNormalSection: 'Normales Aufgabenmodell', pickerTaskFlowSection: 'Task-Flow-Modell', pickerCompactionSection: 'Komprimierungsmodell',
         pickerCacheTtlSection: 'Prompt-Cache-TTL', pickerCacheTtlDefault: 'Standard (Client folgen)', pickerCacheTtl5m: '5 Minuten', pickerCacheTtl1h: '1 Stunde', pickerCacheTtlHint: 'Bei Anfragefehlern auf Standard zurückschalten.',
         pickerSave: 'Speichern und CLI neu starten', pickerCancel: 'Abbrechen',
-        taskFlowNotConfigured: 'Nicht konfiguriert (normales Modell verwenden)', taskFlowNotConfiguredToast: 'Das Task-Flow-Modell ist nicht konfiguriert. Bitte wählen Sie eines im Modell-Auswahldialog.'
+        taskFlowNotConfigured: 'Nicht konfiguriert (normales Modell verwenden)', taskFlowNotConfiguredToast: 'Das Task-Flow-Modell ist nicht konfiguriert. Bitte wählen Sie eines im Modell-Auswahldialog.', compactionNotConfigured: '(Normales Modell zur Komprimierung verwenden)'
+    });
+
+    /** Localized model-picker descriptions are presentation-only; they never alter save or cache behavior. */
+    const modelPickerDescriptions = {
+        en: ['Choose a model for each stage of this conversation.', 'For everyday conversation and coding.', 'Optional. Follows the normal model when unset.', 'Optional. Creates context summaries during compaction.', 'Uses the client default unless you choose a duration.', 'Saving model choices restarts this chat’s CLI.', 'Close model picker'],
+        'zh-cn': ['为当前会话的不同阶段选择合适的模型。', '用于日常对话与代码任务。', '可选；未配置时沿用普通模型。', '可选；用于压缩上下文时生成摘要。', '不指定时沿用客户端的缓存设置。', '保存模型选择后，将重启当前会话的 CLI。', '关闭模型选择'],
+        'zh-tw': ['為目前會話的不同階段選擇合適的模型。', '用於日常對話與程式碼任務。', '選填；未設定時沿用一般模型。', '選填；用於壓縮上下文時產生摘要。', '未指定時沿用用戶端的快取設定。', '儲存模型選擇後，將重新啟動目前會話的 CLI。', '關閉模型選擇'],
+        ja: ['この会話の各段階で使用するモデルを選択します。', '通常の会話とコーディングに使用します。', '任意。未設定の場合は通常モデルを使用します。', '任意。コンテキスト圧縮時の要約に使用します。', '未指定の場合はクライアントの設定を使用します。', 'モデルを保存すると、この会話の CLI が再起動します。', 'モデル選択を閉じる'],
+        ko: ['현재 대화의 각 단계에 사용할 모델을 선택하세요.', '일상 대화와 코딩에 사용합니다.', '선택 사항. 미설정 시 일반 모델을 사용합니다.', '선택 사항. 컨텍스트 압축 요약에 사용합니다.', '미지정 시 클라이언트 캐시 설정을 따릅니다.', '모델 선택을 저장하면 현재 대화의 CLI가 재시작됩니다.', '모델 선택 닫기'],
+        fr: ['Choisissez un modèle pour chaque étape de cette conversation.', 'Pour les échanges courants et le code.', 'Facultatif. Utilise le modèle normal si non défini.', 'Facultatif. Résume le contexte lors de la compression.', 'Utilise le réglage du client si aucune durée n’est choisie.', 'Enregistrer les modèles redémarre le CLI de ce chat.', 'Fermer le sélecteur de modèles'],
+        de: ['Wählen Sie ein Modell für jede Phase dieser Unterhaltung.', 'Für normale Gespräche und Programmieraufgaben.', 'Optional. Ohne Auswahl wird das normale Modell verwendet.', 'Optional. Erstellt Zusammenfassungen bei der Komprimierung.', 'Ohne Auswahl gilt die Cache-Einstellung des Clients.', 'Das Speichern der Modelle startet die CLI dieses Chats neu.', 'Modellauswahl schließen']
+    };
+    Object.entries(modelPickerDescriptions).forEach(([language, values]) => {
+        Object.assign(chatTranslations[language], { pickerDescription: values[0], pickerNormalHint: values[1], pickerTaskFlowHint: values[2],
+            pickerCompactionHint: values[3], pickerCacheHint: values[4], pickerRestartHint: values[5], pickerClose: values[6] });
+    });
+
+    /** Localized timing labels explain existing behavior; cancelling never reverts an immediate cache update. */
+    const modelPickerTimingLabels = {
+        en: ['On save', 'Immediate', 'Changes apply immediately, even if you cancel this dialog.'],
+        'zh-cn': ['保存后生效', '立即生效', '修改后立即生效，取消弹窗也会保留。'],
+        'zh-tw': ['儲存後生效', '立即生效', '修改後立即生效，取消視窗也會保留。'],
+        ja: ['保存後に適用', '即時適用', '変更はすぐに適用され、キャンセルしても保持されます。'],
+        ko: ['저장 시 적용', '즉시 적용', '변경 사항은 즉시 적용되며 취소해도 유지됩니다.'],
+        fr: ['Après enregistrement', 'Immédiat', 'Les changements s’appliquent immédiatement, même en cas d’annulation.'],
+        de: ['Nach dem Speichern', 'Sofort', 'Änderungen gelten sofort und bleiben auch beim Abbrechen erhalten.']
+    };
+    Object.entries(modelPickerTimingLabels).forEach(([language, values]) => {
+        Object.assign(chatTranslations[language], { pickerOnSave: values[0], pickerImmediate: values[1], pickerCacheImmediateHint: values[2] });
     });
 
     /** 补齐上下文窗口弹层文案。 */
@@ -568,12 +597,14 @@
     });
     const vscode = acquireVsCodeApi();
     const imageGenerationUi = window.createImageGenerationUi?.(post);
+    const thinkingUi = window.createThinkingUi(DEFAULT_CHAT_LANGUAGE);
+    let thinkingRenderMessageId = '';
+    let thinkingConversationId = '';
     const messagesEl = document.querySelector('[data-role="messages"]');
     const chatClipboard = window.installChatClipboard(vscode, messagesEl, function (key) { return t(key); });
     const composerShellEl = document.querySelector('[data-role="composer-shell"]');
     const composerEl = document.querySelector('[data-role="composer"]');
     const sendEl = document.querySelector('[data-role="send"]');
-    const globalPendingEl = document.querySelector('[data-role="global-pending"]');
     const attachFileEl = document.querySelector('[data-role="attach-file"]');
     const contextPanelEl = document.querySelector('[data-role="context-panel"]');
     const toastEl = document.querySelector('[data-role="chat-toast"]');
@@ -1643,10 +1674,28 @@
     }
 
     /**
-     * 渲染模型选择弹窗中「普通任务模型」radio 列表。
+     * Refresh only the selected model's readable identifier and native hover text.
+     * Values remain text, never markup; optional/empty selections have no invented identifier.
+     * This presentation helper never changes composer state, sends messages or restarts a CLI.
      *
-     * 由 models/snapshot 或 model/options 协议触发；选中项与 composerState.currentModelKey
-     * 一致，未选中时所有 radio 都不选。
+     * @param {HTMLSelectElement} select The existing native model selector.
+     */
+    function renderModelPickerSelectionDetail(select) {
+        if (!(select instanceof HTMLSelectElement)) return;
+        const option = select.selectedOptions[0];
+        const key = option && !option.disabled ? select.value : '';
+        const label = option?.textContent || '';
+        select.title = key ? label + ' — ' + key : label;
+        const detail = select.parentElement?.querySelector('.model-picker__detail');
+        if (detail) {
+            detail.textContent = key;
+            detail.hidden = !key;
+        }
+    }
+
+    /**
+     * Render normal-model options and their full selected identifier without changing the saved selection.
+     * Called by model snapshots and option updates; native select behavior is retained.
      */
     function renderModelPickerNormalList() {
         if (!(modelPickerNormalSelectEl instanceof HTMLSelectElement)) return;
@@ -1659,6 +1708,7 @@
             opt.disabled = true;
             opt.selected = true;
             modelPickerNormalSelectEl.appendChild(opt);
+            renderModelPickerSelectionDetail(modelPickerNormalSelectEl);
             return;
         }
         for (const model of models) {
@@ -1670,8 +1720,10 @@
             if (key === composerState.currentModelKey) opt.selected = true;
             modelPickerNormalSelectEl.appendChild(opt);
         }
+        renderModelPickerSelectionDetail(modelPickerNormalSelectEl);
     }
 
+    /** Render optional compaction choices and real selected identifiers without saving or enabling a model. */
     function renderModelPickerCompactionList() {
         if (!(modelPickerCompactionSelectEl instanceof HTMLSelectElement)) return;
         modelPickerCompactionSelectEl.innerHTML = '';
@@ -1693,14 +1745,12 @@
             }
             modelPickerCompactionSelectEl.appendChild(opt);
         }
+        renderModelPickerSelectionDetail(modelPickerCompactionSelectEl);
     }
 
     /**
-     * 渲染模型选择弹窗中「任务流模型」下拉列表。
-     *
-     * 第一项固定为「未配置任务流模型」（value 为空字符串，语义为沿用主模型），
-     * 其余项使用 providerId/modelId 作为 value，选中规则与
-     * composerState.taskFlowEnabled + taskFlowModelId 一致。
+     * Render optional task-flow choices and their real selected identifier without applying unsaved changes.
+     * The empty first option retains its existing fallback-to-normal-model meaning.
      */
     function renderModelPickerTaskFlowList() {
         if (!(modelPickerTaskFlowSelectEl instanceof HTMLSelectElement)) return;
@@ -1723,6 +1773,7 @@
             }
             modelPickerTaskFlowSelectEl.appendChild(opt);
         }
+        renderModelPickerSelectionDetail(modelPickerTaskFlowSelectEl);
     }
 
     /**
@@ -2042,19 +2093,20 @@
     }
 
     /**
-     * 切换输入框右下角动作按钮：生成中显示方块用于停止，空闲时显示向上箭头用于发送。
-     *
-    * 同时驱动输入区上方的全局生成中指示器 (.chat-global-pending) 与输入框自身
-    * 的运行中动效：借鉴 VS Code/Copilot Chat 在请求执行期间让输入框边缘保持
-    * 轻量动态高亮的交互反馈，用户无需盯着消息区也能知道当前回合仍在运行。
-    *
-     * 模型从开始响应到完成期间持续显示三点动画；模型输出过程中也不会消失，
-     * 完全由 pending → !pending 状态切换控制。
+     * 根据真实生成状态切换发送/停止按钮、输入框边框流光及思考折叠状态。
+     * 输入框上方不再显示三点等待指示器，也不为其保留空间。
      *
      * @param {boolean} running 当前聊天是否正在生成响应。
      */
     function setChatRunning(running) {
         composerState.chatRunning = !!running;
+        if (typeof thinkingUi !== 'undefined' && thinkingUi && messagesEl) {
+            if (running) {
+                messagesEl.querySelectorAll('.message_07S1Yg[data-role="assistant"][data-pending="true"]').forEach(function (item) { thinkingUi.settle(item, true); });
+            } else if (!chatClipboard.defer('thinking-settle', messagesEl, function () { if (!composerState.chatRunning) thinkingUi.settle(messagesEl, false); })) {
+                thinkingUi.settle(messagesEl, false);
+            }
+        }
         const composerBox = document.querySelector('.composer-box');
         if (composerShellEl instanceof HTMLElement) {
             composerShellEl.classList.toggle('chat-input--running', composerState.chatRunning);
@@ -2063,11 +2115,6 @@
         if (composerBox instanceof HTMLElement) {
             composerBox.classList.toggle('composer-box--running', composerState.chatRunning);
             composerBox.dataset.running = composerState.chatRunning ? 'true' : 'false';
-        }
-        if (globalPendingEl instanceof HTMLElement) {
-            globalPendingEl.classList.toggle('chat-global-pending--visible', composerState.chatRunning);
-            globalPendingEl.setAttribute('aria-hidden', composerState.chatRunning ? 'false' : 'true');
-            globalPendingEl.setAttribute('aria-label', t('loading'));
         }
         // 运行中禁用：顶部模型选择 / 权限模式选择，以及输入框下方的专家模型
         // 选择和 CC 任务流按钮，避免在响应过程中误触发切换/重启或弹出面板。
@@ -2682,14 +2729,15 @@
         let listStack = []; // 用于嵌套列表
 
         /**
-         * 追加一个带复制按钮的代码块。
+         * 追加带独立语言工具条和复制按钮的代码块，不把按钮锚定到整段 Markdown。
          *
          * @param {string} text 代码文本。
          * @param {string} lang 语言标识，无则传空串。
          */
         function appendCodeBlock(text, lang) {
             const codeWrapper = document.createElement('div');
-            codeWrapper.className = 'codeBlockWrapper_-a7MRw';
+            codeWrapper.className = 'codeBlockWrapper_-a7MRw chat-code-block';
+            codeWrapper.dataset.codeLanguage = lang || 'code';
             const pre = document.createElement('pre');
             const code = document.createElement('code');
             if (lang) code.dataset.language = lang;
@@ -3086,13 +3134,22 @@
         return name === 'Agent' || name === 'Task' || name === 'EnterPlanMode' || name === 'ExitPlanMode';
     }
 
-    /** 以参考项目风格渲染一个 ChatSegment；整轮 usage 不再展示，保留请求标题统计。
+    /** Keep one presentation-only disclosure key per assistant reply; each member retains its own request identity. */
+    function thinkingSegmentKey() {
+        return JSON.stringify([thinkingRenderMessageId, 'thinking']);
+    }
+
+    /** Render shared segments and visible-thinking disclosures; do not alter tool execution or usage data.
      *
      * @param {HTMLElement} container 消息内容容器。
      * @param {any} segment ChatSegment 对象。
      */
     function appendSegment(container, segment) {
         if (!segment || isHiddenChatToolSegment(segment)) return;
+        if (typeof thinkingUi !== 'undefined' && thinkingUi && thinkingUi.visible(segment)) {
+            thinkingUi.render(container, segment, thinkingSegmentKey());
+            return;
+        }
         if (segment.kind === 'code') {
             appendCode(container, segment);
             return;
@@ -3335,7 +3392,7 @@
     }
 
     /**
-     * 渲染代码块片段（参考项目风格：带代码块包装和复制按钮）。
+     * 渲染独立代码块与实际语言工具条，保留现有复制通道。
      *
      * @param {HTMLElement} container 消息内容容器。
      * @param {any} segment code 片段。
@@ -3346,7 +3403,8 @@
             return;
         }
         var codeWrapper = document.createElement('div');
-        codeWrapper.className = 'codeBlockWrapper_-a7MRw';
+        codeWrapper.className = 'codeBlockWrapper_-a7MRw chat-code-block';
+        codeWrapper.dataset.codeLanguage = segment.language || 'code';
         var pre = document.createElement('pre');
         var code = document.createElement('code');
         if (segment.language) code.dataset.language = segment.language;
@@ -3522,10 +3580,11 @@
         renderedMessagesCache = renderedMessagesCache.slice(0, fromIndex);
     }
 
-    /** 按缓存完整重绘消息区，同时保留用户当前滚动意图。 */
+    /** Redraw localized cached content while retaining manual thinking disclosure choices and scroll intent. */
     function rerenderMessagesFromDom() {
         if (!messagesEl) return;
         if (chatClipboard.defer('messages', messagesEl, rerenderMessagesFromDom)) return;
+        thinkingUi.language(currentLanguage);
         var messages = cloneMessagesForCache(renderedMessagesCache);
         var wasAtBottom = isScrolledNearBottom();
         var previousScrollTop = messagesEl.scrollTop;
@@ -3538,6 +3597,13 @@
         } finally {
             historyReplayMode = false;
         }
+        for (let index = 0; index < messages.length; index++) {
+            var cached = messages[index];
+            if (cached.role === 'assistant') {
+                var rendered = messagesEl.querySelector('.message_07S1Yg[data-id="' + CSS.escape(cached.id) + '"]');
+                if (rendered) thinkingUi.settle(rendered, !!cached.pending && composerState.backendRunning);
+            }
+        }
         lastSessionInitSignature = buildSessionInitSignature(messages);
         messagesEl.querySelectorAll('[data-segment-id]').forEach(function (node) {
             if (expandedTools.has(node.dataset.segmentId)) {
@@ -3545,7 +3611,7 @@
                 var button = node.querySelector(':scope > .toolSummary_ZUQaOA');
                 if (button) button.setAttribute('aria-expanded', 'true');
             }
-            if (node instanceof HTMLDetailsElement && openDetails.has(node.dataset.segmentId)) node.open = true;
+            if (node instanceof HTMLDetailsElement && !node.classList.contains('thinking-disclosure') && openDetails.has(node.dataset.segmentId)) node.open = true;
         });
         if (wasAtBottom) forceScrollToBottomSettled();
         else messagesEl.scrollTop = previousScrollTop;
@@ -3939,7 +4005,7 @@
 
         var toolIcon = document.createElement('span');
         toolIcon.className = 'toolKindIcon_ZUQaOA';
-        toolIcon.textContent = pickToolKindIcon(name);
+        toolIcon.appendChild(createChatToolIcon(name));
         toolIcon.setAttribute('aria-hidden', 'true');
         summary.appendChild(toolIcon);
 
@@ -3978,6 +4044,27 @@
         });
 
         container.appendChild(root);
+    }
+
+    /** Build local monochrome tool icons from fixed paths; provider input never becomes SVG markup. */
+    function createChatToolIcon(name) {
+        var paths = {
+            terminal: 'm5 6 6 6-6 6m9 0h6',
+            file: 'M14 3H5v18h14V8Zm0 0v6h5M8 13h8M8 17h5',
+            edit: 'm4 16 11-11 4 4-11 11-5 1Zm9-9 4 4',
+            search: 'M17 17l5 5M19 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
+            globe: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M3 12h18M12 3c5 6 5 12 0 18-5-6-5-12 0-18',
+            list: 'm3 6 1 1 2-3m3 2h12M3 12h3m3 0h12M3 18h3m3 0h12',
+            clock: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0m-9-5v5l3 2',
+            tool: 'm8 3 1 5-5-1a6 6 0 0 0 7 7l7 7 3-3-7-7a6 6 0 0 0-6-8'
+        };
+        var kind = name === 'Bash' ? 'terminal' : ['Read', 'Write', 'NotebookEdit'].includes(name) ? 'file'
+            : name === 'Edit' ? 'edit' : /Search/.test(name) ? 'search' : /Fetch|http_fetch|browser/.test(name) ? 'globe'
+                : /Todo|Task/.test(name) ? 'list' : /Cron|Wakeup/.test(name) ? 'clock' : 'tool';
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
+        var path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', paths[kind]);
+        svg.appendChild(path); return svg;
     }
 
     /**
@@ -5110,7 +5197,7 @@
     }
 
     /**
-     * 渲染一条 Chat 消息（参考项目风格）。
+     * Render the shared chat layout and settle thinking only for the actual message/stream state.
      *
      * @param {any} message ChatMessage 对象。
      */
@@ -5125,6 +5212,7 @@
             notifyHistoryUserMessage();
         }
 
+        thinkingRenderMessageId = String(message.id || '');
         var item = document.createElement('div');
         item.className = 'message_07S1Yg' + (message.role === 'user' ? ' userMessageContainer_07S1Yg' : '');
         item.dataset.id = message.id;
@@ -5193,6 +5281,7 @@
         ensureAssistantMessageContainer(item);
         var _wasAtBottomAsst = isScrolledNearBottom();
         messagesEl.appendChild(item);
+        if (thinkingUi) thinkingUi.settle(content, !!message.pending && !historyReplayMode);
         reconcileRequestUsageHeaders();
         if (message.role === 'assistant' && message.pending && scrollAfterNextPendingAssistant) {
             scrollAfterNextPendingAssistant = false;
@@ -5204,12 +5293,8 @@
     }
 
     /**
-     * 兼容旧调用点：原本会在 assistant 消息内部插入 .chat-pending-indicator
-     * 三点动画，但只在"还没有任何内容"时才显示，模型一旦开始输出就会消失。
-     *
-     * 现已改为由输入框上方的全局 .chat-global-pending 统一展示生成中状态，
-     * 模型整个输出期间常驻显示。为避免视觉重复，这里只负责清理可能残留
-     * 在消息内部的旧 indicator，不再向消息容器追加任何节点。
+     * 清理旧版本可能残留在消息内的等待指示器，不再创建任何占位节点。
+     * 当前运行反馈由输入框边框流光和发送/停止按钮承担。
      *
      * @param {HTMLElement} content 消息内容容器。
      * @param {any} _message 兼容旧签名，未使用。
@@ -5220,7 +5305,7 @@
     }
 
     /**
-     * 计算 segment 的可见内容签名，用于判断一次 patch 是否真的改变了渲染结果。
+     * Compare visible payload and thinking completion state to skip redundant card rebuilding.
      *
      * 只纳入会影响 DOM 的字段：工具卡片取名称/状态/入参/结果，其余类型取文本。
      * 模型响应很快时同一 segment 会被高频重投，签名相同即可跳过整卡重建。
@@ -5242,7 +5327,7 @@
                     !!tool.isError
                 ]);
             }
-            return JSON.stringify([segment.kind || '', segment.text || segment.sourceText || '']);
+            return JSON.stringify([segment.kind || '', segment.text || segment.sourceText || '', segment.thinking || null]);
         } catch (_sigErr) {
             return '';
         }
@@ -5261,7 +5346,8 @@
     }
 
     /**
-     * 把片段增量追加到已有消息容器。
+     * Apply incremental segments, updating grouped thinking members in place without resetting manual choices.
+     * Request-specific anchors remain direct children so usage ownership and tool positions do not move.
      *
      * @param {string} id 消息 ID。
      * @param {any[]} segments 需要追加的 ChatSegment 数组。
@@ -5289,6 +5375,7 @@
         }
         // 获取内容容器（如果是用户消息，不更新）
         if (item.dataset.role === 'user') return;
+        thinkingRenderMessageId = String(id);
         var content = ensureAssistantMessageContainer(item);
         var pendingIndicator = content.querySelector('.chat-pending-indicator');
         if (pendingIndicator) pendingIndicator.remove();
@@ -5303,6 +5390,11 @@
                 if (existing && existing.parentNode === content) {
                     // 模型响应很快时，同一 segment 会在极短时间内被反复投递。内容签名
                     // 一致说明这次 patch 没有带来任何可见变化，跳过重建避免闪烁。
+                    if (thinkingUi && existing.classList.contains('thinking-disclosure__anchor') && thinkingUi.visible(segment)) {
+                        thinkingUi.update(existing, segment, item.dataset.pending === 'true');
+                        stampSegmentSignature(existing, segment);
+                        continue;
+                    }
                     var signature = buildSegmentSignature(segment);
                     if (signature && existing.dataset.segmentSig === signature) continue;
                     // 在替换前记录工具卡片的展开/折叠状态，避免状态刷新时折叠状态被重置。
@@ -5332,6 +5424,7 @@
             appendSegmentWithPatchPrefix(item, content, segment);
             stampSegmentSignature(content.lastElementChild, segment);
         }
+        if (thinkingUi) thinkingUi.settle(content, item.dataset.pending === 'true');
         renderPendingIndicator(content, {
             role: item.dataset.role || 'assistant',
             pending: pending,
@@ -5546,6 +5639,8 @@
         } catch (_logErr) { /* noop */ }
         switch (message.type) {
             case 'editorSession/mode':
+                if (thinkingConversationId && thinkingConversationId !== message.conversationId) thinkingUi.reset();
+                thinkingConversationId = message.conversationId;
                 editorConversationId = message.conversationId;
                 document.body.classList.add('editor-chat');
                 vscode.setState({ editorConversationId: message.conversationId, cwd: message.cwd });
@@ -5559,6 +5654,7 @@
                 updateRequestRecoveryStatus(message.state);
                 break;
             case 'i18n/update':
+                if (thinkingUi) thinkingUi.language(message.language || DEFAULT_CHAT_LANGUAGE);
                 setChatLanguage(message.language || DEFAULT_CHAT_LANGUAGE);
                 renderRequestRecoveryStatus();
                 break;
@@ -5825,6 +5921,8 @@
                 beginSessionTitleEdit();
                 break;
             case 'session/title':
+                if (thinkingConversationId && thinkingConversationId !== message.sessionId) thinkingUi.reset();
+                thinkingConversationId = message.sessionId || '';
                 applySessionTitle(message.title || '', message.sessionId || '');
                 break;
             default:
@@ -6215,6 +6313,10 @@
     browserAutoApproveDialogEl?.addEventListener('cancel', (event) => {
         event.preventDefault();
         closeBrowserAutoApproveConfirm(false);
+    });
+    /** Keep unsaved native selections readable without posting any model-save or cache-TTL messages. */
+    [modelPickerNormalSelectEl, modelPickerTaskFlowSelectEl, modelPickerCompactionSelectEl].forEach((select) => {
+        select?.addEventListener('change', () => renderModelPickerSelectionDetail(select));
     });
     modelPickerFormEl?.addEventListener('submit', (event) => {
         event.preventDefault();

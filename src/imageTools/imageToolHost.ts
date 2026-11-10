@@ -13,7 +13,7 @@ import { ImageTaskStore } from './taskStore';
 import { safeDirectory } from './storage';
 import { loadLocalImageSources } from './localImages';
 import { imageToolSchemas, isImageToolName } from './tools';
-import { imageAnimationOptions } from './animation';
+import { imageOutputOptions, defaultImageFormat, enabledImageFormats } from './formats';
 import { isImageTaskTerminal } from './results';
 import { IMAGE_BODY_LIMIT, ImageError, imageErrorCode, type ImageScope, type ImageSubmission, type ImageTask, type ImageWebviewMessage, type ImageWebviewRequest } from './types';
 
@@ -183,7 +183,7 @@ export class ImageToolHost {
         return vscode.Uri.file(file);
     }
     /**
-     * Open newly completed output images as pinned editor tabs without stealing chat focus.
+     * Open newly completed images as pinned tabs, forcing validated SVG into the default text editor.
      * @param cwd The workspace bound to the local queue, not the currently focused conversation.
      * @param task Newly persisted terminal task; history reads never invoke this method.
      * @returns Completion of best-effort editor actions, independent of model-result delivery.
@@ -202,7 +202,8 @@ export class ImageToolHost {
                 const uri = await this.imageUri(file);
                 if (this.stopped || !vscode.workspace.isTrusted
                     || !vscode.workspace.getConfiguration(CONFIG_NAMESPACE, uri).get<boolean>('editor.autoOpenReadWriteFiles', true)) continue;
-                await vscode.commands.executeCommand('vscode.open', uri, { preview: false, preserveFocus: true });
+                if (image.mimeType === 'image/svg+xml') await vscode.commands.executeCommand('vscode.openWith', uri, 'default', { preview: false, preserveFocus: true });
+                else await vscode.commands.executeCommand('vscode.open', uri, { preview: false, preserveFocus: true });
             } catch (error) {
                 Logger.warn(`[image-task] auto-open task=${task.taskId} image=${image.id} code=${imageErrorCode(error)}`);
             }
@@ -257,9 +258,9 @@ export class ImageToolHost {
             } catch { /* Saved task results remain available for the next ready/refresh if a view disappears. */ }
         }
     }
-    /** Enforce the full supported field allowlist; current GIF capability is checked before task admission. */
+    /** Enforce the complete format field allowlist; current switches are validated again before paid admission. */
     private validate(name: string, args: Record<string, unknown>): void {
-        const schema = imageToolSchemas(true).find(item => item.name === name);
+        const schema = imageToolSchemas({ supportsPng: true, supportsJpg: true, supportsGif: true, supportsSvg: true }).find(item => item.name === name);
         if (!schema || !args || Array.isArray(args) || typeof args !== 'object') throw new ImageError('IMAGE_ARGUMENT_INVALID');
         if (Object.keys(args).some(key => !Object.hasOwnProperty.call(schema.inputSchema.properties, key))) throw new ImageError('IMAGE_ARGUMENT_INVALID');
         if (Buffer.byteLength(JSON.stringify({ name, arguments: args })) > IMAGE_BODY_LIMIT) throw new ImageError('IMAGE_PAYLOAD_TOO_LARGE');
@@ -294,7 +295,9 @@ export class ImageToolHost {
         this.validate(name, args);
         if (name === 'openapi_image_generation_info') {
             const state = await this.config.publicState(); const c = state.config;
-            return { enabled: c.enabled, configured: !state.error && !!c.modelId, model: c.modelId, sizeRequired: true, supportsGif: c.supportsGif,
+            return { enabled: c.enabled, configured: !state.error && !!c.modelId, model: c.modelId, sizeRequired: true,
+                supportsPng: c.supportsPng, supportsJpg: c.supportsJpg, supportsGif: c.supportsGif, supportsSvg: c.supportsSvg,
+                outputFormats: enabledImageFormats(c), defaultOutputFormat: defaultImageFormat(c) ?? null,
                 ...(c.supportsGif ? { gif: { output_format: 'gif', sizeMultiple: 16, frame_count: { min: 2, max: 64, default: 9 }, frame_duration_ms: { min: 20, max: 2000, default: 200 } } } : {}),
                 storageDirectory: '.LLSOAI/openapi-image-generation',
                 editEnabled: c.editEnabled, editInput: 'local-file-paths-only', sourcePathsOutsideWorkspace: true, timeoutMs: c.timeoutMs, maxConcurrent: c.maxConcurrent, maxQueue: c.maxQueue,
@@ -323,7 +326,7 @@ export class ImageToolHost {
         const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : '';
         const size = args.size;
         if (!prompt || prompt.length > 10000 || typeof size !== 'string' || !/^[1-9]\d{0,5}x[1-9]\d{0,5}$/.test(size)) throw new ImageError('IMAGE_ARGUMENT_INVALID');
-        const input: ImageSubmission = { prompt, size, operation, ...imageAnimationOptions(args, size, config.supportsGif) };
+        const input: ImageSubmission = { prompt, size, operation, ...imageOutputOptions(args, size, config) };
         if (operation === 'edit') {
             if (!config.editEnabled) throw new ImageError('IMAGE_EDIT_DISABLED');
             input.image = await loadLocalImageSources(args.image, scope.cwd, config.maxFileBytes, () => {
@@ -370,7 +373,8 @@ export class ImageToolHost {
                 const file = await store.imagePath(scope.id, request.taskId, request.imageId);
                 const uri = await this.imageUri(file);
                 if (this.stopped) return;
-                await vscode.commands.executeCommand('vscode.open', uri);
+                if (path.extname(file) === '.svg') await vscode.commands.executeCommand('vscode.openWith', uri, 'default');
+                else await vscode.commands.executeCommand('vscode.open', uri);
             }
         } catch (error) { view.post({ type: 'imageGeneration/saveResult', requestId: request.requestId, ok: false, error: imageErrorCode(error) }); }
     }

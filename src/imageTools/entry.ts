@@ -6,6 +6,7 @@ import { ImageToolHost, type ImageViewBinding } from './imageToolHost';
 import { ImageError, type ImageScope, type ImageWebviewRequest } from './types';
 import { IMAGE_CONFIG_REVISION_ENV, IMAGE_GIF_ENV } from './animation';
 import { refreshImageRequestSchemas } from './requestSchemas';
+import { enabledImageFormats, IMAGE_FORMATS_ENV } from './formats';
 
 let service: ImageToolHost | undefined;
 let extensionContext: vscode.ExtensionContext | undefined;
@@ -19,19 +20,19 @@ export async function configureImages(context: vscode.ExtensionContext, manager:
 }
 /** Obtain the host service without exposing it to MCP subprocesses. */
 export function getImageService(): ImageToolHost | undefined { return service; }
-/** Read non-sensitive capability and revision values for a fresh CLI/MCP startup; invalid settings expose static tools only. */
+/** Publish only non-sensitive output switches and revision for MCP startup; invalid settings fall back to PNG. */
 export async function imageToolEnvironment(): Promise<Record<string, string>> {
     try {
         const config = await service?.config.read();
-        return { [IMAGE_GIF_ENV]: config?.supportsGif ? '1' : '0', [IMAGE_CONFIG_REVISION_ENV]: String(config?.revision ?? 0) };
-    } catch { return { [IMAGE_GIF_ENV]: '0', [IMAGE_CONFIG_REVISION_ENV]: 'invalid' }; }
+        return { [IMAGE_FORMATS_ENV]: config ? enabledImageFormats(config).join(',') : 'png', [IMAGE_GIF_ENV]: config?.supportsGif ? '1' : '0', [IMAGE_CONFIG_REVISION_ENV]: String(config?.revision ?? 0) };
+    } catch { return { [IMAGE_FORMATS_ENV]: 'png', [IMAGE_GIF_ENV]: '0', [IMAGE_CONFIG_REVISION_ENV]: 'invalid' }; }
 }
 /** Refresh only already-advertised built-in image tools from committed host capability; never edit CLI history. */
 export async function refreshImageToolsForRequest(body: unknown): Promise<unknown> {
     if (!service || !body || typeof body !== 'object' || !Array.isArray((body as { tools?: unknown }).tools)) return body;
     const tools = (body as { tools: Array<{ name?: unknown }> }).tools;
     if (!tools.some(tool => tool?.name === 'mcp__llsccaiImage__openapi_generate_image' || tool?.name === 'mcp__llsccaiImage__openapi_edit_image')) return body;
-    try { return refreshImageRequestSchemas(body, (await service.config.read()).supportsGif); }
+    try { return refreshImageRequestSchemas(body, await service.config.read()); }
     catch { return body; }
 }
 /** Hash stable identity fields, never accepting model-supplied filesystem keys. */

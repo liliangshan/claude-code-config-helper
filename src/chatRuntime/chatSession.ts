@@ -182,7 +182,7 @@ export function sanitizePersistedChatMessages(messages: ChatMessage[]): ChatMess
 }
 
 /**
- * Read native history with response identities for exact saved usage restoration; never replay tasks.
+ * Read native history with response identities and visible thinking metadata; never load signatures or replay tasks.
  * @param jsonlPath Requested session's native history file.
  * @param options.strict Reject missing, unreadable or empty history before an explicit switch changes chat state.
  */
@@ -218,7 +218,7 @@ export async function parseSessionJsonl(jsonlPath: string, options: { strict?: b
         const msg = rec['message'] as {
             role?: string;
             id?: string;
-            content?: string | Array<{ type: string; text?: string; name?: string; id?: string; input?: unknown }>;
+            content?: string | Array<{ type: string; text?: string; thinking?: string; name?: string; id?: string; input?: unknown }>;
             model?: string;
         } | undefined;
         if (!msg || (typeof msg.content !== 'string' && !Array.isArray(msg.content))) { skippedNoContent++; continue; }
@@ -240,6 +240,9 @@ export async function parseSessionJsonl(jsonlPath: string, options: { strict?: b
                 if (!c || typeof c !== 'object') continue;
                 if (c.type === 'text' && typeof c.text === 'string' && c.text) {
                     segments.push({ kind: 'markdown', text: c.text });
+                } else if (c.type === 'thinking' && typeof c.thinking === 'string' && c.thinking) {
+                    segments.push({ id: `thinking:${uuid}:${segments.length}`, kind: 'markdown', text: c.thinking,
+                        thinking: { text: c.thinking, complete: true } });
                 } else if (c.type === 'tool_use' && c.name) {
                     const inputStr = c.input ? JSON.stringify(c.input, null, 2) : '';
                     segments.push({

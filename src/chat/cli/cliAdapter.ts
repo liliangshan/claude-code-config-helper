@@ -1197,7 +1197,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      * ```
      *
      * @param event 已解包的事件。
-     * @returns 工具卡片占位（tool_use）或空 segments（text/thinking）。
+     * @returns 工具卡片占位、可见初始思考或空文本事件。
      */
     private handleContentBlockStart(event: Record<string, unknown>): ParsedCliEvent {
         const index = this.extractBlockIndex(event);
@@ -1244,6 +1244,13 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
             return parsed.type === 'segments' ? { ...parsed, done: false } : parsed;
         }
 
+        // Some providers include visible thinking in the opening block rather than a later delta.
+        if (state.type === 'thinking' && typeof blockRecord.thinking === 'string' && blockRecord.thinking) {
+            state.text = blockRecord.thinking;
+            this.registerBlockState(index, state);
+            return { type: 'segments', segments: [{ id: this.buildThinkingSegmentId(index), kind: 'markdown',
+                text: this.formatThinkingBlock(state.text), thinking: { text: state.text, complete: false } }], done: false };
+        }
         this.registerBlockState(index, state);
         return { type: 'segments', segments: [], done: false };
     }
@@ -1328,7 +1335,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
 
     /**
      * 处理 thinking_delta：每次补写整块累积的思考文本，并带稳定 id，供 Webview
-     * 按 id 原地替换，呈现为单个逐字增长的引用块而非每片一个 blockquote。
+     * 按 id 更新同一个可展开思考区；保留兼容引用文本和实际可见思考元数据。
      *
      * 绕开 parseDisplayText：该函数会把文本喂进增量解析器并累积 parserState，
      * 重复投喂整块会污染解析状态。思考块是纯引用文本，直接产出 markdown segment。
@@ -1344,7 +1351,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         block.text += text;
         return {
             type: 'segments',
-            segments: [{ id: this.buildThinkingSegmentId(index), kind: 'markdown', text: this.formatThinkingBlock(block.text) }],
+            segments: [{ id: this.buildThinkingSegmentId(index), kind: 'markdown', text: this.formatThinkingBlock(block.text), thinking: { text: block.text, complete: false } }],
             done: false
         };
     }
@@ -1400,7 +1407,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
     }
 
     /**
-     * 处理 `content_block_stop`：finalize 当前 block。
+     * Complete text/thinking presentation state; tool execution still finishes only on its paired result.
      *
      * 对于 tool_use 块：把累积的 partial_json 解析为对象并刷新工具卡片状态为 running。
      * tool_result 的最终成功/失败状态由配对的 tool_result 事件决定（见 parseSdkWrapperEvent）。
@@ -1417,6 +1424,11 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         // 解析一次，跨行 Markdown 结构才能被完整识别。
         if (block.type === 'text') {
             return { type: 'segments', segments: this.flushPendingTextBlocks(index), done: false };
+        }
+
+        if (block.type === 'thinking' && block.text) {
+            return { type: 'segments', segments: [{ id: this.buildThinkingSegmentId(index), kind: 'markdown',
+                text: this.formatThinkingBlock(block.text), thinking: { text: block.text, complete: true } }], done: false };
         }
 
         if (block.type === 'tool_use' && block.toolUseId) {
@@ -1743,7 +1755,7 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
      * 1. `{ type: "assistant", message: { content: [ {type:"text",text}, ... ] } }`
      * 2. `{ type: "user", message: { content: [ {type:"tool_result",tool_use_id,content,is_error}, ... ] } }`
      *
-     * 第 1 类用于已经聚合完毕的 message（非流式），直接提取文本即可。
+     * 第 1 类直接提取完整文本和可见思考的展示元数据，不含隐藏推理或签名。
      * 第 2 类用于 tool_result 回填，需要按 tool_use_id 命中工具卡片。
      *
      * @param record CLI JSON 事件对象。
@@ -1834,10 +1846,8 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
                 continue;
             }
             if (blockType === 'thinking' && typeof block.thinking === 'string' && block.thinking) {
-                const formatted = this.formatThinkingChunk(block.thinking);
-                const parsed = parseChunk(this.parserState, { source: 'stdout', text: formatted });
-                this.parserState = parsed.state;
-                segments.push(...parsed.segments);
+                segments.push({ id: `thinking:${typeof (message as Record<string, unknown>).id === 'string' ? (message as Record<string, unknown>).id : this.messageOrdinal}:${segments.length}`,
+                    kind: 'markdown', text: this.formatThinkingBlock(block.thinking), thinking: { text: block.thinking, complete: true } });
             }
         }
 

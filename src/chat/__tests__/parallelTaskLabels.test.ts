@@ -64,3 +64,46 @@ test('main chat exposes one parallel-session button and clicking it uses the exi
     click();
     assert.deepEqual(sent, [{ type: 'leftSessions/show' }]);
 });
+
+/** Full settings expose a localized, keyboard-accessible switch without adding navigation to embedded onboarding. */
+test('settings header shows one parallel-session switch in every language and providers-only mode omits it', () => {
+    const source = readFileSync(resolve(__dirname, '../../../media/configView.js'), 'utf8');
+    const labelsStart = source.indexOf('    const parallelSessionLabels = {');
+    const labelsEnd = source.indexOf('\n    /**', labelsStart);
+    const headerStart = source.indexOf('    function renderHeader() {');
+    const headerEnd = source.indexOf('\n    /**', headerStart);
+    assert.ok(labelsStart > 0 && labelsEnd > labelsStart && headerEnd > headerStart);
+    const languages = ['en', 'zh-cn', 'zh-tw', 'ja', 'ko', 'fr', 'de'];
+    const translations: Record<string, Record<string, string>> = Object.fromEntries(languages.map(language => [language, {}]));
+    const script = source.slice(labelsStart, labelsEnd) + '\n' + source.slice(headerStart, headerEnd) + '\nrenderHeader();';
+    const html = runInNewContext(script, { translations, BRAND_NAME: 'Claude Code Config Helper' }) as string;
+    for (const language of languages) {
+        assert.ok(translations[language].switchParallelSession);
+        assert.ok(translations[language].switchParallelSessionTitle);
+    }
+    assert.equal(translations['zh-cn'].switchParallelSession, '切到并行会话');
+    assert.equal((html.match(/id="btn-editor-chat"/g) || []).length, 1);
+    assert.match(html, /id="btn-editor-chat"[^>]*type="button"[^>]*data-i18n-title="switchParallelSessionTitle"[^>]*data-i18n-aria-label="switchParallelSession"/);
+    assert.ok(html.indexOf('id="btn-editor-chat"') < html.indexOf('id="btn-import"'));
+    assert.match(source, /\$\{providersOnly \? '' : renderHeader\(\)\}/);
+    const css = readFileSync(resolve(__dirname, '../../../media/configView.css'), 'utf8');
+    assert.match(css, /#btn-editor-chat \.toolbar-btn-label\s*\{[^}]*white-space:\s*normal[^}]*overflow-wrap:\s*anywhere/);
+});
+
+/** Clicking settings navigation sends only the existing open action, not a restart, save or history-list request. */
+test('settings parallel-session switch posts the existing openEditorSession action once', () => {
+    const source = readFileSync(resolve(__dirname, '../../../media/configView.js'), 'utf8');
+    const handler = source.split('\n').find(line => line.includes("byId('btn-editor-chat'") && line.includes('addEventListener'));
+    assert.ok(handler);
+    let click: (() => void) | undefined;
+    const sent: string[] = [];
+    runInNewContext(handler, {
+        byId: (id: string, bind: (element: unknown) => void) => {
+            assert.equal(id, 'btn-editor-chat');
+            bind({ addEventListener: (event: string, listener: () => void) => { assert.equal(event, 'click'); click = listener; } });
+        },
+        post: (type: string) => sent.push(type)
+    });
+    assert.ok(click); click();
+    assert.deepEqual(sent, ['openEditorSession']);
+});

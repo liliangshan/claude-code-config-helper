@@ -24,6 +24,8 @@ export interface ChatSegment {
     requestId?: string;
     /** 随消息历史保存的请求统计。 */
     requestUsage?: RequestUsageSummary;
+    /** Presentation metadata for visible upstream thinking only; never hidden reasoning or signatures. */
+    thinking?: { text: string; complete: boolean };
     /**
      * 片段稳定 ID。用于在流式过程中按 ID 复用同一个 segment（典型场景：工具
      * 卡片在 `tool_use` 启动、`input_json_delta` 累积、`tool_result` 回填等

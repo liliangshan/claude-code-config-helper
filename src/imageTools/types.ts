@@ -4,7 +4,7 @@ export const IMAGE_TOTAL_LIMIT = 100 * 1024 * 1024;
 
 /** Global persisted settings; credentials are referenced, never serialized here. */
 export interface ImageGenerationConfig {
-    version: 1; revision: number; enabled: boolean; supportsGif: boolean; source: 'provider' | 'custom';
+    version: 1; revision: number; enabled: boolean; supportsPng: boolean; supportsJpg: boolean; supportsGif: boolean; supportsSvg: boolean; source: 'provider' | 'custom';
     providerId: string; modelId: string; baseUrl: string; authMode: 'bearer' | 'none'; secretRef?: string;
     allowLocalHttp: boolean; generationEndpointOverride: string;
     editEnabled: boolean; editEndpointOverride: string; editModelId: string;
@@ -34,8 +34,12 @@ export interface ImageScope { cwd: string; id: string; title: string }
 export interface ImageFile { id: string; relativePath: string; mimeType: string; bytes: number }
 /** Redacted upstream response prefix, capped at 500 Unicode characters; never a complete response archive. */
 export interface ImageResponsePreview { status: number; body: string; truncated: boolean }
-/** Optional GIF request parameters; normalized submissions contain both frame values when output_format is gif. */
-export interface ImageAnimationOptions { output_format?: 'gif'; frame_count?: number; frame_duration_ms?: number }
+/** Selectable output formats; JPG maps to the upstream Images API's jpeg spelling. */
+export type ImageOutputFormat = 'png' | 'jpg' | 'gif' | 'svg';
+/** Shared capability flags; only PNG is enabled for a new configuration. */
+export type ImageFormatCapabilities = Pick<ImageGenerationConfig, 'supportsPng' | 'supportsJpg' | 'supportsGif' | 'supportsSvg'>;
+/** Optional format and GIF parameters; only GIF requests contain frame settings. */
+export interface ImageAnimationOptions { output_format?: ImageOutputFormat; frame_count?: number; frame_duration_ms?: number }
 /** Per-task durable record; source images and request credentials are deliberately absent. */
 export interface ImageTask extends ImageAnimationOptions {
     version: 1; taskId: string; scopeId: string; operation: 'generate' | 'edit'; prompt: string;
@@ -69,10 +73,10 @@ export class ImageError extends Error {
 export function imageErrorCode(error: unknown): string {
     return error instanceof ImageError ? error.code : 'IMAGE_STORAGE_FAILED';
 }
-/** Fresh disabled defaults; GIF capability is opt-in and no commercial endpoint or model is preselected. */
+/** Fresh disabled defaults: PNG output, opt-in JPG/GIF/SVG, 100 tasks in flight and a 20-minute deadline. */
 export function defaultImageConfig(): ImageGenerationConfig {
-    return { version: 1, revision: 0, enabled: false, supportsGif: false, source: 'custom', providerId: '', modelId: '', baseUrl: '', authMode: 'bearer',
+    return { version: 1, revision: 0, enabled: false, supportsPng: true, supportsJpg: false, supportsGif: false, supportsSvg: false, source: 'custom', providerId: '', modelId: '', baseUrl: '', authMode: 'bearer',
         allowLocalHttp: false, generationEndpointOverride: '', editEnabled: true,
-        editEndpointOverride: '', editModelId: '', timeoutMs: 180000, maxConcurrent: 1, maxQueue: 100,
+        editEndpointOverride: '', editModelId: '', timeoutMs: 1_200_000, maxConcurrent: 100, maxQueue: 100,
         maxResponseBytes: 20 * 1024 * 1024, maxFileBytes: 20 * 1024 * 1024 };
 }

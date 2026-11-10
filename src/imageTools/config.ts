@@ -1,7 +1,7 @@
 /** @file Pure image configuration validation and deterministic Images endpoint construction. */
 import { defaultImageConfig, ImageError, type ImageGenerationConfig } from './types';
 
-/** Validate connection and GIF capability fields; legacy configurations default to static-image support. */
+/** Validate four explicit output capabilities; old records default to PNG and retain their saved GIF flag. */
 export function parseImageConfig(raw: Record<string, unknown>, revision: number): ImageGenerationConfig {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ImageError('IMAGE_CONFIG_INVALID');
     const config = defaultImageConfig();
@@ -11,8 +11,11 @@ export function parseImageConfig(raw: Record<string, unknown>, revision: number)
         config[key] = value.trim();
     }
     if (typeof raw.enabled !== 'boolean') throw new ImageError('IMAGE_CONFIG_INVALID');
-    if (raw.supportsGif !== undefined && typeof raw.supportsGif !== 'boolean') throw new ImageError('IMAGE_CONFIG_INVALID');
-    config.supportsGif = raw.supportsGif === true;
+    for (const key of ['supportsPng', 'supportsJpg', 'supportsGif', 'supportsSvg'] as const) {
+        if (raw[key] !== undefined && typeof raw[key] !== 'boolean') throw new ImageError('IMAGE_CONFIG_INVALID');
+        if (raw[key] !== undefined) config[key] = raw[key] as boolean;
+    }
+    if (![config.supportsPng, config.supportsJpg, config.supportsGif, config.supportsSvg].some(Boolean)) throw new ImageError('IMAGE_CONFIG_INVALID');
     if (raw.source !== 'provider' && raw.source !== 'custom') throw new ImageError('IMAGE_CONFIG_INVALID');
     if (raw.authMode !== 'bearer' && raw.authMode !== 'none') throw new ImageError('IMAGE_CONFIG_INVALID');
     config.enabled = raw.enabled; config.source = raw.source; config.authMode = raw.authMode;

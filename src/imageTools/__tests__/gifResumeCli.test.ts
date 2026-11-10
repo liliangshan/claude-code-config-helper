@@ -66,17 +66,17 @@ for (const deferred of [false, true]) test(`real CLI resume refreshes old image 
     /** Select the exact image generation schema from the captured model request. */
     const image = (body: any) => body.tools.find((tool: any) => tool.name === 'mcp__llsccaiImage__openapi_generate_image');
     try {
-        await turn(false); assert.ok(image(inbound.at(-1))); assert.equal('output_format' in image(upstream.at(-1)).input_schema.properties, false);
+        await turn(false); assert.ok(image(inbound.at(-1))); assert.equal('frame_count' in image(upstream.at(-1)).input_schema.properties, false);
         gif = true; await turn(true);
-        assert.equal('output_format' in image(inbound.at(-1)).input_schema.properties, false, 'Native resume reproduces the old schema despite a GIF-enabled MCP process');
+        assert.equal('frame_count' in image(inbound.at(-1)).input_schema.properties, false, 'Native resume reproduces the old schema despite a GIF-enabled MCP process');
         repair = true; await turn(true);
-        assert.deepEqual(image(upstream.at(-1)).input_schema.properties.output_format.enum, ['gif']);
+        assert.deepEqual(image(upstream.at(-1)).input_schema.properties.output_format.enum, ['png', 'gif']);
         assert.equal(image(upstream.at(-1)).input_schema.properties.frame_count.default, 9);
         assert.match(image(upstream.at(-1)).description, /animated GIF/);
         assert.equal(toolCalls.length, 1, 'The real CLI accepts the new fields when executing the current MCP tool');
         assert.deepEqual(toolCalls[0].arguments, { prompt: 'local fixture only', size: '512x512', output_format: 'gif', frame_count: 9, frame_duration_ms: 200 });
         gif = false; await turn(true);
-        assert.equal('output_format' in image(upstream.at(-1)).input_schema.properties, false);
+        assert.equal('frame_count' in image(upstream.at(-1)).input_schema.properties, false);
         assert.equal(upstream.at(-1).messages, inbound.at(-1).messages, 'Schema repair preserves all resumed messages');
     } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await fs.rm(cwd, { recursive: true, force: true }); }
 });

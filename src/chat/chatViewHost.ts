@@ -386,7 +386,7 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
     }
 
     /**
-     * 读取 HTML 模板并替换 Webview 资源 URI、CSP source 和 nonce。
+     * Load shared chat layout, visual polish, visible-thinking disclosures and selection-safe clipboard assets.
      *
      * HTML 模板基于参考实现的模板结构，加载：
      * - style.css：参考实现 CSS（已替换图标）
@@ -412,6 +412,8 @@ export class ChatViewHost implements vscode.WebviewViewProvider, vscode.Disposab
             .replace(/{{nonce}}/g, nonce)
             .replace(/{{imageStyleUri}}/g, String(webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'imageGeneration.css'))))
             .replace(/{{imageScriptUri}}/g, String(webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'imageGeneration.js'))))
+            .replace(/{{chatPolishStyleUri}}/g, String(webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'chatPolish.css'))))
+            .replace(/{{thinkingScriptUri}}/g, String(webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'thinking.js'))))
             .replace(/{{styleUri}}/g, String(styleUri))
             .replace(/{{bridgeUri}}/g, String(bridgeUri))
             .replace(/{{cacheSolutionScriptUri}}/g, String(cacheSolutionScriptUri))

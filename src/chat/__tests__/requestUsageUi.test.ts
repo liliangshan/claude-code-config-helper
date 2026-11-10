@@ -44,3 +44,50 @@ test('round usage segments do not render a footer', () => {
     render({}, { kind: 'usage', id: 'usage:round', usage: { model: 'gpt-6-astra', inputTokens: 373 } });
     render({}, { kind: 'usage', text: '历史整轮用量' });
 });
+
+/** Responsive chat content must use panel width and keep model/usage inline until wrapping is necessary. */
+test('chat polish uses fluid width and does not force model and usage onto separate rows', () => {
+    const source = readFileSync(resolve(__dirname, '../../../media/chat/chatPolish.css'), 'utf8');
+    const message = source.match(/\.message_07S1Yg\s*\{([^}]+)\}/)?.[1] ?? '';
+    const fields = source.match(/\.requestUsageFields\s*\{([^}]+)\}/)?.[1] ?? '';
+    const header = source.match(/\.requestUsageHeader\s*\{([^}]+)\}/)?.[1] ?? '';
+    assert.match(message, /width:\s*100%/);
+    assert.match(message, /max-width:\s*100%/);
+    assert.match(fields, /flex:\s*0 1 auto/);
+    assert.doesNotMatch(fields, /flex-basis:\s*100%/);
+    assert.match(header, /gap:\s*4px 12px/);
+    assert.doesNotMatch(source, /780px/);
+});
+
+/** Smaller model text stays beside usage on the left without hiding fields or forcing wide separation. */
+test('model route and name remain one size smaller and left aligned beside usage', () => {
+    const style = readFileSync(resolve(__dirname, '../../../media/chat/chatPolish.css'), 'utf8');
+    const source = style.match(/\.assistantSourcePrefix_07S1Yg\s*\{([^}]+)\}/)?.[1] ?? '';
+    const header = style.match(/\.requestUsageHeader\s*\{([^}]+)\}/)?.[1] ?? '';
+    const model = style.match(/\.requestUsageHeader > span:first-child\s*\{([^}]+)\}/)?.[1] ?? '';
+    const fields = style.match(/\.requestUsageFields\s*\{([^}]+)\}/)?.[1] ?? '';
+    for (const rule of [source, model]) {
+        assert.match(rule, /font-size:\s*max\(10px,\s*calc\(var\(--lls-font-xs\) - 1px\)\)/);
+        assert.match(rule, /margin-inline-start:\s*0/);
+        assert.match(rule, /text-align:\s*left/);
+        assert.match(rule, /overflow-wrap:\s*anywhere/);
+    }
+    assert.match(header, /width:\s*100%/);
+    assert.match(header, /font-size:\s*var\(--lls-font-xs\)/);
+    assert.match(header, /text-align:\s*left/);
+    assert.doesNotMatch(model, /order:|margin-inline-start:\s*auto/);
+    assert.match(model, /flex:\s*0 1 auto/);
+    assert.match(fields, /font-size:\s*max\(10px,\s*\.85em\)/);
+    assert.doesNotMatch(model + fields, /display:\s*none|text-overflow:\s*ellipsis|white-space:\s*nowrap/);
+});
+
+/** Tool-card metadata receives left padding only; existing bottom padding and margin stay unchanged. */
+test('tool card usage has a left inset without extra spacing below', () => {
+    const style = readFileSync(resolve(__dirname, '../../../media/chat/chatPolish.css'), 'utf8');
+    const inset = style.match(/\.root_ZUQaOA > \.requestUsageHeader\s*\{([^}]+)\}/)?.[1] ?? '';
+    const header = style.match(/\.requestUsageHeader\s*\{([^}]+)\}/)?.[1] ?? '';
+    assert.match(inset, /padding-inline-start:\s*10px/);
+    assert.doesNotMatch(inset, /margin|padding-bottom|padding-block|padding:\s/);
+    assert.match(header, /padding:\s*7px 0 9px/);
+    assert.match(header, /margin-bottom:\s*9px/);
+});

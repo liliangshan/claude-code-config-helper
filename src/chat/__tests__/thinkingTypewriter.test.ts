@@ -84,6 +84,35 @@ test('result-before-message-stop keeps the buffered text response identity', () 
     } finally { adapter.dispose(); }
 });
 
+/** Completed non-streaming thinking keeps raw line breaks and an explicit display identity without signatures. */
+test('complete SDK thinking carries visible disclosure metadata only', () => {
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    try {
+        const output = adapter.parseOutput({ source: 'stdout', receivedAt: Date.now(), text: JSON.stringify({ type: 'assistant',
+            message: { id: 'sdk-thinking', content: [{ type: 'thinking', thinking: 'First\n\nSecond🙂', signature: 'NOT_DISPLAYED' }] } }) + '\n' });
+        const segments = output.flatMap(event => event.type === 'segments' ? event.segments : []);
+        assert.equal(segments.length, 1); assert.deepEqual(segments[0].thinking, { text: 'First\n\nSecond🙂', complete: true });
+        assert.ok(segments[0].id?.startsWith('thinking:')); assert.equal(JSON.stringify(segments).includes('NOT_DISPLAYED'), false);
+    } finally { adapter.dispose(); }
+});
+
+/** Opening blocks can contain initial visible thinking; preserve it before deltas and mark completion explicitly. */
+test('thinking block start text is retained and block stop marks the same disclosure complete', () => {
+    const adapter = new StreamJsonCliAdapter(createFakeCliProcess());
+    try {
+        feedStreamEvent(adapter, { type: 'message_start', message: { id: 'initial-thinking' } });
+        const start = feedStreamEvent(adapter, { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: 'Initial\n', signature: 'HIDDEN_SIGNATURE' } });
+        const first = start.flatMap(event => event.type === 'segments' ? event.segments : []);
+        assert.deepEqual(first[0].thinking, { text: 'Initial\n', complete: false });
+        const delta = feedStreamEvent(adapter, { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Delta' } });
+        assert.equal(delta.flatMap(event => event.type === 'segments' ? event.segments : [])[0].thinking?.text, 'Initial\nDelta');
+        const stop = feedStreamEvent(adapter, { type: 'content_block_stop', index: 0 });
+        const completed = stop.flatMap(event => event.type === 'segments' ? event.segments : []);
+        assert.equal(completed[0].id, first[0].id); assert.deepEqual(completed[0].thinking, { text: 'Initial\nDelta', complete: true });
+        assert.equal(JSON.stringify([start, delta, stop]).includes('HIDDEN_SIGNATURE'), false);
+    } finally { adapter.dispose(); }
+});
+
 /** Responses 可见摘要经统一 CLI 适配器应逐片更新，并跳过聚合重复内容。 */
 test('Responses 摘要 delta 打字机增长，所有完成快照和 CLI 聚合事件不重复', () => {
     const { OpenAIResponsesToAnthropicStreamConverter } = require('../../relay/converters/openAIResponsesToAnthropic') as typeof import('../../relay/converters/openAIResponsesToAnthropic');
@@ -109,7 +138,9 @@ test('Responses 摘要 delta 打字机增长，所有完成快照和 CLI 聚合�
     assert.equal(second[0].text, '> 💭 先检查🙂\n> 再确认');
     assert.equal(second[0].id, first[0].id);
     assert.equal(first[0].responseMessageId, 'msg_r-thinking');
-    assert.deepEqual(feed({ type: 'response.reasoning_summary_text.done', output_index: 0, summary_index: 0, text: '先检查🙂\n再确认' }), []);
+    const stopped = feed({ type: 'response.reasoning_summary_text.done', output_index: 0, summary_index: 0, text: '先检查🙂\n再确认' });
+    assert.equal(stopped.length, 1); assert.equal(stopped[0].id, first[0].id);
+    assert.deepEqual(stopped[0].thinking, { text: '先检查🙂\n再确认', complete: true });
     const completed = feed({ type: 'response.completed', response: { output: [{ type: 'reasoning', summary: [{ type: 'summary_text', text: '先检查🙂\n再确认' }] }] } });
     assert.equal(completed.some(segment => segment.id === first[0].id), false);
     const aggregate = adapter.parseOutput({ source: 'stdout', receivedAt: Date.now(), text: JSON.stringify({ type: 'assistant', message: { id: 'msg_r-thinking', content: [{ type: 'thinking', thinking: '先检查🙂\n再确认' }] } }) + '\n' });

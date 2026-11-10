@@ -173,6 +173,18 @@ body {
     color: var(--ent-accent);
 }
 
+.header .toolbar-actions #btn-editor-chat {
+    max-width: 100%;
+    min-width: 0;
+}
+
+.header .toolbar-actions #btn-editor-chat .toolbar-btn-label {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: start;
+    line-height: 1.4;
+}
+
 .header .toolbar-actions .toolbar-btn-accent:hover {
     background: color-mix(in srgb, var(--ent-accent) 22%, transparent);
     color: var(--fg);

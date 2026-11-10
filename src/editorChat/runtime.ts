@@ -327,16 +327,23 @@ export class EditorChatRuntime {
         this.post({ type: 'codePreview/current', enabled: s.codePreviewEnabled });
         this.post({ type: 'browser/autoApproveState', supported: false, enabled: false });
     }
-    /** Send one turn, preserving image drafts and clearing only this session's prior compaction failure latch. */
+    /**
+     * Append the user's message to the left Webview before waiting for CLI startup.
+     * @param text User prompt or an internal continuation.
+     * @param attachments Optional local attachments used to build the CLI prompt and display segments.
+     * @param continuation Whether this is an internal task-flow continuation.
+     * @param imageResult Optional completed image task delivered to this conversation.
+     * @returns Completion after the message is displayed and sent to the owned CLI.
+     */
     public async send(text: string, attachments?: import('../chat/protocol').ChatComposerAttachment[], continuation = false, imageResult?: { scope: ImageScope; task: ImageTask }): Promise<void> {
         if ((await import('../setup/gate')).isCliUpdateInProgress()) throw new Error('CLI update in progress; send again after restart');
         if (this.restarting) throw new Error('CLI restart in progress');
         if (this.closed || this.busy) throw new Error('会话忙碌或已关闭');
         if (!text.trim() && !attachments?.length) return;
         const prompt = buildPromptWithAttachments(text, attachments); if (!continuation) this.flowPaused = false;
-        await this.ensureCli(); if (this.closed) return;
         const displaySegments = imageResult ? undefined : await buildUserDisplaySegments(prompt, attachments);
         if (imageResult) {
+            await this.ensureCli(); if (this.closed) return;
             const current = await this.imageTaskScope();
             if (current.id !== imageResult.scope.id || current.cwd !== imageResult.scope.cwd || this.imageDeliveryBusy() || !this.imageReceipts) throw new Error('IMAGE_RESULT_DEFERRED');
             if (!await this.imageReceipts.claim(imageResult.scope, imageResult.task)) throw new Error('IMAGE_RESULT_ALREADY_DELIVERED');
@@ -350,6 +357,11 @@ export class EditorChatRuntime {
         this.data.messages.push(user); this.post({ type: 'message/append', message: user });
         this.assistant = { id: randomUUID(), role: 'assistant', segments: [], createdAt: Date.now(), pending: true };
         this.data.messages.push(this.assistant); this.post({ type: 'message/append', message: this.assistant });
+        if (!imageResult) {
+            try { await this.ensureCli(); }
+            catch (error) { await this.cancel(); throw error; }
+            if (this.closed) return;
+        }
         this.recoveryIdentity = this.recovery.beginTurn({ turnId: randomUUID(), sessionId: this.data.cliSessionId ?? '', cliInstanceId: String(this.generation), route: 'normal', originalPrompt: prompt, deliveryState: 'not_sent' });
         this.busy = true; this.turnFinished = false; this.turnFailed = false; this.relay.active = true;
         const requestGeneration = this.generation, requestSessionId = this.data.cliSessionId;

@@ -24,13 +24,13 @@ test('stale image tool snapshots are refreshed without changing history or addin
     assert.equal(fresh.messages, old.messages); assert.equal(fresh.tools[2], old.tools[2]);
     for (const tool of fresh.tools.slice(0, 2)) {
         assert.ok('output_format' in tool.input_schema.properties);
-        assert.match(tool.description, /MUST submit output_format="gif"/);
+        assert.match(tool.description, /ONLY when the user explicitly asks for GIF or animation/);
         assert.ok('defer_loading' in tool); assert.ok('cache_control' in tool);
         assert.equal(tool.defer_loading, true); assert.deepEqual(tool.cache_control, { type: 'ephemeral' });
     }
     assert.equal(refreshImageRequestSchemas(fresh, true), fresh);
     const disabled = refreshImageRequestSchemas(fresh, false) as typeof fresh;
-    assert.equal('output_format' in disabled.tools[0].input_schema.properties, false);
+    assert.deepEqual((disabled.tools[0].input_schema.properties as any).output_format.enum, ['png']);
     assert.equal(refreshImageRequestSchemas(old, undefined), old);
     const noTools = { messages: old.messages }; assert.equal(refreshImageRequestSchemas(noTools, true), noTools);
     const none = { tools: [old.tools[2]] }; assert.equal(refreshImageRequestSchemas(none, true), none);
@@ -45,10 +45,10 @@ test('refreshed GIF schemas reach Responses and Chat upstreams', () => {
         for (const tool of tools!.filter(tool => tool?.name?.startsWith('mcp__llsccaiImage__'))) {
             assert.ok(tool && 'parameters' in tool && 'description' in tool);
             const params = tool.parameters as any;
-            assert.deepEqual(params.properties.output_format.enum, ['gif']);
+            assert.deepEqual(params.properties.output_format.enum, ['png', 'gif']);
             assert.equal(params.properties.frame_count.default, 9);
             assert.equal(params.properties.frame_duration_ms.default, 200);
-            assert.match(tool!.description!, /animated GIF/);
+            assert.match(tool!.description!, /animated GIF output/);
         }
     }
 });

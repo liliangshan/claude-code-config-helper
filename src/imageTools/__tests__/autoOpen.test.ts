@@ -121,6 +121,22 @@ test('remote generated images retain workspace authority and URI path instead of
     } finally { await f.close(); }
 });
 
+test('SVG results open in the default text editor for automatic and explicit actions', async () => {
+    const f = await fixture();
+    try {
+        const config = await f.host.config.read();
+        await f.host.config.save({ expectedRevision: config.revision, keyAction: 'keep', config: { ...config, supportsPng: false, supportsSvg: true } });
+        f.queue.client.load = async () => Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>');
+        const task = await f.submit();
+        assert.equal(task.status, 'succeeded'); assert.equal(task.output_format, 'svg');
+        assert.equal(f.opens[0][0], 'vscode.openWith'); assert.equal(f.opens[0][2], 'default');
+        assert.deepEqual(f.opens[0][3], { preview: false, preserveFocus: true });
+        await f.host.receive({ type: 'imageGeneration/imageOpen', requestId: 'svg-manual', taskId: task.taskId, imageId: task.images[0].id }, { scope: async () => f.scope, post() {} });
+        assert.equal(f.opens[1][0], 'vscode.openWith'); assert.equal(f.opens[1][2], 'default');
+        assert.equal(f.providerCalls(), 1);
+    } finally { await f.close(); }
+});
+
 test('failed tasks and editor command failures never replay generation or change successful image results', async () => {
     const f = await fixture();
     try {

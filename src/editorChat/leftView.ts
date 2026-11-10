@@ -117,14 +117,14 @@ export class LeftChatView {
             <script nonce="${nonce}" src="${script}"></script></body></html>`;
     }
 
-    /** Present the original chat assets using the left session's own runtime and history. */
+    /** Present shared polished chat and visible-thinking assets with this left session's owned runtime. */
     private async renderChat(view: vscode.WebviewView): Promise<void> {
         const generation = this.generation;
         const root = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'chat');
         const nonce = randomUUID().replace(/-/g, '');
         let html = await fs.readFile(vscode.Uri.joinPath(root, 'index.html').fsPath, 'utf8');
         const replacements: Record<string, string> = { cspSource: view.webview.cspSource, nonce };
-        for (const [key, file] of Object.entries({ imageStyleUri: 'imageGeneration.css', imageScriptUri: 'imageGeneration.js', styleUri: 'style.css', cacheSolutionScriptUri: 'cacheSolution.js', clipboardUri: 'clipboard.js', scriptUri: 'main.js' })) {
+        for (const [key, file] of Object.entries({ chatPolishStyleUri: 'chatPolish.css', thinkingScriptUri: 'thinking.js', imageStyleUri: 'imageGeneration.css', imageScriptUri: 'imageGeneration.js', styleUri: 'style.css', cacheSolutionScriptUri: 'cacheSolution.js', clipboardUri: 'clipboard.js', scriptUri: 'main.js' })) {
             replacements[key] = String(view.webview.asWebviewUri(vscode.Uri.joinPath(root, file)));
         }
         html = html.replace(/{{(\w+)}}/g, (match, key: string) => replacements[key] ?? match)

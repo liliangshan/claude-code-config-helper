@@ -4,7 +4,7 @@ import { IMAGE_BRIDGE } from './bridge';
 import { forwardImageTool } from './transport';
 import { imageErrorCode } from './types';
 import { imageToolSchemas } from './tools';
-import { IMAGE_GIF_ENV } from './animation';
+import { imageFormatsFromEnvironment } from './formats';
 
 /** Launch a capability-specific authenticated bridge; missing relay remains visibly unavailable. */
 export function startImageMcpServer(): void {
@@ -16,5 +16,5 @@ export function startImageMcpServer(): void {
             catch (error) { return { isError: true, content: [{ type: 'text' as const, text: imageErrorCode(error) }] }; }
         }
     } : undefined;
-    new McpStdioServer({ descriptor: { ...IMAGE_BRIDGE, schemas: imageToolSchemas(process.env[IMAGE_GIF_ENV] === '1') }, host }).start();
+    new McpStdioServer({ descriptor: { ...IMAGE_BRIDGE, schemas: imageToolSchemas(imageFormatsFromEnvironment(process.env)) }, host }).start();
 }

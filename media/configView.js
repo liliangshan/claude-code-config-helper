@@ -819,6 +819,20 @@
         });
     });
 
+    /** 设置页切回并行会话的七语言文案；沿用现有独立聊天入口，不新建编辑器标签。 */
+    const parallelSessionLabels = {
+        en: ['Switch to parallel session', 'Return to the independent chat without restarting the current session.'],
+        'zh-cn': ['切到并行会话', '返回左侧独立聊天，不重启当前会话。'],
+        'zh-tw': ['切到並行會話', '返回左側獨立聊天，不重新啟動目前會話。'],
+        ja: ['並行セッションに切替', '現在のセッションを再起動せず、独立したチャットに戻ります。'],
+        ko: ['병렬 대화로 전환', '현재 세션을 재시작하지 않고 독립 대화로 돌아갑니다.'],
+        fr: ['Passer à la session parallèle', 'Revenir au chat indépendant sans redémarrer la session actuelle.'],
+        de: ['Zur parallelen Sitzung', 'Zum unabhängigen Chat zurückkehren, ohne die aktuelle Sitzung neu zu starten.']
+    };
+    Object.entries(parallelSessionLabels).forEach(([language, labels]) => {
+        Object.assign(translations[language], { switchParallelSession: labels[0], switchParallelSessionTitle: labels[1] });
+    });
+
     /** 读取翻译文案，缺失时回落英文，再回落 key 本身。 */
     function t(key) {
         return translations[currentLanguage]?.[key] || translations.en[key] || key;
@@ -1046,7 +1060,7 @@
         if (img) img.removeAttribute('src');
     }
 
-    /** 渲染精简页头：保留品牌、语言和工具栏，不再显示重复标题及说明。 */
+    /** 渲染精简页头：包含并行会话切换、品牌、语言与工具栏；嵌入引导不调用此方法。 */
     function renderHeader() {
         return `
             <section class="header">
@@ -1073,6 +1087,10 @@
                     </div>
                 </div>
                 <div class="toolbar toolbar-actions">
+                    <button id="btn-editor-chat" type="button" class="toolbar-btn toolbar-btn-accent" data-i18n-title="switchParallelSessionTitle" data-i18n-aria-label="switchParallelSession" title="Return to the independent chat without restarting the current session." aria-label="Switch to parallel session">
+                        <svg class="toolbar-btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 2h12a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm0 1v10h5V3zm6 0v10h6V3z"/></svg>
+                        <span class="toolbar-btn-label" data-i18n="switchParallelSession">Switch to parallel session</span>
+                    </button>
                     <button id="btn-import" class="toolbar-btn" data-i18n-title="import" title="导入">
                         <svg class="toolbar-btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1.5a.5.5 0 0 1 .5.5v7.293l2.146-2.147a.5.5 0 0 1 .708.708l-3 3a.5.5 0 0 1-.708 0l-3-3a.5.5 0 1 1 .708-.708L7.5 9.293V2a.5.5 0 0 1 .5-.5zM2.5 11a.5.5 0 0 1 .5.5V13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1.5a.5.5 0 0 1 1 0V13a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1.5a.5.5 0 0 1 .5-.5z"/></svg>
                         <span class="toolbar-btn-label" data-i18n="import">导入</span>
@@ -1387,7 +1405,7 @@
         `;
     }
 
-    /** 绑定页面事件。 */
+    /** 绑定设置页操作；并行会话按钮复用现有消息，不在前端保存配置或重建会话。 */
     function bindEvents() {
         byId('btn-import', (el) => el.addEventListener('click', () => post('importConfig')));
         byId('btn-export', (el) => el.addEventListener('click', () => post('exportConfig')));

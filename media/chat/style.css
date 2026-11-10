@@ -1829,46 +1829,6 @@ select:focus-visible {
 }
 
 /* ---------------------------------------------------------------------------
- * 9.1 全局生成中指示器 (位于输入框上方，模型输出全程常驻显示)
- * --------------------------------------------------------------------------- */
-.chat-global-pending {
-    display: none;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 4px 10px;
-    margin: 0 auto var(--lls-space-2);
-    width: fit-content;
-    background: var(--lls-bg-elevated);
-    border: 1px solid var(--lls-border);
-    border-radius: var(--lls-radius-pill);
-    color: var(--lls-fg-muted);
-    font-size: var(--lls-font-sm);
-    box-shadow: var(--lls-shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.08));
-    pointer-events: none;
-}
-
-.chat-global-pending--visible {
-    display: inline-flex;
-}
-
-.chat-global-pending > span {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--lls-info);
-    animation: lls-pulse 1.4s ease-in-out infinite;
-}
-
-.chat-global-pending > span:nth-child(2) {
-    animation-delay: 0.2s;
-}
-
-.chat-global-pending > span:nth-child(3) {
-    animation-delay: 0.4s;
-}
-
-/* ---------------------------------------------------------------------------
  * 10. 底部输入区 - 上下文面板 + 文本框 + 工具栏
  * --------------------------------------------------------------------------- */
 .chat-input {

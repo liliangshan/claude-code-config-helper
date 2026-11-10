@@ -1,6 +1,6 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.89
+**Version:** 3.2.92
 
 **Website: [www.zhineng.dev](https://www.zhineng.dev/)**
 
@@ -38,11 +38,32 @@ Files share the existing 20-snapshot error retention limit across date directori
 
 Request bodies, URLs and authentication headers are not included in these diagnostics, but **raw model responses and tool arguments can contain sensitive content**; review them before sharing. Token limits remain unchanged, and arguments are never repaired by guessing missing JSON characters.
 
-## Unreleased: Request Usage Isolation
+## What's New in 3.2.92
 
-Ordinary Anthropic, Chat and Responses replies now receive an opaque, request-scoped message ID before they reach the CLI. Reused provider response IDs no longer merge usage or hide a later response; tool call/result IDs, model content, signatures and token values stay unchanged. Main and independent conversations use separate registries, and missing-session/compaction requests are excluded from ordinary message attribution.
+- **Left chat messages appear immediately.** The left/parallel conversation now appends the user message and pending assistant bubble before waiting for CLI startup. Slow CLI startup no longer delays the visible sent message; startup failures keep the user message visible and show the error.
 
-Usage may arrive before or after visible content. Saved ownership is retained instead of rebinding old messages, startup identity confirmation is explicit, and older requests cannot overwrite a newer context meter, including requests started in the same millisecond. Reloaded UI history retains saved summaries; rereading the same native history merges existing summaries only by exact request-scoped message IDs. Legacy histories without saved statistics are not backfilled with guessed token counts. These changes are in the development build, not the previously packaged 3.2.89 VSIX; reload the development host to test them.
+**Upgrade note:** reload VS Code or restart the F5 development host to load this runtime change. Existing histories, drafts and models are retained; active CLI work may be interrupted. Known `requestUsageBinding` and reused-response-ID limitations remain unchanged.
+
+## What's New in 3.2.91
+
+- **PNG-first image generation.** The global image dialog now has independent PNG/JPG/GIF/SVG switches. New configurations enable only PNG; existing GIF opt-in is retained. Tools advertise only enabled formats, explicitly default to a static PNG, and expose frame parameters only when GIF is enabled. GIF requires an explicit animation/GIF request and must never replace a requested static image with a two-frame animation. JPG uses the provider's `jpeg` format value. At least one format must remain enabled; if PNG is disabled, an enabled static alternative is used, while GIF-only setups require an explicit GIF request.
+- **Safe SVG output.** SVG Base64/Data URLs and downloaded files receive bounded UTF-8/XML and static-content validation before `.svg` storage. Active content, DTDs and external resources are rejected. SVG opens in the default text editor rather than an active webpage. Safe provider output in a different format is retained under its actual extension with `IMAGE_FORMAT_MISMATCH`; the paid request is never automatically repeated.
+- **Longer, concurrent image work.** Image-task defaults are now **100 concurrent tasks per workspace/extension host** and **1200 seconds (20 minutes) per executing task**, with a separate 100-task waiting queue. Provider-side limits still apply; this is not a cross-window quota. Already accepted tasks keep their frozen settings, and interrupted tasks are not automatically resubmitted.
+- **One thinking disclosure per reply.** Multiple visible-thinking blocks share one expandable section while retaining ordered text, manual choices and selection protection. Tools and request usage keep their own positions and identities; different replies and conversations are not merged.
+- **More compact chat controls.** Model type/name remain one size smaller and sit beside usage on the left. Tool-card metadata has a 10px left inset without extra bottom spacing. The input's running border animation is restored, the separate three-dot row is removed, and reduced-motion users retain a static border.
+- **Refined model selection and settings navigation.** The model picker has responsive grouped cards, full wrapping identifiers, seven-language timing guidance and clearer keyboard focus. A **Switch to parallel session** button in the settings toolbar returns to the existing independent conversation without restarting it or creating an editor tab.
+
+**Upgrade note:** install the new package and reload VS Code, or restart the F5 development host, when ready to load the changed extension code and assets. Reloading can interrupt active CLI and image tasks; restarting only a chat CLI is not sufficient. Existing provider credentials, model selections, histories and saved GIF opt-in are retained. The four format switches declare provider capabilities, not paid API verification; actual provider support and local/remote editor appearance still need manual acceptance. Saving image settings continues to refresh running chat CLI schemas at safe idle points.
+
+## What's New in 3.2.90
+
+- **Fluid panel width.** Messages, tool cards and the composer resize with the chat panel instead of staying in a centered fixed-width column. Model/source and all five usage fields share a row when space allows and wrap naturally on narrow screens without truncating counts.
+- **A calmer chat layout.** Main, left and editor conversations share the approved compact styling: subtle user bubbles and borders, readable Markdown spacing, monochrome tool icons, individual code language/copy toolbars and a quieter composer. Existing model, image, permission, attachment and five-field usage controls remain available. Colors follow the active VS Code theme, including high contrast, and reduced-motion settings suppress decorative animation.
+- **Expandable visible thinking.** Returned visible thinking opens while streaming and closes after block/turn completion unless you manually choose otherwise. Incremental updates and same-view redraws preserve your choice and selection-copy behavior; completed history starts collapsed. SDK/native-history thinking and legacy quote-formatted blocks are supported. No hidden reasoning, signatures, generated summaries or invented durations are displayed, and model context is unchanged.
+- **Request usage stays with its own response.** Ordinary Anthropic, Chat and Responses replies receive an opaque request-scoped downstream message ID. Duplicate provider IDs, startup ordering and late reports no longer reassign statistics or replace a newer context meter. UI reload and exact-ID native-history rereads retain existing saved summaries without inventing missing legacy token counts. Tool IDs, signatures, model content and token values are preserved.
+- **Reliable stream and completion handling.** Chat/Responses streams accept a single leading BOM, including split UTF-8 bytes, without losing the first event. Late empty notifications and background metadata no longer restore a completed independent chat's stop-square state.
+
+**Upgrade note:** reload VS Code or stop and restart the F5 development host when ready to activate 3.2.90; active CLI tasks may be interrupted. Restarting only a chat CLI cannot load new extension code. Existing settings and histories are retained. The standalone design sample is excluded from the VSIX. Local/remote Webview appearance still requires hands-on acceptance, and this release does not establish GIF compatibility for every provider.
 
 ## What's New in 3.2.89
 
@@ -572,7 +593,7 @@ Command titles may be localized according to your configured UI language.
 
 ### Option 1: Install from a local VSIX
 
-Install the packaged `claude-code-config-helper-3.2.89.vsix` using VS Code's **Extensions → … → Install from VSIX…** action. Reload the window when ready to activate the installed build; reload interrupts currently running extension CLIs. To build a package yourself, install the repository dependencies, run `npm run compile`, then package with `@vscode/vsce`.
+Install the packaged `claude-code-config-helper-3.2.91.vsix` using VS Code's **Extensions → … → Install from VSIX…** action. Reload the window when ready to activate the installed build; reload interrupts currently running extension CLIs. To build a package yourself, install the repository dependencies, run `npm run compile`, then package with `@vscode/vsce`.
 
 ### CLI installation through setup
 

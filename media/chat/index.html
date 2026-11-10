@@ -5,6 +5,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src {{cspSource}} https: data:; style-src {{cspSource}} 'nonce-{{nonce}}'; script-src 'nonce-{{nonce}}'; font-src {{cspSource}}; connect-src 'none';">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link nonce="{{nonce}}" rel="stylesheet" href="{{styleUri}}">
+    <link nonce="{{nonce}}" rel="stylesheet" href="{{chatPolishStyleUri}}">
     <link nonce="{{nonce}}" rel="stylesheet" href="{{imageStyleUri}}">
     <title>LLS CLAUDE CHAT</title>
 </head>
@@ -30,9 +31,6 @@
         </header>
         <main class="chat-list" data-role="messages" aria-live="polite"></main>
         <footer class="chat-input" data-role="composer-shell">
-            <div class="chat-global-pending" data-role="global-pending" aria-hidden="true">
-                <span></span><span></span><span></span>
-            </div>
             <div class="chat-toast" data-role="chat-toast" aria-live="polite" aria-hidden="true"></div>
             <div class="drop-overlay" data-role="drop-overlay" aria-hidden="true">
                 <div class="drop-overlay__card" data-i18n="dropFilesHere">Drop files here as context</div>
@@ -103,36 +101,45 @@
             </div>
         </footer>
     </div>
-    <dialog class="model-picker" data-role="model-picker">
+    <dialog class="model-picker" data-role="model-picker" aria-labelledby="model-picker-title" aria-describedby="model-picker-description">
         <form method="dialog" class="model-picker__form" data-role="model-picker-form">
             <header class="model-picker__header">
-                <h2 data-i18n="pickerTitle">Select Chat models</h2>
-                <button type="button" class="model-picker__close" data-role="model-picker-cancel" aria-label="Close">×</button>
+                <span class="model-picker__brand" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 2.6 6.4L21 12l-6.4 2.6L12 21l-2.6-6.4L3 12l6.4-2.6Z"/></svg></span>
+                <div class="model-picker__heading">
+                    <h2 id="model-picker-title" data-i18n="pickerTitle">Select Chat models</h2>
+                    <p id="model-picker-description" data-i18n="pickerDescription">Choose a model for each stage of this conversation.</p>
+                </div>
+                <button type="button" class="model-picker__close" data-role="model-picker-cancel" data-i18n-aria-label="pickerClose" data-i18n-title="pickerClose" aria-label="Close model picker" title="Close model picker">×</button>
             </header>
-            <section class="model-picker__section">
-                <h3 data-i18n="pickerNormalSection">Normal task model</h3>
-                <select class="model-picker__select" data-role="model-picker-normal-select"></select>
-            </section>
-            <section class="model-picker__section">
-                <h3 data-i18n="pickerTaskFlowSection">Task flow model</h3>
-                <select class="model-picker__select" data-role="model-picker-taskflow-select"></select>
-            </section>
-            <section class="model-picker__section">
-                <h3 data-i18n="pickerCompactionSection">Compaction model</h3>
-                <select class="model-picker__select" data-role="model-picker-compaction-select"></select>
-            </section>
-            <section class="model-picker__section">
-                <h3 data-i18n="pickerCacheTtlSection">Prompt cache TTL</h3>
-                <select class="model-picker__select" data-role="model-picker-cache-ttl-select">
-                    <option value="default" data-i18n="pickerCacheTtlDefault">Default (follow client)</option>
-                    <option value="5m" data-i18n="pickerCacheTtl5m">5 minutes</option>
-                    <option value="1h" data-i18n="pickerCacheTtl1h">1 hour</option>
-                </select>
-                <p class="model-picker__hint" data-i18n="pickerCacheTtlHint">If requests error, switch back to Default. For OpenAI-compatible / Responses providers, this only takes effect after enabling cache_control passthrough in the model settings.</p>
-            </section>
+            <div class="model-picker__body">
+                <section class="model-picker__section model-picker__section--normal">
+                    <div class="model-picker__section-heading"><span class="model-picker__section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h16v12H9l-5 4ZM8 8h8M8 12h5"/></svg></span><div><h3 id="picker-normal-label" data-i18n="pickerNormalSection">Normal task model</h3><p class="model-picker__caption" id="picker-normal-hint" data-i18n="pickerNormalHint">For everyday conversation and coding.</p></div><span class="model-picker__timing" data-i18n="pickerOnSave">On save</span></div>
+                    <select class="model-picker__select" data-role="model-picker-normal-select" aria-labelledby="picker-normal-label" aria-describedby="picker-normal-hint picker-normal-detail"></select>
+                    <p class="model-picker__detail" id="picker-normal-detail" data-role="model-picker-normal-detail" hidden></p>
+                </section>
+                <section class="model-picker__section">
+                    <div class="model-picker__section-heading"><span class="model-picker__section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 3h6v6H4Zm10 12h6v6h-6M7 9v9h7M10 6h7v9"/></svg></span><div><h3 id="picker-taskflow-label" data-i18n="pickerTaskFlowSection">Task flow model</h3><p class="model-picker__caption" id="picker-taskflow-hint" data-i18n="pickerTaskFlowHint">Optional. Follows the normal model when unset.</p></div></div>
+                    <select class="model-picker__select" data-role="model-picker-taskflow-select" aria-labelledby="picker-taskflow-label" aria-describedby="picker-taskflow-hint picker-taskflow-detail"></select>
+                    <p class="model-picker__detail" id="picker-taskflow-detail" data-role="model-picker-taskflow-detail" hidden></p>
+                </section>
+                <section class="model-picker__section">
+                    <div class="model-picker__section-heading"><span class="model-picker__section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5ZM8 8h8M8 12h6M8 16h4"/></svg></span><div><h3 id="picker-compaction-label" data-i18n="pickerCompactionSection">Compaction model</h3><p class="model-picker__caption" id="picker-compaction-hint" data-i18n="pickerCompactionHint">Optional. Creates context summaries during compaction.</p></div></div>
+                    <select class="model-picker__select" data-role="model-picker-compaction-select" aria-labelledby="picker-compaction-label" aria-describedby="picker-compaction-hint picker-compaction-detail"></select>
+                    <p class="model-picker__detail" id="picker-compaction-detail" data-role="model-picker-compaction-detail" hidden></p>
+                </section>
+                <section class="model-picker__section model-picker__section--cache">
+                    <div class="model-picker__section-heading"><span class="model-picker__section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg></span><div><h3 id="picker-cache-label" data-i18n="pickerCacheTtlSection">Prompt cache TTL</h3><p class="model-picker__caption" id="picker-cache-hint" data-i18n="pickerCacheHint">Uses the client default unless you choose a duration.</p></div><span class="model-picker__timing" data-i18n="pickerImmediate">Immediate</span></div>
+                    <select class="model-picker__select" data-role="model-picker-cache-ttl-select" aria-labelledby="picker-cache-label" aria-describedby="picker-cache-hint picker-cache-note">
+                        <option value="default" data-i18n="pickerCacheTtlDefault">Default (follow client)</option>
+                        <option value="5m" data-i18n="pickerCacheTtl5m">5 minutes</option>
+                        <option value="1h" data-i18n="pickerCacheTtl1h">1 hour</option>
+                    </select>
+                    <p class="model-picker__hint" id="picker-cache-note"><span data-i18n="pickerCacheTtlHint">If requests error, switch back to Default.</span> <span data-i18n="pickerCacheImmediateHint">Changes apply immediately, even if you cancel this dialog.</span></p>
+                </section>
+            </div>
             <footer class="model-picker__footer">
-                <button type="button" class="model-picker__cancel" data-role="model-picker-cancel-btn" data-i18n="pickerCancel">Cancel</button>
-                <button type="submit" class="model-picker__save" data-role="model-picker-save" data-i18n="pickerSave">Save and restart CLI</button>
+                <p class="model-picker__save-hint" data-i18n="pickerRestartHint">Saving model choices restarts this chat's CLI.</p>
+                <div class="model-picker__actions"><button type="button" class="model-picker__cancel" data-role="model-picker-cancel-btn" data-i18n="pickerCancel">Cancel</button><button type="submit" class="model-picker__save" data-role="model-picker-save" data-i18n="pickerSave">Save and restart CLI</button></div>
             </footer>
         </form>
     </dialog>
@@ -196,6 +203,7 @@
     <script nonce="{{nonce}}" src="{{cacheSolutionScriptUri}}"></script>
     <script nonce="{{nonce}}" src="{{clipboardUri}}"></script>
     <script nonce="{{nonce}}" src="{{imageScriptUri}}"></script>
+    <script nonce="{{nonce}}" src="{{thinkingScriptUri}}"></script>
     <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
 </body>
 </html>

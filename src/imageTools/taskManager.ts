@@ -2,10 +2,10 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { ImageTaskStore } from './taskStore';
-import { generateImages, loadGeneratedImage } from './imageClient';
+import { generateImages, imageType, loadGeneratedImage } from './imageClient';
 import { IMAGE_TOTAL_LIMIT, ImageError, imageErrorCode, type ImageGenerationExecutionSnapshot, type ImageSubmission, type ImageTask } from './types';
 import { parseImageResponsePreview } from './responsePreview';
-import { imageAnimationOptions } from './animation';
+import { imageOutputOptions } from './formats';
 
 /** Transient queue item: secrets and edit sources never reach task JSON. */
 interface Work { task: ImageTask; snapshot: ImageGenerationExecutionSnapshot; input: ImageSubmission }
@@ -21,7 +21,7 @@ export class ImageTaskManager extends EventEmitter {
     private initializing?: Promise<void>;
     private stopped = false;
     private readonly unsaved = new Map<string, ImageTask>();
-    private maxConcurrent = 1;
+    private maxConcurrent = 100;
     private maxQueue = 100;
     /** Bind one task-owning writer and optionally a simulated transport; no workspace lock is acquired. */
     public constructor(public readonly store: ImageTaskStore, private readonly client: ImageTaskClient = { generate: generateImages, load: loadGeneratedImage }) { super(); }
@@ -33,7 +33,7 @@ export class ImageTaskManager extends EventEmitter {
         this.initializing ??= this.store.acquire().catch(error => { this.initializing = undefined; throw error; });
         await this.initializing;
     }
-    /** Persist acceptance and validated animation parameters before acknowledging; serialize capacity checks. */
+    /** Freeze the enabled output format and GIF settings before acknowledging; serialize capacity checks. */
     public submit(scope: string, snapshot: ImageGenerationExecutionSnapshot, input: ImageSubmission, admit?: () => Promise<void>): Promise<ImageTask> {
         const operation = this.admission.then(async () => {
             if (this.stopped) throw new ImageError('IMAGE_INTERRUPTED');
@@ -44,7 +44,7 @@ export class ImageTaskManager extends EventEmitter {
             const task: ImageTask = { version: 1, taskId: `${new Date().toISOString().replace(/[-:.]/g, '')}_${randomUUID()}`,
                 scopeId: scope, operation: input.operation, prompt: input.prompt,
                 model: input.operation === 'edit' ? snapshot.config.editModelId || snapshot.config.modelId : snapshot.config.modelId,
-                configRevision: snapshot.config.revision, size: input.size, ...imageAnimationOptions(input, input.size, snapshot.config.supportsGif), status: 'queued', createdAt: Date.now(), images: [] };
+                configRevision: snapshot.config.revision, size: input.size, ...imageOutputOptions(input, input.size, snapshot.config), status: 'queued', createdAt: Date.now(), images: [] };
             await this.store.save(task, true);
             const accepted = JSON.parse(JSON.stringify(task)) as ImageTask;
             this.pending.push({ task, snapshot: { ...snapshot, config: { ...snapshot.config }, headers: { ...snapshot.headers } }, input: { ...input, ...(Array.isArray(input.image) ? { image: [...input.image] } : {}) } });
@@ -90,7 +90,7 @@ export class ImageTaskManager extends EventEmitter {
         }
     }
     /**
-     * Execute once, preserving saved images and bounded response diagnostics for terminal failures.
+     * Execute once, preserving saved images, actual format mismatches and bounded failure diagnostics.
      * Emit completion only after a terminal checkpoint succeeds, never during history reads.
      * @param work Frozen task, provider settings and transient input images.
      * @param controller Cancellation controller shared with timeout and explicit local stop.
@@ -112,7 +112,10 @@ export class ImageTaskManager extends EventEmitter {
                     const bytes = await this.client.load(item, Math.min(snapshot.config.maxFileBytes, IMAGE_TOTAL_LIMIT - total), controller.signal);
                     controller.signal.throwIfAborted(); total += bytes.length;
                     if (total > IMAGE_TOTAL_LIMIT) throw new ImageError('IMAGE_RESPONSE_TOO_LARGE');
-                    task.images.push(await this.store.saveImage(task.scopeId, bytes)); await this.store.save(task);
+                    const actual = imageType(bytes);
+                    task.images.push(await this.store.saveImage(task.scopeId, bytes));
+                    if (task.output_format && actual.extension !== task.output_format) failure = 'IMAGE_FORMAT_MISMATCH';
+                    await this.store.save(task);
                 } catch (error) {
                     failure = imageErrorCode(error);
                     task.responsePreview = error instanceof ImageError ? parseImageResponsePreview(error.responsePreview) : undefined;

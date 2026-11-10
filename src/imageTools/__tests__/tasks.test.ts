@@ -33,7 +33,7 @@ test('image transport enforces the same 4 MiB cap before network dispatch and wh
 
 /** Removing IP filters must not enable non-HTTP protocols, URL credentials or malformed image bytes. */
 test('image downloads retain protocol, credential and raster checks without IP filtering', async () => {
-    assert.throws(() => imageType(Buffer.from('<svg/>')), /IMAGE_FORMAT_UNSUPPORTED/);
+    assert.equal(imageType(Buffer.from('<svg/>')).mimeType, 'image/svg+xml');
     for (const url of ['file:///tmp/image.png', 'ftp://example.com/image.png', 'http://user:password@localhost/image.png', 'https://user@example.com/image.png']) {
         await assert.rejects(loadGeneratedImage({ url }, 1024, new AbortController().signal), /IMAGE_DOWNLOAD_BLOCKED/);
     }
@@ -115,7 +115,7 @@ test('Images client sends images arrays for edits and preserves text-only genera
         const image = await loadLocalImageSources(['reference.png', 'reference.jpg'], cwd, 1024);
         const result = await generateImages(snapshot(base), { operation: 'edit', prompt: 'combine', size: '1024x1024', image }, new AbortController().signal);
         assert.equal(result.length, 1); assert.equal(requests[0].url, '/edits'); assert.equal(requests[0].headers.authorization, 'Bearer test-only-key');
-        assert.deepEqual(Object.keys(requests[0].body).sort(), ['images', 'model', 'n', 'prompt', 'size']);
+        assert.deepEqual(Object.keys(requests[0].body).sort(), ['images', 'model', 'n', 'output_format', 'prompt', 'size']);
         assert.equal(requests[0].body.n, 1);
         assert.equal(requests[0].headers['content-type'], 'application/json');
         const dataUrl = `data:image/png;base64,${png.toString('base64')}`;
@@ -133,7 +133,7 @@ test('Images client sends images arrays for edits and preserves text-only genera
         assert.equal(requests.length, 2, 'Invalid edit sources must fail before any request');
         await generateImages(snapshot(base), { operation: 'generate', prompt: 'text only', size: '1024x1024' }, new AbortController().signal);
         assert.equal(requests[2].url, '/generations');
-        assert.deepEqual(requests[2].body, { model: 'test-image', prompt: 'text only', size: '1024x1024' });
+        assert.deepEqual(requests[2].body, { model: 'test-image', prompt: 'text only', size: '1024x1024', output_format: 'png' });
         await assert.rejects(generateImages(snapshot(base + '/redirect'), { operation: 'generate', prompt: 'test', size: '1024x1024' }, new AbortController().signal), /IMAGE_HTTP_302/);
         assert.equal(requests.length, 4);
     } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await fs.rm(cwd, { recursive: true, force: true }); }
