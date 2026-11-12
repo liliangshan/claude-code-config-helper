@@ -81,6 +81,50 @@ async function fixture() {
     return { runtime, owned, data, store, state, button, posted, begin, feed, result, snapshot, update, close };
 }
 
+/** A completed turn must not revoke a still-running CLI's private relay capability. */
+test('completed left chat accepts late CLI messages without reopening the finished turn', async t => {
+    const f = await fixture();
+    const { AnthropicProxyAdapter } = await import('../../relay/anthropicProxy');
+    const relay = f.owned.relay as import('../relay').EditorRelay;
+    let forwarded = 0, upstreamStatus = 200;
+    Object.assign(f.owned.manager, {
+        getProviderWithSecret: async () => ({ id: 'p', enabled: true, apiType: 'anthropic', baseUrl: 'https://example.invalid' }),
+        getProviderModel: () => ({}), isModelEnabled: () => true
+    });
+    t.mock.method(AnthropicProxyAdapter.prototype, 'handle', async (context: Parameters<InstanceType<typeof AnthropicProxyAdapter>['handle']>[0]) => {
+        forwarded++;
+        context.res.writeHead(upstreamStatus, { 'content-type': 'application/json' });
+        context.res.end(JSON.stringify(upstreamStatus === 200 ? { type: 'message', content: [{ type: 'text', text: 'late fixture response' }] }
+            : { error: { type: 'permission_error', message: 'Real provider refusal' } }));
+    });
+    try {
+        await relay.start(); relay.configure(f.data.settings); relay.active = true; relay.sessionId = f.data.cliSessionId!;
+        const originalUrl = relay.url;
+        await f.result();
+        assert.equal(f.owned.busy, false); assert.equal(f.button.textContent, '↑');
+        const transcript = JSON.stringify(f.data.messages);
+        const request = await fetch(`${originalUrl}/v1/messages?beta=true`, { method: 'POST', body: JSON.stringify({
+            model: 'p/m', system: 'Generate a concise, sentence-case title for this conversation.',
+            messages: [{ role: 'user', content: 'Summarize the finished local fixture.' }], max_tokens: 10
+        }) });
+        const body = await request.text();
+        assert.equal(request.status, 200, body); assert.equal(forwarded, 1);
+        await f.owned.events;
+        assert.equal(relay.url, originalUrl); assert.equal(f.owned.busy, false);
+        assert.equal(f.button.textContent, '↑'); assert.equal(f.owned.assistant.pending, false);
+        assert.equal(f.data.lastRunState, 'idle'); assert.equal(f.owned.turnFailed, false);
+        assert.equal(JSON.stringify(f.data.messages), transcript);
+        assert.equal(f.posted.some(message => message.type === 'message/error'), false);
+        upstreamStatus = 403;
+        const upstreamDenied = await fetch(`${originalUrl}/v1/messages`, { method: 'POST', headers: { connection: 'close' }, body: '{}' });
+        assert.equal(upstreamDenied.status, 403); assert.equal((await upstreamDenied.json() as any).error.message, 'Real provider refusal');
+        assert.equal(forwarded, 2, 'A genuine upstream permission failure must not be hidden or converted to success');
+        await f.runtime.cancel();
+        const denied = await fetch(`${originalUrl}/v1/messages`, { method: 'POST', headers: { connection: 'close' }, body: '{}' });
+        assert.equal(denied.status, 403); await denied.text(); assert.equal(forwarded, 2);
+    } finally { await f.close(); }
+});
+
 /** A completed turn must not become visually active when titles, heartbeats or ignored records arrive later. */
 test('completed independent chat ignores empty segments from late CLI notifications', async () => {
     const f = await fixture();

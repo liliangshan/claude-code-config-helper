@@ -2,11 +2,71 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { installVscodeStub } from '../../chat/__tests__/testUtils/vscodeStub';
 installVscodeStub({ values: {} });
 const { EditorRelay } = require('../relay') as typeof import('../relay');
 const { EditorContinuation } = require('../continuation') as typeof import('../continuation');
 const { LlsTaskService } = require('../../llsTask/service') as typeof import('../../llsTask/service');
+
+/** Local lifecycle errors remain explicit and cannot be used to reach another or revoked CLI capability. */
+test('independent relay denies wrong paths, old tokens and stopped generations with nonempty errors', async () => {
+    let providers = 0;
+    const manager = { getProviderWithSecret: async () => { providers++; throw new Error('Must not reach provider'); } } as any;
+    const service = new LlsTaskService(manager);
+    const relay = new EditorRelay(manager, service, new EditorContinuation(service), () => {});
+    const settings = { normalModel: 'p/m', taskFlowModel: '', compactionModel: '', reasoningEffort: 'auto' as const,
+        permissionMode: 'acceptEdits' as const, subagentsEnabled: false, autoCompactEnabled: false, codePreviewEnabled: false, cacheTtl: 'default' as const };
+    let tools = 0;
+    relay.toolHandler = async () => { tools++; return { content: [] }; };
+    /** Assert a structured rejection without publishing private URLs or silently accepting a request. */
+    async function rejected(url: string, code: string, method = 'POST'): Promise<void> {
+        const response = await fetch(url, { method, headers: { connection: 'close' }, ...(method === 'POST' ? { body: '{}' } : {}) });
+        const body = await response.text();
+        assert.equal(response.status, 403); assert.equal(response.headers.get('x-should-retry'), 'false');
+        assert.equal(JSON.parse(body).error.code, code); assert.match(body, /not an account-login endpoint/);
+        assert.equal(body.includes(new URL(relay.url).pathname.slice(1)), false);
+    }
+    try {
+        await relay.start(); relay.configure(settings);
+        await rejected(`${relay.url}/v1/messages`, 'EDITOR_RELAY_INACTIVE');
+        relay.active = true;
+        await rejected(`${new URL(relay.url).origin}/${randomUUID()}/v1/messages`, 'EDITOR_RELAY_REJECTED');
+        await rejected(`${relay.url}/login`, 'EDITOR_RELAY_REJECTED');
+        await rejected(`${relay.url}/v1/messages`, 'EDITOR_RELAY_REJECTED', 'GET');
+        const previous = relay.url; relay.configure(settings);
+        await rejected(`${previous}/v1/messages`, 'EDITOR_RELAY_REJECTED');
+        relay.abort();
+        await rejected(`${relay.url}/v1/messages`, 'EDITOR_RELAY_INACTIVE');
+        await rejected(`${relay.url}/tools`, 'EDITOR_RELAY_INACTIVE');
+        assert.equal(providers, 0); assert.equal(tools, 0);
+    } finally { relay.dispose(); service.dispose(); }
+});
+
+/** Capability rotation during body streaming must not let the old request enter the new generation. */
+test('independent relay rechecks generation after asynchronous request-body reads', async () => {
+    const manager = {} as any, service = new LlsTaskService(manager);
+    const relay = new EditorRelay(manager, service, new EditorContinuation(service), () => {});
+    const settings = { normalModel: 'p/m', taskFlowModel: '', compactionModel: '', reasoningEffort: 'auto' as const,
+        permissionMode: 'acceptEdits' as const, subagentsEnabled: false, autoCompactEnabled: false, codePreviewEnabled: false, cacheTtl: 'default' as const };
+    let entered!: () => void; const reading = new Promise<void>(resolve => { entered = resolve; });
+    try {
+        await relay.start(); relay.configure(settings); relay.active = true;
+        (relay as any).server.once('request', entered);
+        let request!: http.ClientRequest;
+        const response = new Promise<{ status?: number; body: string }>((resolve, reject) => {
+            request = http.request(`${relay.url}/v1/messages`, { method: 'POST' }, incoming => {
+                let body = ''; incoming.on('data', chunk => { body += chunk; });
+                incoming.on('end', () => resolve({ status: incoming.statusCode, body })); incoming.on('error', reject);
+            });
+            request.on('error', reject); request.write('{');
+        });
+        await reading; relay.configure(settings); request.end('}');
+        const result = await response;
+        assert.equal(result.status, 403); assert.equal(JSON.parse(result.body).error.code, 'EDITOR_RELAY_REVOKED');
+        assert.equal(relay.inFlight, 0);
+    } finally { relay.dispose(); service.dispose(); }
+});
 
 test('parallel editor relays freeze separate settings and closing A leaves B available', async () => {
     const requests: any[] = [];

@@ -170,8 +170,8 @@ export interface ExpertSubturnFinishedEvent {
 /** 解析事件总线事件名。 */
 const EVENT_PARSED = 'parsed';
 
-/** 工具入参累积上限（防止异常情况导致内存爆炸）。 */
-const TOOL_INPUT_JSON_MAX_LENGTH = 200_000;
+/** 单个工具入参累积上限（字符数，约 1 MB），防止异常流无限占用内存。 */
+const TOOL_INPUT_JSON_MAX_LENGTH = 1_000_000;
 
 /**
  * 权限拦截 VS Code 弹窗通知的最小时间间隔（毫秒）。
@@ -210,6 +210,10 @@ interface ContentBlockState {
     toolUseId?: string;
     /** tool_use 的累积 input JSON delta。 */
     toolInputJson: string;
+    /** 是否已经为该工具入参达到上限记录过警告，避免每个后续分片刷屏。 */
+    toolInputLimitWarned?: boolean;
+    /** 是否已经达到上限；达到后丢弃该工具剩余入参，避免拼出半截 JSON。 */
+    toolInputLimitReached?: boolean;
     /**
      * 文本块是否已整块解析并输出过。
      *
@@ -1381,8 +1385,13 @@ export class StreamJsonCliAdapter implements vscode.Disposable {
         if (!partial) return { type: 'segments', segments: [], done: false };
         const block = this.ensureBlockState(index, 'tool_use');
         if (this.isHiddenChatToolName(block.toolName)) return { type: 'segments', segments: [], done: false };
+        if (block.toolInputLimitReached) return { type: 'segments', segments: [], done: false };
         if (block.toolInputJson.length + partial.length > TOOL_INPUT_JSON_MAX_LENGTH) {
-            Logger.warn(`tool_use 入参累积超过 ${TOOL_INPUT_JSON_MAX_LENGTH}，已停止累积`);
+            block.toolInputLimitReached = true;
+            if (!block.toolInputLimitWarned) {
+                block.toolInputLimitWarned = true;
+                Logger.warn(`tool_use 入参累积超过 ${TOOL_INPUT_JSON_MAX_LENGTH}，已停止累积`);
+            }
             return { type: 'segments', segments: [], done: false };
         }
         block.toolInputJson += partial;

@@ -2,6 +2,60 @@
 
 All notable changes to this extension are documented in this file.
 
+## [3.2.95] - 2026-11-11
+
+### Changed
+
+- Sort the shared normal/task-flow/compaction model dropdowns by provider name, stable provider ID for same-name providers, and actual model ID. Use natural numeric ordering rather than display aliases, retain optional empty choices at the top, and sort only a presentation copy. Existing model identities, current selections, saved provider/model order and save/restart messages are unchanged across main, left and editor chat views.
+- Increase the CLI output adapter's per-tool streamed JSON accumulation guard from 200,000 to 1,000,000 JavaScript string units. Larger valid arguments remain available for display parsing, including the approximately 558,000-character regression case and the exact limit boundary. Once exceeded, that block stops accepting subsequent display deltas and warns only once instead of flooding the output log.
+
+### Compatibility and Upgrade
+
+- The tool-input guard measures string length, not tokens or a fixed megabyte allocation. It limits the extension's CLI-output/tool-card parser, not upstream forwarding or CLI tool execution. It does not reconstruct missing JSON after a cancellation, prove that a tool succeeded, or automatically replay an interrupted request. Provider output limits and CLI validation remain unchanged.
+- Install 3.2.95 and reload VS Code, or restart the F5 development host, to activate the new code and shared UI assets. Reloading may interrupt active CLI/image tasks. Existing settings, credentials, histories and model selections are retained. Full Anthropic beta forwarding and the previous cache-prefix/left-chat completion fixes remain included. This release supersedes the 3.2.94 model-sort test package.
+
+### Validation
+
+- 3.2.95 release checks passed: VS Code diagnostics, manifest/lockfile/README version consistency, TypeScript type checking/compilation and 328 JavaScript syntax checks. Full regression with test concurrency capped at two completed with 854 tests: 832 passed, 22 opt-in checks skipped and zero failures.
+- The initial default-concurrency release run was not clean: independent-runtime and image-MCP tests timed out, the truncated-compaction fixture asserted `0 !== 1`, and the missing-relay wakeup fixture missed its tool list. The subsequent capped-concurrency full run passed without code changes; this does not establish that the default-concurrency timing failures are resolved.
+- Pre-release model-picker regressions passed 8/8; production dialog/rendering functions were verified with native selects in installed Chrome across all seven supported locales. Checks cover provider grouping, model-ID ordering, stable ties, unchanged source snapshots, preserved selections and optional fallback rows. Local large-tool-input regressions also passed; no paid provider requests were used.
+
+## [3.2.94] - 2026-11-10
+
+### Fixed
+
+- Restore the complete nonempty CLI `anthropic-beta` header on Anthropic upstream requests instead of discarding it or allowing only the thinking-display flag. All supplied names, dates and case are preserved without a whitelist, including future flags. No beta is synthesized when the CLI omits the header or supplies only whitespace.
+- Preserve the CLI string when no nonempty custom beta is configured; join array values as an HTTP list. Merge explicitly configured provider betas with all incoming CLI tokens, trimming list whitespace and removing exact duplicates without dropping unknown flags. Requests do not inherit a previous request's beta values.
+
+### Compatibility and Upgrade
+
+- Only the Anthropic outbound header path changes. Common filtering still excludes CLI credentials and diagnostic headers, and OpenAI Chat/Responses paths continue to omit Anthropic betas. Thinking display parameters, native thinking/signatures, cache controls and context management retain existing behavior; the 3.2.93 cache-prefix and left-chat relay-lifetime fixes remain included.
+- A forwarded beta is not proof of service support. If a gateway still rejects `thinking.adaptive.display` or another beta feature, its actual status/body are returned without automatic display downgrade, history deletion or relay retry. No new login endpoint or provider probe is introduced.
+- Install 3.2.94 and reload VS Code, or restart the F5 development host. Active CLI/image work may be interrupted by reload; a chat-CLI restart alone cannot load changed extension code. Existing settings, credentials and history are retained. This version supersedes both 3.2.93 beta test packages and uses full-beta forwarding rather than the earlier single-flag whitelist.
+
+### Validation
+
+- 3.2.94 release checks passed: VS Code diagnostics, manifest/lockfile/README version consistency, TypeScript type checking/compilation and 327 JavaScript syntax checks. Full regression completed with 848 tests: 826 passed, 22 opt-in checks skipped and zero failures.
+- Pre-release beta/cache/header checks passed 14/14. JSON/SSE loopback fixtures cover arbitrary/future beta values, absent and array headers, custom-header merging, request isolation, unchanged thinking/history and forwarding of upstream errors without retries. No paid provider requests were made; actual provider beta compatibility remains a manual acceptance item.
+
+## [3.2.93] - 2026-11-10
+
+### Fixed
+
+- Preserve native signed `thinking` and opaque `redacted_thinking` blocks throughout Anthropic history instead of retaining them only in the latest tool-use message. Consecutive tool requests no longer delete previously forwarded blocks and invalidate the cached content prefix. Empty visible thinking with a signature remains intact. Existing unsigned/short/UUID-style synthetic-thinking filtering stays in place; signature-shape checks do not claim cryptographic or cross-provider validity.
+- Keep each left/independent chat relay available for its live CLI after a successful turn becomes idle. Late internal requests no longer receive the local empty-body 403 that could appear as `Failed to authenticate` after the final reply. Startup failure, explicit cancellation, restart, closure and matching CLI exit (including idle exit) still revoke access, without letting an old process's exit callback affect a replacement.
+- Return structured local permission errors (`EDITOR_RELAY_REJECTED`, `EDITOR_RELAY_INACTIVE`, `EDITOR_RELAY_REVOKED`) with `x-should-retry: false`. Preserve capability-token, HTTP method/path and post-body generation checks. Logs contain safe rejection codes rather than private relay URLs, tokens or request bodies; real upstream permission errors are forwarded unchanged.
+
+### Compatibility and Upgrade
+
+- No new login endpoint, fabricated usage, cache-TTL change or silent request retry. Anthropic thinking content/signatures, redacted payloads, tool IDs, cache breakpoints and context-management parameters are not rewritten by the corrected thinking filter. OpenAI Chat/Responses conversion behavior is unchanged; genuine upstream signature errors still propagate.
+- Install 3.2.93 and reload VS Code, or restart the F5 development host, to activate the extension changes. Reloading can interrupt active CLI/image tasks; restarting only a chat CLI is insufficient. Existing settings and native history are retained. Corrected history may require an initial cache rebuild, and service-side TTL, routing and model compatibility still determine actual hit rates.
+
+### Validation
+
+- 3.2.93 release checks passed: VS Code diagnostics, manifest/lockfile/README version consistency, TypeScript type checking/compilation and 326 JavaScript syntax checks. Full regression completed with 843 tests: 821 passed, 22 opt-in checks skipped and zero failures. The pre-release cache/protocol suite passed 28/28; related left-chat, usage and thinking-display checks passed 37 with one opt-in CLI test skipped.
+- New cache regressions failed on the old implementation and passed after the fix. JSON/SSE loopback fixtures verify history-prefix stability, frozen input preservation, unchanged usage and propagation of actual upstream signature errors without retries. Offline replay retained all 53 signed-thinking blocks available in the affected local log; comparisons exclude unavailable request blobs and do not prove real-provider cache hit rates. No paid provider calls were made. Actual installed-window completion behavior and provider cache performance remain manual acceptance items.
+
 ## [3.2.92] - 2026-11-10
 
 ### Fixed

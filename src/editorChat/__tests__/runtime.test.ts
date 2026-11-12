@@ -69,6 +69,8 @@ test('parallel editor messages, settings, closing and resume do not affect anoth
     try {
         const a = await create(), b = await create();
         await Promise.all([a.runtime.send('A'), b.runtime.send('B')]); await Promise.all([idle(a.value), idle(b.value)]);
+        assert.equal((a.runtime as any).relay.active, true, 'A live idle CLI keeps its capability after the final result');
+        assert.equal((b.runtime as any).relay.active, true);
         assert.notEqual(a.value.cliSessionId, b.value.cliSessionId);
         assert.ok(a.value.messages.some(m => m.segments.some(s => s.text === 'Reply A')));
         assert.ok(!a.value.messages.some(m => m.segments.some(s => s.text === 'Reply B')));
@@ -201,6 +203,13 @@ test('parallel editor messages, settings, closing and resume do not affect anoth
         await idle(restored.value);
         assert.equal(await (restored.runtime as any).refreshImageToolsCli(), true); assert.notEqual((restored.runtime as any).cli, afterImageRefresh);
         assert.equal(restored.value.cliSessionId, beforeUpdate);
+        await idle(restored.value);
+        assert.equal((restored.runtime as any).relay.active, true);
+        const idleCli = (restored.runtime as any).cli;
+        const idleExit = new Promise<void>(resolve => idleCli.onExit(() => resolve()));
+        idleCli.child.kill('SIGTERM'); await idleExit;
+        assert.equal((restored.runtime as any).relay.active, false, 'An idle CLI exit must revoke its capability too');
+        assert.equal((b.runtime as any).relay.active, true, 'Another live conversation stays authorized');
         await restored.runtime.cancel();
         assert.equal(await (restored.runtime as any).refreshImageToolsCli(), true); assert.equal((restored.runtime as any).cli, undefined, 'Stopped chats are not automatically started');
     } finally { await Promise.all(runtimes.map(runtime => runtime.close())); await fs.rm(cwd, { recursive: true, force: true }); }

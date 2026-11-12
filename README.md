@@ -1,6 +1,6 @@
 # Claude Code Config Helper
 
-**Version:** 3.2.92
+**Version:** 3.2.95
 
 **Website: [www.zhineng.dev](https://www.zhineng.dev/)**
 
@@ -37,6 +37,29 @@ When the Responses stream converter detects malformed tool arguments, it automat
 Files share the existing 20-snapshot error retention limit across date directories. Detection compares the upstream final arguments with the actual emitted argument fragments, including `__unparsedToolInput` wrappers and late fragments. The recorder also retains up to eight recent tool responses in memory (64 MiB total) to correlate a subsequent CLI `InputValidationError` by call ID. If the original response has expired or the extension was reloaded, the fallback file explicitly marks `originalResponseUnavailable`; it never substitutes an unrelated response.
 
 Request bodies, URLs and authentication headers are not included in these diagnostics, but **raw model responses and tool arguments can contain sensitive content**; review them before sharing. Token limits remain unchanged, and arguments are never repaired by guessing missing JSON characters.
+
+## What's New in 3.2.95
+
+- **Models ordered by provider, then model ID.** Normal, task-flow and compaction dropdowns now sort by provider name, keep identically named providers separated by provider ID, and sort each provider's models by their actual IDs rather than display aliases. Natural numeric ordering places `model-2` before `model-10`. Sorting changes only the displayed copy: saved configuration order, selected values and save/restart behavior stay unchanged, and optional unconfigured rows remain first.
+- **Larger tool-input display buffer.** The CLI output adapter now accepts up to **1,000,000 JavaScript string units** per streamed tool-input block, up from 200,000. This is a character-length guard, not a token budget or a fixed byte size. Large valid tool arguments below the limit remain available for card parsing; once a block exceeds the guard, its remaining display deltas are ignored and the warning is logged only once for that block.
+
+**Upgrade note:** install 3.2.95 and reload VS Code, or restart the F5 development host, when ready. Reloading may interrupt active CLI/image tasks; a chat-CLI restart alone does not load changed code/assets. Existing settings, credentials, history and selected models are retained. The tool-input guard applies to the extension's CLI-output/card parser, not the upstream request stream or the CLI's execution limits; it cannot repair an interrupted or malformed upstream JSON response. The full Anthropic beta forwarding, history-cache and left-chat completion fixes remain included.
+
+## What's New in 3.2.94
+
+- **Forward the CLI's complete Anthropic beta header.** Anthropic providers now receive every beta declared in the CLI's nonempty `anthropic-beta` header, without a name/date whitelist. This includes the companion beta for `thinking.display: "updates"` when the CLI sends it; missing headers do not cause the extension to invent flags.
+- **Retain explicit provider configuration.** Without a custom beta header, the CLI value is preserved (array values are joined as an HTTP list). Custom provider beta values are merged with all CLI flags and deduplicated. Client credentials and other diagnostic-header filtering remain unchanged; OpenAI Chat/Responses paths do not gain Anthropic beta headers.
+- **No hidden compatibility rewrite.** Thinking display settings, history signatures, cache controls and context-management settings retain their existing behavior. Unsupported-provider errors remain visible; the relay does not silently change `updates` to `summarized`, disable thinking or retry rejected requests. The Anthropic history-cache and left-chat completion fixes from 3.2.93 are included.
+
+**Upgrade note:** install 3.2.94 and reload VS Code, or restart the F5 development host, when ready. Reloading can interrupt active CLI/image tasks; restarting a chat CLI alone does not load new extension code. Existing settings, credentials and history are retained. Forwarding a beta flag does not establish provider support: gateways with older schemas may still reject it. This release supersedes the 3.2.93 single-beta and full-beta test packages; the full-beta forwarding behavior is retained.
+
+## What's New in 3.2.93
+
+- **Stable Anthropic history for prompt caching.** Signed native thinking and opaque redacted-thinking blocks are retained when earlier messages move out of the latest tool round. Appending a new tool call no longer removes blocks from an already sent history prefix. Empty visible thinking with a signature is retained too; the existing filter for unsigned, short or UUID-style synthetic thinking remains. Cache counts, breakpoints, TTL and context-management settings are unchanged, and genuine upstream signature errors remain visible.
+- **No spurious local authentication error after left-chat completion.** Finishing a turn no longer disables a still-running independent CLI's private relay. Late internal requests can finish without reopening the completed chat or receiving an empty-body local 403. Startup failure, cancellation, restart, close and process exit still revoke access for that instance; token, method, path and generation checks remain enforced.
+- **Clear local rejection diagnostics.** Rejected independent-relay requests return nonempty JSON with `EDITOR_RELAY_REJECTED`, `EDITOR_RELAY_INACTIVE` or `EDITOR_RELAY_REVOKED` and a no-retry header. No account-login endpoint is added, and actual provider 401/403 responses are not hidden.
+
+**Upgrade note:** install 3.2.93 and reload VS Code, or restart the F5 development host, when ready. Reloading may interrupt active CLI/image tasks; restarting only a chat CLI does not load changed extension code. Existing settings, credentials and histories are retained, with no automatic replay of completed or interrupted work. The corrected Anthropic history may need an initial cache rebuild; actual hit rates still depend on provider TTL, routing and compatibility. Local regressions do not replace real-provider and real-window acceptance.
 
 ## What's New in 3.2.92
 

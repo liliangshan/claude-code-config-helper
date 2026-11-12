@@ -2,6 +2,7 @@
 import * as http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import type { ConfigManager } from '../configManager';
+import { Logger } from '../logger';
 import { AnthropicProxyAdapter } from '../relay/anthropicProxy';
 import { OpenAIChatProxyAdapter } from '../relay/openaiChatProxy';
 import { OpenAIResponsesProxyAdapter } from '../relay/openaiResponsesProxy';
@@ -27,6 +28,7 @@ export class EditorRelay {
     private server?: http.Server;
     private token = randomUUID();
     private settings?: EditorSettings;
+    /** Whether the owning CLI capability is usable; idle UI state must not revoke a live CLI. */
     public active = false;
     public sessionId = '';
     public inFlight = 0;
@@ -53,10 +55,31 @@ export class EditorRelay {
         this.url = this.url.substring(0, this.url.lastIndexOf('/') + 1) + this.token;
         return this.url;
     }
-    /** Freeze owner identity before awaits, refresh image schemas and cancel only the owned HTTP request. */
+    /**
+     * Report a local capability rejection without exposing URL tokens or pretending it is a provider login failure.
+     * @param res Response to complete with an Anthropic-shaped, non-retryable permission error.
+     * @param code Allowlisted local lifecycle rejection code.
+     * @returns Nothing; no provider request or authentication bypass is performed.
+     */
+    private rejectRequest(res: http.ServerResponse, code: 'EDITOR_RELAY_REJECTED' | 'EDITOR_RELAY_INACTIVE' | 'EDITOR_RELAY_REVOKED'): void {
+        if (res.destroyed || res.writableEnded) return;
+        Logger.warn(`[editor-relay] rejected code=${code}`);
+        res.writeHead(403, { 'content-type': 'application/json', 'x-should-retry': 'false' });
+        res.end(JSON.stringify({ type: 'error', error: { type: 'permission_error', code,
+            message: `Local independent-chat relay rejected this request (${code}); this is not an account-login endpoint.` } }));
+    }
+    /**
+     * Freeze request ownership and preserve normal routing while rejecting missing, stale or stopped capabilities.
+     * @param req Owned loopback request with a capability-prefixed route.
+     * @param res Downstream response used by that same CLI generation.
+     * @returns Completion after dispatch or a local, structured rejection.
+     */
     private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
         const pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
-        if (req.method !== 'POST' || ![`/${this.token}/v1/messages`, `/${this.token}/tools`, `/${this.token}/tools/image`, `/${this.token}/tools/http`].includes(pathname) || !this.settings || !this.active) { res.writeHead(403); res.end(); return; }
+        if (req.method !== 'POST' || ![`/${this.token}/v1/messages`, `/${this.token}/tools`, `/${this.token}/tools/image`, `/${this.token}/tools/http`].includes(pathname) || !this.settings) {
+            this.rejectRequest(res, 'EDITOR_RELAY_REJECTED'); return;
+        }
+        if (!this.active) { this.rejectRequest(res, 'EDITOR_RELAY_INACTIVE'); return; }
         const sessionId = this.sessionId;
         const settings = this.settings;
         const generationToken = this.token;
@@ -67,7 +90,7 @@ export class EditorRelay {
             const httpRequest = pathname.endsWith('/tools/http');
             const rawBody = await (imageRequest ? readImageRequest(req) : httpRequest ? readHttpToolRequest(req) : readRequestBody(req));
             let body = JSON.parse(rawBody) as Record<string, unknown>;
-            if (generationToken !== this.token || !this.active) { res.writeHead(403); res.end(); return; }
+            if (generationToken !== this.token || !this.active) { this.rejectRequest(res, 'EDITOR_RELAY_REVOKED'); return; }
             if (pathname.endsWith('/tools') || imageRequest || httpRequest) {
                 if (!this.toolHandler) throw new Error('Editor tools unavailable');
                 if ((body.bridge === 'llsccaiHttp') !== httpRequest) throw new Error('HTTP_RELAY_REJECTED');

@@ -1694,13 +1694,33 @@
     }
 
     /**
-     * Render normal-model options and their full selected identifier without changing the saved selection.
+     * Return a presentation-only copy ordered by provider name, provider identity and model ID.
+     * Natural numeric ordering keeps model-2 before model-10; display aliases never affect order.
+     * Exact ID tie-breaks keep identically named providers grouped and ordering deterministic.
+     *
+     * @param {{ providerId: string; providerName: string; modelId: string }[]} models Available models.
+     * @returns {{ providerId: string; providerName: string; modelId: string }[]} Sorted copy; input is unchanged.
+     */
+    function sortModelPickerOptions(models) {
+        const collator = new Intl.Collator(currentLanguage, { numeric: true, sensitivity: 'base' });
+        /** Compare one key naturally, then by exact spelling when collation considers it equal. */
+        function compareKey(left, right) {
+            return collator.compare(left, right) || (left < right ? -1 : left > right ? 1 : 0);
+        }
+        return [...(models || [])].sort((left, right) =>
+            compareKey(left.providerName || left.providerId, right.providerName || right.providerId)
+            || compareKey(left.providerId, right.providerId)
+            || compareKey(left.modelId, right.modelId));
+    }
+
+    /**
+     * Render provider/model-ID ordered options and full identifiers without changing the saved selection.
      * Called by model snapshots and option updates; native select behavior is retained.
      */
     function renderModelPickerNormalList() {
         if (!(modelPickerNormalSelectEl instanceof HTMLSelectElement)) return;
         modelPickerNormalSelectEl.innerHTML = '';
-        const models = composerState.modelOptions || [];
+        const models = sortModelPickerOptions(composerState.modelOptions);
         if (models.length === 0) {
             const opt = document.createElement('option');
             opt.value = '';
@@ -1723,7 +1743,7 @@
         renderModelPickerSelectionDetail(modelPickerNormalSelectEl);
     }
 
-    /** Render optional compaction choices and real selected identifiers without saving or enabling a model. */
+    /** Render sorted compaction choices with the empty fallback first, without saving or enabling a model. */
     function renderModelPickerCompactionList() {
         if (!(modelPickerCompactionSelectEl instanceof HTMLSelectElement)) return;
         modelPickerCompactionSelectEl.innerHTML = '';
@@ -1734,7 +1754,7 @@
         if (!composerState.compactionEnabled || !composerState.compactionModelId) closeOpt.selected = true;
         modelPickerCompactionSelectEl.appendChild(closeOpt);
 
-        for (const model of composerState.compactionModelOptions || []) {
+        for (const model of sortModelPickerOptions(composerState.compactionModelOptions)) {
             const key = model.providerId + '/' + model.modelId;
             const opt = document.createElement('option');
             opt.value = key;
@@ -1749,7 +1769,7 @@
     }
 
     /**
-     * Render optional task-flow choices and their real selected identifier without applying unsaved changes.
+     * Render provider/model-ID ordered task-flow choices without applying unsaved changes.
      * The empty first option retains its existing fallback-to-normal-model meaning.
      */
     function renderModelPickerTaskFlowList() {
@@ -1762,7 +1782,7 @@
         if (!composerState.taskFlowEnabled || !composerState.taskFlowModelId) closeOpt.selected = true;
         modelPickerTaskFlowSelectEl.appendChild(closeOpt);
 
-        for (const model of composerState.taskFlowModelOptions || []) {
+        for (const model of sortModelPickerOptions(composerState.taskFlowModelOptions)) {
             const key = model.providerId + '/' + model.modelId;
             const opt = document.createElement('option');
             opt.value = key;

@@ -103,3 +103,101 @@ test('model picker adapts optional cards and exposes model and cache timing with
         assert.match(html, new RegExp('data-role="model-picker-' + role + '-detail" hidden'));
     }
 });
+
+/** Sorting uses provider grouping then natural model IDs, not aliases, and never mutates snapshots. */
+test('model picker sorts providers then model IDs consistently across supported languages', () => {
+    const models = Object.freeze([
+        Object.freeze({ providerId: 'z', providerName: 'Zulu', modelId: 'a-first', displayName: 'First alias' }),
+        Object.freeze({ providerId: 'a', providerName: 'Alpha', modelId: 'model-10', displayName: 'A alias' }),
+        Object.freeze({ providerId: 'b', providerName: 'Alpha', modelId: 'a-first', displayName: 'A alias' }),
+        Object.freeze({ providerId: 'a', providerName: 'Alpha', modelId: 'model-2', displayName: 'Z alias' }),
+        Object.freeze({ providerId: 'a', providerName: 'Alpha', modelId: 'vendor/model-1', displayName: 'B alias' })
+    ]);
+    for (const currentLanguage of ['en', 'zh-cn', 'zh-tw', 'ja', 'ko', 'fr', 'de']) {
+        const sort = runInNewContext(block('sortModelPickerOptions') + '\nsortModelPickerOptions;', { currentLanguage });
+        const sorted = Array.from(sort(models)) as typeof models[number][];
+        assert.deepEqual(sorted.map(model => model.providerId + '/' + model.modelId), [
+            'a/model-2', 'a/model-10', 'a/vendor/model-1', 'b/a-first', 'z/a-first'
+        ], currentLanguage);
+        assert.notEqual(sorted, models);
+        assert.ok(sorted.every(model => models.includes(model)), 'Option objects and their selected metadata are unchanged');
+        assert.deepEqual(Array.from(sort(undefined)), []);
+        assert.deepEqual(Array.from(sort([])), []);
+    }
+    assert.equal(models[0].providerId, 'z');
+    assert.equal(models[1].modelId, 'model-10');
+});
+
+/** Exact spelling resolves collation ties, while missing provider names fall back to their IDs. */
+test('model picker sorting has stable tie breaks independent of input order', () => {
+    const sort = runInNewContext(block('sortModelPickerOptions') + '\nsortModelPickerOptions;', { currentLanguage: 'en' });
+    const models = [
+        { providerId: 'p', providerName: 'Same', modelId: 'model-2' },
+        { providerId: 'p', providerName: 'Same', modelId: 'Model-2' },
+        { providerId: 'q', providerName: 'Same', modelId: 'model-1' },
+        { providerId: 'Alpha', providerName: '', modelId: 'model-9' }
+    ];
+    const keys = (values: typeof models) => values.map(model => model.providerId + '/' + model.modelId);
+    const expected = ['Alpha/model-9', 'p/Model-2', 'p/model-2', 'q/model-1'];
+    assert.deepEqual(Array.from(keys(sort(models))), expected);
+    assert.deepEqual(Array.from(keys(sort([...models].reverse()))), expected);
+});
+
+/** All three production renderers sort only option display, retaining saved values and optional empty rows. */
+test('normal task-flow and compaction dropdowns preserve selection and fallback after sorting', () => {
+    /** Minimal option state matching the fields read and written by production renderers. */
+    class Option {
+        public value = '';
+        public textContent = '';
+        public title = '';
+        public disabled = false;
+        public selected = false;
+    }
+    /** Minimal single-select behavior for rebuilding and preserving the native selected option. */
+    class Select {
+        public options: Option[] = [];
+        public title = '';
+        public detail = { textContent: '', hidden: true };
+        public parentElement = { querySelector: () => this.detail };
+        /** Setting innerHTML to empty removes previous options like a native select. */
+        public set innerHTML(_value: string) { this.options = []; }
+        /** Append a single-select option without losing an explicitly selected later option. */
+        public appendChild(option: Option): void {
+            if (option.selected) this.options.forEach(item => { item.selected = false; });
+            if (this.options.length === 0) option.selected = true;
+            this.options.push(option);
+        }
+        /** Return the actual selected option used by detail rendering. */
+        public get selectedOptions(): Option[] { return this.options.filter(option => option.selected); }
+        /** Preserve the provider/model identity rather than selecting by its sorted position. */
+        public get value(): string { return this.selectedOptions[0]?.value ?? ''; }
+    }
+    const models = Object.freeze([
+        Object.freeze({ providerId: 'z', providerName: 'Zulu', modelId: 'first', displayName: 'A alias' }),
+        Object.freeze({ providerId: 'a', providerName: 'Alpha', modelId: 'model-10', displayName: 'A alias' }),
+        Object.freeze({ providerId: 'a', providerName: 'Alpha', modelId: 'model-2', displayName: 'Z alias' })
+    ]);
+    const normal = new Select(), taskflow = new Select(), compaction = new Select();
+    const composerState = { modelOptions: models, taskFlowModelOptions: models, compactionModelOptions: models,
+        currentModelKey: 'z/first', taskFlowEnabled: true, taskFlowModelId: 'a/model-10', compactionEnabled: false, compactionModelId: '' };
+    const stateBefore = JSON.stringify(composerState);
+    const api = runInNewContext(['sortModelPickerOptions', 'renderModelPickerSelectionDetail', 'renderModelPickerNormalList',
+        'renderModelPickerTaskFlowList', 'renderModelPickerCompactionList', 'readModelPickerSelection'].map(block).join('\n')
+        + '\n({renderModelPickerNormalList,renderModelPickerTaskFlowList,renderModelPickerCompactionList,readModelPickerSelection});', {
+        currentLanguage: 'zh-cn', composerState, HTMLSelectElement: Select, document: { createElement: () => new Option() },
+        modelPickerNormalSelectEl: normal, modelPickerTaskFlowSelectEl: taskflow, modelPickerCompactionSelectEl: compaction, t: (key: string) => key
+    });
+    api.renderModelPickerNormalList(); api.renderModelPickerTaskFlowList(); api.renderModelPickerCompactionList();
+    const expected = ['a/model-2', 'a/model-10', 'z/first'];
+    assert.deepEqual(normal.options.map(option => option.value), expected);
+    for (const select of [taskflow, compaction]) assert.deepEqual(select.options.map(option => option.value), ['', ...expected]);
+    assert.equal(normal.value, 'z/first'); assert.equal(taskflow.value, 'a/model-10'); assert.equal(compaction.value, '');
+    assert.equal(normal.detail.textContent, 'z/first'); assert.equal(compaction.detail.hidden, true);
+    assert.equal(normal.options[0].textContent, 'Alpha: Z alias', 'Aliases are displayed but never used as sort keys');
+    assert.equal(JSON.stringify(composerState), stateBefore);
+    assert.deepEqual(JSON.parse(JSON.stringify(api.readModelPickerSelection())), {
+        normal: { providerId: 'z', modelId: 'first' }, taskFlow: { providerId: 'a', modelId: 'model-10' }, compaction: null
+    });
+    composerState.compactionEnabled = true; composerState.compactionModelId = 'z/first';
+    api.renderModelPickerCompactionList(); assert.equal(compaction.value, 'z/first');
+});

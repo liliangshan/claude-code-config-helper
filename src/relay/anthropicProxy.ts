@@ -122,6 +122,33 @@ export function applyCustomHeaders(
 }
 
 /**
+ * 在 Anthropic 出站头中恢复 CLI 声明的全部 beta，不按名称或日期筛选。
+ *
+ * 未配置自定义 beta 时保留 CLI 字符串，数组仅按 HTTP 列表头连接；有自定义
+ * beta 时保留两端全部标记并去重。缺失或全空白的 CLI 头不主动补造标记。
+ * 不修改源请求头或请求体，也不影响 OpenAI 转换路径及其他敏感头过滤。
+ *
+ * @param headers 已过滤且已合并提供商自定义头的 Anthropic 出站头。
+ * @param source CLI 原始请求头，Node 的请求头名已归一化为小写。
+ */
+export function applyCliAnthropicBeta(
+    headers: Record<string, string>,
+    source: http.IncomingHttpHeaders
+): void {
+    const incoming = source['anthropic-beta'];
+    const values = Array.isArray(incoming) ? incoming : [incoming ?? ''];
+    if (!values.some(value => value.trim())) return;
+    const value = values.join(', ');
+    const configured = headers['anthropic-beta'];
+    if (!configured?.trim()) {
+        headers['anthropic-beta'] = value;
+        return;
+    }
+    const tokens = [configured, value].flatMap(item => item.split(',')).map(item => item.trim()).filter(Boolean);
+    headers['anthropic-beta'] = [...new Set(tokens)].join(', ');
+}
+
+/**
  * 改写请求体中的 model 字段为目标 modelId。
  *
  * Claude Code 发来的 body 通常是 `<providerId>/<modelId>`，
@@ -148,65 +175,34 @@ export function rewriteRequestBody(
 }
 
 /**
- * 清理回放历史里过期 / 非法的 thinking、redacted_thinking 块，避免 Anthropic
- * 直连时报 `Invalid signature in thinking block`。
+ * 过滤回放历史里不符合既有签名形态要求的 thinking 展示块。
  *
- * thinking 块的 signature 按「签发模型 + 内容」绑定。两类块会触发 400：
- *   1. 历史中途切换过模型，旧 assistant 轮的真实签名对新模型失效；
- *   2. 经转换器 / 其它 provider 注入的伪签名（如 UUID 形态），根本不是
- *      Anthropic 签发的。
+ * 其他协议转换器生成的无签名 / 短签名 / UUID 伪签名块不能回传给 Anthropic；
+ * 符合检查的 thinking 与不透明的 redacted_thinking 则在所有历史位置原样保留。
+ * 不能因为新工具轮到来就删除先前发过的块，否则会改变已缓存前缀，反复写缓存。
+ * 空可见文本也可能携带服务商签名，不能仅凭 thinking 文本为空删除。
  *
- * Anthropic 仅要求保留「最近一个正在续推的 tool_use 轮」的 thinking 块，更早
- * 轮次的 thinking 块服务端本就会忽略，可安全剥离。因此本函数：
- *   - 仅在「最后一个 assistant 轮」且其包含 tool_use 时，作为活跃续推轮保留其
- *     thinking 块，且签名必须形如合法 Anthropic 签名；
- *   - 其余所有 assistant 轮的 thinking / redacted_thinking 一律剥离。
- *
- * 用 map + 浅拷贝只替换被改动的消息，绝不就地修改共享的 messages 对象。
+ * 签名形态检查不验证签发模型或密码学有效性；真实上游签名错误由原错误通道返回，
+ * 不在此猜测跨模型兼容性、伪造签名或改写 context_management。
+ * 用 map + 浅拷贝只替换被改动的消息，不就地修改共享的 messages 对象。
  *
  * @param body 已克隆的 Anthropic 请求体对象。
  */
 function sanitizeReplayedThinkingBlocks(body: Record<string, unknown>): void {
     const messages = body.messages;
     if (!Array.isArray(messages)) return;
-    const activeTurnIndex = findActiveToolUseTurnIndex(messages);
     let mutated = false;
-    const next = messages.map((message, i) => {
+    const next = messages.map((message) => {
         if (!isObject(message) || message.role !== 'assistant' || !Array.isArray(message.content)) return message;
-        const keepValidThinking = i === activeTurnIndex;
         const filtered = message.content.filter((block) => {
             if (!isObject(block)) return true;
-            if (block.type === 'thinking') return keepValidThinking && isLikelyAnthropicSignature(block.signature);
-            if (block.type === 'redacted_thinking') return keepValidThinking;
-            return true;
+            return block.type !== 'thinking' || isLikelyAnthropicSignature(block.signature);
         });
         if (filtered.length === message.content.length) return message;
         mutated = true;
         return { ...message, content: filtered };
     });
     if (mutated) body.messages = next;
-}
-
-/**
- * 定位「最近一个正在续推的 tool_use 轮」的下标。
- *
- * 取数组中最后一个 assistant 消息：若它包含 tool_use 块，则视为活跃续推轮
- * （其后通常紧跟 tool_result 的 user 轮），返回其下标；否则返回 -1 表示没有
- * 需要保留 thinking 的活跃轮。
- *
- * @param messages 请求体 messages 数组。
- * @returns 活跃 tool_use 轮下标；无则 -1。
- */
-function findActiveToolUseTurnIndex(messages: unknown[]): number {
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-        const message = messages[i];
-        if (!isObject(message) || message.role !== 'assistant') continue;
-        if (Array.isArray(message.content) && message.content.some((block) => isObject(block) && block.type === 'tool_use')) {
-            return i;
-        }
-        return -1;
-    }
-    return -1;
 }
 
 /**
@@ -303,6 +299,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
 
     /**
      * Forward one Messages request, binding only downstream message IDs for exact per-request usage.
+     * Restore all CLI-declared Anthropic beta tokens after custom-header merging.
      *
      * @param ctx 路由器构造好的请求上下文。
      */
@@ -334,6 +331,7 @@ export class AnthropicProxyAdapter implements UpstreamAdapter {
 
         const headers = buildForwardHeaders(req.headers);
         applyCustomHeaders(headers, provider);
+        applyCliAnthropicBeta(headers, req.headers);
         applyAuthHeaders(headers, provider);
         applyExtensionUserAgent(headers);
         // 始终发 JSON；上游响应类型由上游决定（可能为 SSE）。

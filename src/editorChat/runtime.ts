@@ -184,7 +184,11 @@ export class EditorChatRuntime {
         this.starting = this.startCli(forCliUpdate);
         try { await this.starting; } finally { this.starting = undefined; }
     }
-    /** Start an isolated CLI with current image capability schemas and session-private HTTP/tool capabilities. */
+    /**
+     * Start an isolated CLI with session-private capabilities, revoking relay access when that process exits.
+     * @param forCliUpdate Whether an explicit shared CLI update may bypass the ordinary update gate.
+     * @returns Completion after the new process is started and its settings are recorded.
+     */
     private async startCli(forCliUpdate = false): Promise<void> {
         if (this.closed || this.busy) return;
         const settings = this.currentSettings(); const signature = JSON.stringify(settings);
@@ -223,10 +227,15 @@ export class EditorChatRuntime {
         const cli = new CliProcess(); const adapter = new StreamJsonCliAdapter(cli); const generation = ++this.generation;
         this.cli = cli; this.adapter = adapter;
         adapter.onParsedEvent(event => this.queueEvent(async () => { if (generation === this.generation) await this.onEvent(event); }));
-        cli.onExit(() => { if (!this.closed && generation === this.generation && this.busy) this.queueEvent(async () => {
-            this.busy = false; this.flowPaused = true; this.data.lastRunState = 'interrupted';
-            this.post({ type: 'chat/running', running: false }); this.post({ type: 'toast', level: 'error', text: 'CLI 已退出；检查副作用后手动重试。' }); await this.persist();
-        }); });
+        cli.onExit(() => {
+            if (this.closed || generation !== this.generation) return;
+            this.relay.abort(); this.httpTools.abort();
+            if (this.busy) this.queueEvent(async () => {
+                if (this.closed || generation !== this.generation) return;
+                this.busy = false; this.flowPaused = true; this.data.lastRunState = 'interrupted';
+                this.post({ type: 'chat/running', running: false }); this.post({ type: 'toast', level: 'error', text: 'CLI 已退出；检查副作用后手动重试。' }); await this.persist();
+            });
+        });
         const url = this.relay.configure(settings);
         this.relay.sessionId = this.data.cliSessionId ?? this.data.conversationId;
         // Legacy builtin bridges target the sidebar. Never inject them into an independent editor.
@@ -236,11 +245,17 @@ export class EditorChatRuntime {
                 env: { ELECTRON_RUN_AS_NODE: '1', LLS_EDITOR_BRIDGE: name, LLS_EDITOR_TOOL_URL: `${url}/tools`, ...(name === 'llsccaiImage' ? imageEnv : {}) } };
         }
         if (this.closed || (!forCliUpdate && (await import('../setup/gate')).isCliUpdateInProgress())) { adapter.dispose(); cli.dispose(); return; }
-        await cli.start({ ...base, cwd: this.data.cwd, model: settings.normalModel, permissionMode: settings.permissionMode,
-            resumeSessionId: this.data.cliSessionId, mcpServers,
-            cliArgs: configuredArgs, appendSystemPrompt: [this.manager.getGlobalSystemPrompt(), this.manager.getWorkspaceSystemPrompt()].filter(Boolean).join('\n\n'),
-            cliEnv: { ...base.cliEnv, LLS_EDITOR_PRIVATE_RELAY: '1', CLAUDE_CODE_SKIP_AUTH_LOGIN: '1', CLAUDE_CODE_SKIP_MODEL_VALIDATION: '1', ANTHROPIC_MODEL: settings.normalModel, ANTHROPIC_BASE_URL: url, ANTHROPIC_API_KEY: 'editor-session-local', ANTHROPIC_AUTH_TOKEN: 'editor-session-local', ANTHROPIC_CUSTOM_HEADERS: '', ...native.env },
-            nativeCompaction: native.policy, nativeCompactionEnv: env });
+        this.relay.active = true;
+        try {
+            await cli.start({ ...base, cwd: this.data.cwd, model: settings.normalModel, permissionMode: settings.permissionMode,
+                resumeSessionId: this.data.cliSessionId, mcpServers,
+                cliArgs: configuredArgs, appendSystemPrompt: [this.manager.getGlobalSystemPrompt(), this.manager.getWorkspaceSystemPrompt()].filter(Boolean).join('\n\n'),
+                cliEnv: { ...base.cliEnv, LLS_EDITOR_PRIVATE_RELAY: '1', CLAUDE_CODE_SKIP_AUTH_LOGIN: '1', CLAUDE_CODE_SKIP_MODEL_VALIDATION: '1', ANTHROPIC_MODEL: settings.normalModel, ANTHROPIC_BASE_URL: url, ANTHROPIC_API_KEY: 'editor-session-local', ANTHROPIC_AUTH_TOKEN: 'editor-session-local', ANTHROPIC_CUSTOM_HEADERS: '', ...native.env },
+                nativeCompaction: native.policy, nativeCompactionEnv: env });
+        } catch (error) {
+            if (generation === this.generation) { this.relay.abort(); this.httpTools.abort(); }
+            throw error;
+        }
         if (this.closed) { await cli.stop(); return; }
         this.applied = signature; this.appliedImageEnvironment = imageSignature;
         this.post({ type: 'autoCompact/current', enabled: settings.autoCompactEnabled, policy: native.policy });
@@ -441,10 +456,14 @@ export class EditorChatRuntime {
             this.background.add(event.taskId);
         }
     }
-    /** Commit turn completion after all tracked work settles, then schedule only this workflow. */
+    /**
+     * Complete the visible turn without revoking the still-running CLI's private relay capability.
+     * Late CLI side requests remain authorized until cancellation, restart, process exit or host shutdown.
+     * @returns Completion after owned work settles and the finished state is persisted.
+     */
     private async finishTurn(): Promise<void> {
         if (!this.busy || !this.turnFinished || this.background.size || this.relay.inFlight) return;
-        this.busy = false; this.relay.active = false; this.data.lastRunState = this.turnFailed ? 'interrupted' : 'idle';
+        this.busy = false; this.data.lastRunState = this.turnFailed ? 'interrupted' : 'idle';
         if (this.assistant) { this.assistant.pending = false; this.post({ type: 'message/patch', id: this.assistant.id, segments: [], pending: false }); }
         this.post({ type: 'chat/running', running: false }); await this.persist();
         if (this.recoveryIdentity) this.recovery.onCliTurnFinished(this.recoveryIdentity, this.turnFailed);
